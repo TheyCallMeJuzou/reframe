@@ -1,0 +1,18 @@
+// Command line for starting or resuming a session.
+import type { SessionRecord } from '@shared/state';
+
+export type LaunchMode = 'new' | 'resume';
+
+export function claudeArgs(session: SessionRecord, mode: LaunchMode, settingsFile: string): string[] {
+  const args = mode === 'new' ? ['--session-id', session.claudeSessionId] : ['--resume', session.claudeSessionId];
+  if (session.name) args.push('--name', session.name);
+  if (session.launch.model) args.push('--model', session.launch.model);
+  if (session.launch.permissionMode) args.push('--permission-mode', session.launch.permissionMode);
+  // A resumed worktree session already runs in the worktree folder; -w again would create another one.
+  if (mode === 'new' && session.launch.worktree) {
+    args.push('--worktree');
+    if (session.launch.worktreeName) args.push(session.launch.worktreeName);
+  }
+  args.push('--settings', settingsFile);
+  return args;
+}

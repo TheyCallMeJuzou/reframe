@@ -136,14 +136,14 @@ reframe/
 
 ## Phasen
 
-**Phase 0: Spikes (Risiken früh klären)**: Ergebnisse in `docs/PHASE0-FINDINGS.md`
+**Phase 0: Spikes (Risiken früh klären)** ✅: Ergebnisse in `docs/PHASE0-FINDINGS.md`
 1. Läuft `claude` in Electron + node-pty (ConPTY) + xterm.js korrekt? Zu prüfen: Farben, Unicode, Resize, Eingabe, Ctrl+C.
 2. Headless-Spiegel → serialize → neues Fenster: sieht Claudes TUI danach korrekt aus?
 3. HTML5-DnD zwischen zwei BrowserWindows und Erkennen von "rausgezogen ins Leere".
 4. CLI-Verhalten: `--settings` mit Hooks (wird es mit den User-Hooks zusammengeführt?), HTTP-Hook möglich?, `--session-id` zusammen mit `-w`, `--resume` mit IDs aus Worktrees, Session-ID-Wechsel bei `/clear`.
 5. Erkennt `koffi` + `SetWinEventHook` das Ziehen fremder Fenster?
 
-**Phase 1: Kern (Windows)**: Scaffold (electron-vite, React, TS, ESLint/Prettier, Vitest), PTY-Host, ein Fenster mit Splits und Drop-Zonen, Dialog "Neue Session", Kachel-Header, Dock-Leiste, StateStore mit Restore, Tray (X versteckt, Beenden resumed), Hooks mit Status und Notifications.
+**Phase 1: Kern (Windows)** ✅ (manuell noch offen: Tray-Menü, Benachrichtigungen): Scaffold (electron-vite, React, TS, ESLint/Prettier, Vitest), PTY-Host, ein Fenster mit Splits und Drop-Zonen, Dialog "Neue Session", Kachel-Header, Dock-Leiste, StateStore mit Restore, Tray (X versteckt, Beenden resumed), Hooks mit Status und Notifications.
 
 **Phase 2: Mehrere Fenster**: Rausziehen in ein neues Fenster, Drag zwischen Fenstern, versteckte Fenster im Tray, Bounds und Monitor beim Restore.
 

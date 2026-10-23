@@ -69,6 +69,12 @@ Startet man reframe aus einer laufenden Claude-Session heraus, erbt der gestarte
 Beim Schließen des Spikes (sofortiges `app.quit()`) lief der Claude-Prozess samt Kindprozessen weiter. Stirbt der PTY-Host, reißt das unter Windows den Prozess nicht zuverlässig mit.
 → Beim Beenden **erst** 2× Ctrl+C, auf Exit warten, dann `taskkill /T /F` auf den Prozessbaum, und **erst danach** die App beenden. Beim Start verwaiste Sessions des letzten Laufs (PID + `procStart` im State) erkennen und beenden, **bevor** resumed wird. Sonst laufen zwei Prozesse auf derselben Session.
 
+### Nachträge aus Phase 1
+- **Ein Transcript gibt es erst ab der ersten Nachricht.** Eine Session ohne Prompt (frisch gestartet oder direkt nach `/clear`) lässt sich nicht mit `--resume` fortsetzen. reframe merkt sich deshalb pro aktueller Session-ID, ob schon ein Prompt lief (`used`). Ohne Transcript und ohne Prompt startet die Session frisch unter **derselben ID** (`--session-id`). Fehlt das Transcript trotz Prompt, zeigt die Kachel "Verlauf fehlt" und bietet "Neue Session hier starten" an.
+- **Lokale Slash-Commands (`/clear`) lösen keinen `UserPromptSubmit`-Hook aus.** Den ID-Wechsel liefert nur die Registry.
+- **`electron.exe` als Node (`ELECTRON_RUN_AS_NODE`) bekommt unter ConPTY keine Ein- und Ausgabe**, weil es unter Windows ein GUI-Programm ist. Ein `.js`-Ersatz für `claude` (Tests) läuft deshalb über einen echten Node (`REFRAME_NODE`).
+- **Beenden mit `app.quit()` statt `app.exit()`**, sonst halten Chromiums Hilfsprozesse das Profil noch sekundenlang fest.
+
 ## Konsequenzen für den Plan
 1. **Status und Session-ID-Tracking:** Primär über HTTP-Hooks (`UserPromptSubmit`, `Stop`, `Notification`; dokumentiert). Für sofortige ID-Wechsel (`/clear`) und den Status zusätzlich die Registry-Datei der bekannten PID beobachten. Einen `SessionStart`-Command-Hook gibt es vorerst nicht, weil er eine Runtime (node) bei den Usern voraussetzen würde.
 2. **Spawn-Umgebung bereinigen** (siehe oben). Gilt auch für die Dev-Umgebung.
