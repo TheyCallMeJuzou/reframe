@@ -10,9 +10,9 @@ Spike-Code: `spikes/terminal/` (Electron-App mit `npm start` bzw. `npm run auto`
 |---|---|---|
 | 1 | `claude` in Electron + node-pty (ConPTY) + xterm.js | ✅ Farben, Unicode (●, ⎿, ✻), Eingabe, Slash-Commands, Permission-Dialog, Ctrl+C: alles korrekt |
 | 2 | Headless-Spiegel → serialize → anderes Fenster | ✅ Die Session wurde in ein neues Fenster umgehängt, das TUI ist vollständig und korrekt |
-| 3 | HTML5-DnD zwischen Fenstern / Rausziehen ins Leere | ⏳ Gebaut, der manuelle Test steht noch aus |
+| 3 | HTML5-DnD zwischen Fenstern / Rausziehen ins Leere | ✅ Manuell getestet: Rausziehen ins Leere erzeugt ein neues Fenster an der Cursor-Position, Zurückziehen hängt die Session wieder um |
 | 4 | CLI-Verhalten (Hooks, IDs, Worktree, Resume) | ✅ Alles geklärt, Details siehe unten |
-| 5 | koffi + `SetWinEventHook` | ✅ Callbacks laufen im Electron-Main-Thread. ⏳ Fremdes Fenster draufziehen: manueller Test steht noch aus |
+| 5 | koffi + `SetWinEventHook` / fremdes Fenster draufziehen | ✅ Drag eines Windows-Terminal-Fensters über reframe wird erkannt. ✅ Session → Fenster-Zuordnung über den Owner der Pseudo-Konsole |
 
 ## Details
 
@@ -56,13 +56,25 @@ Startet man reframe aus einer laufenden Claude-Session heraus, erbt der gestarte
 - Zeiger kommen in koffi 3 als BigInt. Out-Parameter (`GetWindowThreadProcessId`) gehen über Ein-Element-Arrays, Strings über einen `Buffer`.
 - Packaging-Hinweis: koffi 3 ist auf Plattform-Pakete aufgeteilt (`@koromix/koffi-win32-x64` …). electron-builder muss diese mitnehmen (`asarUnpack`).
 
+### Fremdes Fenster → Claude-Session (Windows)
+- `EVENT_SYSTEM_MOVESIZESTART/END` liefert das gezogene Fenster (HWND, PID, Titel). `screen.getCursorScreenPoint()` beim Loslassen sagt, ob der Drop über reframe passiert ist.
+- **Der Prozessbaum ist unbrauchbar:** Ein einziger `WindowsTerminal.exe` (hier PID 2152) hostet *alle* Terminal-Fenster. Unter ihm hängen alle Claude-Sessions aller Fenster, sogar Prozesse, die aus einem dieser Terminals gestartet wurden (z.B. reframe selbst samt seinen Sessions).
+- **Titel sind unbrauchbar:** Ohne Namen heißt jede Session "✳ Claude Code".
+- **Lösung, die funktioniert:** Für jede laufende Claude-Session (`~/.claude/sessions/*.json`, PID lebt) gilt: `AttachConsole(pid)` → `GetConsoleWindow()` → `GetWindow(GW_OWNER)`. Windows Terminal setzt den Owner der ConPTY-Pseudo-Konsole auf das Fenster, das den Tab hostet. Getestet mit 7 Sessions in 7 Fenstern, alle eindeutig zugeordnet. Bei conhost ist das Konsolenfenster selbst das sichtbare Fenster. Treffer: `consoleWnd`, `owner` oder `rootOwner` == gedropptes HWND. Probe: `spikes/terminal/probe-console-owner.js`.
+- `AttachConsole` gehört in einen kurzlebigen Hilfsprozess, nicht in den Electron-Main (wegen dessen eigener Konsole/stdio).
+- Claude Code startet sein eingebautes ripgrep als `claude.exe` (Kommandozeile `rg …`). Kandidaten deshalb nur über die Registry bestimmen, nicht über den Prozessnamen.
+- Zu prüfen in Phase 5: Wird der Owner aktualisiert, wenn ein Tab in ein anderes WT-Fenster gezogen wird?
+
+### ⚠️ Verwaiste Claude-Prozesse
+Beim Schließen des Spikes (sofortiges `app.quit()`) lief der Claude-Prozess samt Kindprozessen weiter. Stirbt der PTY-Host, reißt das unter Windows den Prozess nicht zuverlässig mit.
+→ Beim Beenden **erst** 2× Ctrl+C, auf Exit warten, dann `taskkill /T /F` auf den Prozessbaum, und **erst danach** die App beenden. Beim Start verwaiste Sessions des letzten Laufs (PID + `procStart` im State) erkennen und beenden, **bevor** resumed wird. Sonst laufen zwei Prozesse auf derselben Session.
+
 ## Konsequenzen für den Plan
 1. **Status und Session-ID-Tracking:** Primär über HTTP-Hooks (`UserPromptSubmit`, `Stop`, `Notification`; dokumentiert). Für sofortige ID-Wechsel (`/clear`) und den Status zusätzlich die Registry-Datei der bekannten PID beobachten. Einen `SessionStart`-Command-Hook gibt es vorerst nicht, weil er eine Runtime (node) bei den Usern voraussetzen würde.
 2. **Spawn-Umgebung bereinigen** (siehe oben). Gilt auch für die Dev-Umgebung.
 3. **Binary-Auflösung** mit Unwrapping der npm-cmd-Shims.
 4. **Restore immer im gespeicherten `cwd`**, bei Worktrees im Worktree-Pfad, ohne `-w`.
 5. **Name:** Ist ein Name gesetzt, geben wir beim Resume erneut `--name` mit, sonst vergibt Claude einen neuen Auto-Namen.
-
-## Noch offen (manuell, braucht dich)
-- **Spike 3:** Tile-Header in leeren Desktop-Bereich ziehen (→ neues Fenster) und wieder ins andere Fenster zurück.
-- **Spike 5:** Ein Windows-Terminal-Fenster mit laufendem `claude` an der Titelleiste auf das Spike-Fenster ziehen. Im Log sollten dann `foreign drag end … overReframeWindow` und `takeover probe` mit `sessionId` stehen.
+6. **Übernahme unter Windows:** gedropptes HWND → Owner der Pseudo-Konsole → Session (statt Prozessbaum und Titel).
+7. **Prozess-Lebenszyklus:** Exit abwarten und den Prozessbaum killen, bevor die App endet. Beim Start Waisen aufräumen.
+8. **Session-Liste:** "Gefunden" zeigt Sessions **aus allen Projekten** und startet sie im richtigen Ordner. Wird eine Session gewählt, die gerade woanders läuft (Registry), bietet die App "Übernehmen?" an, statt einen zweiten Prozess auf dieselbe Session zu setzen.

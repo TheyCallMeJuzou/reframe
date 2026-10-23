@@ -75,7 +75,7 @@ Wer mehrere Claude-Code-Sessions parallel nutzt, hat viele einzelne Terminal-Fen
 
 ### Hybrid-Übernahme (Fenster draufziehen) – Phase 5
 1. Windows: `SetWinEventHook(EVENT_SYSTEM_MOVESIZESTART/END)` erkennt das Ziehen eines fremden Fensters. Liegt der Cursor über reframe, erscheinen die Drop-Zonen.
-2. Beim Loslassen: HWND → PID → Prozessbaum → `claude`-Nachfahren → Registry (`sessionId`, `cwd`, `name`). Bei mehreren Sessions erscheint die Auswahl (Fenstertitel als Vorauswahl).
+2. Beim Loslassen: Für jede laufende Session aus der Registry gilt `AttachConsole(pid)` → `GetConsoleWindow()` → Owner. Sessions, deren Owner das gedroppte HWND ist, gehören zum Fenster. Das passiert in einem kurzlebigen Hilfsprozess, siehe Phase-0-Ergebnisse; Prozessbaum und Titel sind dafür unbrauchbar. Bei mehreren Sessions (Tabs) erscheint die Auswahl.
 3. Die alte Session wird sauber beendet (Konsole anhängen, 2× Ctrl+C, mit Timeout und Kill als Fallback). Danach startet `claude --resume` im Ziel-Split.
 4. Das Fenster schließt sich (`WM_CLOSE`) nur, wenn darin nichts anderes mehr läuft.
 5. Technik: zuerst `koffi` (FFI, keine Rust-Toolchain nötig), Fallback `napi-rs`. macOS über AXObserver (Bedienungshilfen-Berechtigung), Linux nur X11.
@@ -108,7 +108,7 @@ LayoutNode = { kind: 'split', dir: 'row'|'col', children: LayoutNode[], sizes: n
 
 ### Tray & Lifecycle
 - Das X versteckt das Fenster (`close` wird abgefangen). Das Tray-Menü enthält: Fenster (anzeigen/verstecken), Neue Session, Beenden.
-- **Beenden:** Status speichern (Sessions bleiben `open`), an alle Sessions 2× `\x03` schicken, höchstens 5 s warten, dann Kill. Beim nächsten Start wird alles resumed.
+- **Beenden:** Status speichern (Sessions bleiben `open`), an alle Sessions 2× `\x03` schicken, auf Exit warten (höchstens 5 s), dann den **Prozessbaum** killen (`taskkill /T /F` bzw. Prozessgruppe), und erst danach die App beenden. Beim nächsten Start werden verwaiste Prozesse des letzten Laufs (PID + `procStart` im State) beendet, danach wird alles resumed.
 - Ein Klick auf eine Notification zeigt das Fenster, klappt die Kachel aus und fokussiert sie.
 - `app.setAppUserModelId` (nötig für Windows-Toasts), `requestSingleInstanceLock`.
 
@@ -149,7 +149,7 @@ reframe/
 
 **Phase 3: Gruppen**: Rahmen, Gruppieren und Auflösen, Gruppe verschieben, einklappen und rausziehen.
 
-**Phase 4: Session-Liste**: Bereiche "In der App" und "Gefunden" (Discovery), Drag aus der Liste (beendet → resume, extern laufend → Übernahme), "Aus Liste entfernen".
+**Phase 4: Session-Liste**: Bereiche "In der App" und "Gefunden" (Discovery über alle Projekte, Start immer im richtigen Ordner), Drag aus der Liste (beendet → resume, extern laufend → "Übernehmen?" statt eines zweiten Prozesses), "Aus Liste entfernen".
 
 **Phase 5: Fenster draufziehen (Hybrid)**: zuerst Windows mit Multi-Tab-Auswahl, danach macOS (AX) und Linux X11.
 
