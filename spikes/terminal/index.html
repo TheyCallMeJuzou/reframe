@@ -1,0 +1,33 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'" />
+  <title>reframe spike</title>
+  <link rel="stylesheet" href="node_modules/@xterm/xterm/css/xterm.css" />
+  <style>
+    html, body { margin: 0; height: 100%; background: #1e1e1e; color: #ccc; font: 13px system-ui, sans-serif; }
+    #root { display: flex; flex-direction: column; height: 100%; }
+    #header { display: flex; align-items: center; gap: 8px; padding: 4px 8px; background: #2d2d2d; cursor: grab; user-select: none; }
+    #header.hidden { display: none; }
+    #term { flex: 1; min-height: 0; padding: 4px; }
+    #placeholder { flex: 1; display: flex; align-items: center; justify-content: center; color: #777; }
+    #placeholder.hidden, #term.hidden { display: none; }
+    #dropzone { position: fixed; inset: 0; border: 3px dashed #4fa3ff; background: rgba(79, 163, 255, 0.12); display: none; pointer-events: none; }
+    body.dragover #dropzone { display: block; }
+  </style>
+</head>
+<body>
+  <div id="root">
+    <div id="header" draggable="true">⠿ <span>claude session (drag me)</span></div>
+    <div id="term"></div>
+    <div id="placeholder" class="hidden">Kein Inhalt. Session hierher ziehen.</div>
+  </div>
+  <div id="dropzone"></div>
+  <script src="node_modules/@xterm/xterm/lib/xterm.js"></script>
+  <script src="node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+  <script src="node_modules/@xterm/addon-webgl/lib/addon-webgl.js"></script>
+  <script src="node_modules/@xterm/addon-unicode11/lib/addon-unicode11.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>

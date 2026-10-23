@@ -61,14 +61,14 @@ Wer mehrere Claude-Code-Sessions parallel nutzt, hat viele einzelne Terminal-Fen
 
 ### Claude-Integration
 - **Neue Session:** `claude --session-id <uuid> [--name] [--model] [--permission-mode] [-w] --settings <hooks>`. Die UUID erzeugt reframe selbst, deshalb ist die ID von Anfang an bekannt.
-- **Restore:** `claude --resume <claudeSessionId> --settings <hooks>` im gespeicherten `cwd`.
-- **Hooks** (pro Session injiziert) melden an den HookServer:
-  - `SessionStart`: aktualisiert `claudeSessionId` und `cwd` (wichtig bei `/clear`, `/resume` und Worktrees).
-  - `UserPromptSubmit`: Status "läuft".
+- **Restore:** `claude --resume <claudeSessionId> --settings <hooks> [--name]` im gespeicherten `cwd` (bei Worktrees der Worktree-Pfad, **ohne** erneutes `-w`). `--resume` übernimmt sonst das Verzeichnis, in dem gespawnt wird.
+- **Hooks** (pro Session als Datei über `--settings` injiziert, werden mit User- und Projekt-Hooks zusammengeführt) melden als **HTTP-Hooks** an den HookServer (`/hook/<tileId>/<event>`, Header `X-Reframe-Token`):
+  - `UserPromptSubmit`: Status "läuft", aktualisiert `claudeSessionId` und `cwd`.
   - `Stop`: Status "fertig", plus Notification.
-  - `Notification`: Status "wartet", plus Notification.
-  - Transport: bevorzugt ein HTTP-Hook auf `127.0.0.1:<port>` mit Token, sonst ein kleiner mitgelieferter Hook-Helper (wird in Phase 0 geprüft).
-- **Claude-Binary:** über PATH auflösen (`claude.exe` oder `.cmd`-Shim), überschreibbar in den Einstellungen und per `REFRAME_CLAUDE_BIN` (für Tests).
+  - `Notification` (`permission_prompt` u.a.): Status "wartet", plus Notification.
+  - `SessionStart` kann kein HTTP (Phase 0). Sofortige ID-Wechsel (`/clear`) und den Status liefert stattdessen die beobachtete Registry-Datei `~/.claude/sessions/<pid>.json` der bekannten PID.
+- **Spawn-Umgebung bereinigen:** Marker einer Eltern-Claude-Session entfernen (`CLAUDECODE`, `CLAUDE_PID`, `CLAUDE_CODE_{CHILD_SESSION, SESSION_ID, …}`, siehe `docs/PHASE0-FINDINGS.md`), sonst speichert die Session keine Transcripts.
+- **Claude-Binary:** über PATH + PATHEXT auflösen wie die Shell. npm-cmd-Shims werden zur echten `.exe` aufgelöst (dann gilt PTY-PID = Claude-PID). Überschreibbar in den Einstellungen und per `REFRAME_CLAUDE_BIN` (für Tests).
 - **Discovery ("Gefunden")** in `src/main/discovery/`, defensiv geparst und mit Fixtures getestet:
   - Laufende externe Sessions aus `~/.claude/sessions/<pid>.json`. Die Felder sind `pid`, `sessionId`, `cwd`, `name`, `status`, `procStart` … Das Format ist **undokumentiert**, deshalb in einem Modul gekapselt, mit `procStart` gegen PID-Wiederverwendung, Fallback über die Kommandozeile des Prozesses.
   - Letzte Sessions aus `~/.claude/projects/*/*.jsonl`, nach mtime sortiert. Als Titel dienen `ai-title` bzw. der Name, angezeigt werden die Top 20 plus "Alle anzeigen" mit Suche.
@@ -136,7 +136,7 @@ reframe/
 
 ## Phasen
 
-**Phase 0: Spikes (Risiken früh klären)**
+**Phase 0: Spikes (Risiken früh klären)**: Ergebnisse in `docs/PHASE0-FINDINGS.md`
 1. Läuft `claude` in Electron + node-pty (ConPTY) + xterm.js korrekt? Zu prüfen: Farben, Unicode, Resize, Eingabe, Ctrl+C.
 2. Headless-Spiegel → serialize → neues Fenster: sieht Claudes TUI danach korrekt aus?
 3. HTML5-DnD zwischen zwei BrowserWindows und Erkennen von "rausgezogen ins Leere".
@@ -161,7 +161,7 @@ reframe/
 - `~/.claude/sessions/*.json` und die Transcript-Struktur sind **undokumentiert** und können sich mit Claude-Code-Updates ändern. Deshalb gekapselt, mit Fixture-Tests und Fallbacks.
 - Eine Windows-Terminal-Instanz besitzt mehrere Fenster in **einem** Prozess. Die Zuordnung Fenster → Session läuft daher über den Titel und, wenn nötig, über die Auswahl.
 - Unter Wayland kann man fremde Fenster nicht beobachten, dort gibt es nur die Liste.
-- Braucht der Hook-Transport (HTTP oder Helper) Shell-spezifisches Quoting unter Windows? Wird in Phase 0 geklärt.
+- Die Liste der Eltern-Session-Marker in der Umgebung kann mit neuen Claude-Code-Versionen wachsen. Deshalb gekapselt, mit einem Test, der einen frischen Spawn auf Registry-Eintrag und Transcript prüft.
 
 ## Verifikation
 - **Unit (Vitest):** `shared/layout.ts` (Split, Move, Collapse/Restore-Hint, Gruppen, Rausziehen), StateStore (atomares Schreiben, kaputte Datei → `.bak`, Migration), Discovery-Parser mit Fixtures, CLI-Argument-Builder.
