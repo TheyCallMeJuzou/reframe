@@ -1,15 +1,15 @@
 # Releasing reframe
 
-Development happens on Gitea; a push mirror copies every branch and tag to GitHub
+Development happens on Gitea (`main` is always releasable; bigger work goes through short-lived branches); a push mirror copies every branch and tag to GitHub
 ([TheyCallMeJuzou/reframe](https://github.com/TheyCallMeJuzou/reframe)), where CI and releases run.
 
 ## Making a release
 
 1. Make sure CI on GitHub is green for the commit you want to release.
-2. Set the version: `npm version 0.2.0 --no-git-tag-version`, commit (`chore: release 0.2.0`).
+2. Set the version (`npm version 0.2.0 --no-git-tag-version`), write the release notes into `docs/releases/v0.2.0.md`, and commit both on `main` (`chore: release 0.2.0`).
 3. Tag it and push both: `git tag v0.2.0 && git push && git push --tags` (to Gitea; the mirror takes it to GitHub).
-4. The [Release workflow](../.github/workflows/release.yml) builds the installers on Windows, macOS and Linux and uploads them to a **draft** release for that tag. It fails if the tag and `package.json` disagree.
-5. Look at the draft on GitHub, write the release notes, and publish it.
+4. The [Release workflow](../.github/workflows/release.yml) creates a **draft** release for that tag with those notes, then builds the installers on Windows, macOS and Linux and uploads them into it. It fails if the tag and `package.json` disagree.
+5. Look at the draft on GitHub, try an installer, and publish it.
 
 Publishing is what makes the update visible to installed apps: they check GitHub Releases half a minute after starting and then every six hours, download in the background, and install on the next quit (or right away with "Restart to update" in the tray menu). Draft and pre-releases are ignored.
 

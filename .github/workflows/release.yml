@@ -1,5 +1,6 @@
 # Builds the installers for a version tag (v1.2.3, matching package.json) and uploads them to a draft GitHub
-# release; publishing that release makes the update available to installed apps.
+# release; publishing that release makes the update available to installed apps. The release notes come from
+# docs/releases/<tag>.md (GitHub's generated notes if there is none).
 name: Release
 
 on:
@@ -10,7 +11,24 @@ permissions:
   contents: write
 
 jobs:
+  draft:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Tag and package.json agree
+        run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
+      # Created once, before the builds: three of them creating it at the same time could make three drafts.
+      - name: Draft release
+        run: |
+          notes="docs/releases/$GITHUB_REF_NAME.md"
+          if [ -f "$notes" ]; then set -- --notes-file "$notes"; else set -- --generate-notes; fi
+          gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "reframe ${GITHUB_REF_NAME#v}" "$@"
+
   build:
+    needs: draft
     strategy:
       fail-fast: false
       matrix:
@@ -26,9 +44,6 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - name: Tag and package.json agree
-        shell: bash
-        run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
       - run: npm ci
       - run: npm run build
       - run: npx electron-builder --publish always
