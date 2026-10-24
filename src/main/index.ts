@@ -11,7 +11,9 @@ if (process.env.REFRAME_USER_DATA) app.setPath('userData', process.env.REFRAME_U
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  if (process.platform === 'win32') app.setAppUserModelId('dev.reframe.app');
+  // Windows shows toasts only for an app id with a Start menu shortcut. The installer creates one for
+  // dev.reframe.app; unpackaged (npm run dev) Electron's own executable path is the id that works.
+  if (process.platform === 'win32') app.setAppUserModelId(app.isPackaged ? 'dev.reframe.app' : process.execPath);
 
   let reframe: ReframeApp | null = null;
   let quitting = false;

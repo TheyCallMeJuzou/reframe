@@ -101,3 +101,49 @@ test('real claude: take over a session running in another terminal', async () =>
     fs.rmSync(userData, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
   }
 });
+
+test('real claude: hooks report a prompt and its end, and trigger notifications', async () => {
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'reframe-real-'));
+  const env = { ...process.env, REFRAME_USER_DATA: userData, REFRAME_LOCALE: 'en' } as Record<string, string>;
+  const log = () => {
+    try {
+      return fs.readFileSync(path.join(userData, 'logs', 'main.log'), 'utf8');
+    } catch {
+      return '';
+    }
+  };
+  const app = await electron.launch({ args: [root], env, cwd: root });
+  try {
+    const page = await app.firstWindow();
+    await page.getByRole('button', { name: 'New session' }).first().click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByPlaceholder('Path to a project folder').fill(folder);
+    await dialog.getByPlaceholder('Shown on the tile and in notifications').fill('hooks');
+    await dialog.getByText('Advanced').click();
+    await dialog.getByPlaceholder('Default').fill('haiku');
+    await dialog.getByRole('button', { name: 'Start' }).click();
+    await expect(tileByLabel(page, 'hooks').locator('.status-idle')).toBeVisible({ timeout: 30_000 });
+
+    // One tiny prompt: UserPromptSubmit and Stop must reach reframe.
+    await tileByLabel(page, 'hooks').locator('.tile-body').click();
+    await page.keyboard.type('Reply with exactly: OK');
+    await page.keyboard.press('Enter');
+    await expect.poll(log, { timeout: 90_000 }).toContain('"event":"Stop"');
+    expect(log()).toContain('"event":"UserPromptSubmit"');
+    expect(log()).toMatch(/notification (shown|skipped)/);
+
+    // With the window hidden, the next answer is announced.
+    await (await app.browserWindow(page)).evaluate((win) => win.hide());
+    await page.keyboard.type('Reply with exactly: OK again');
+    await page.keyboard.press('Enter');
+    await expect.poll(log, { timeout: 90_000 }).toContain('notification shown');
+
+    const closed = app.waitForEvent('close');
+    await app.evaluate(({ app: a }) => a.quit());
+    await closed;
+  } finally {
+    await app.close().catch(() => {});
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    fs.rmSync(userData, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
+  }
+});
