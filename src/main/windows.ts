@@ -8,6 +8,7 @@ import type { Bounds, WindowState } from '@shared/state';
 type Events = {
   bounds: [windowId: string, bounds: Bounds, maximized: boolean];
   visibility: [windowId: string, hidden: boolean];
+  fullscreen: [windowId: string, fullscreen: boolean];
 };
 
 const DEFAULT_SIZE = { width: 1280, height: 800 };
@@ -42,11 +43,14 @@ export class WindowManager extends EventEmitter<Events> {
     });
     this.windows.set(state.id, win);
 
-    // maximize() also shows a window, so it waits until the window is meant to be visible.
+    // maximize() and full screen also show a window, so they wait until the window is meant to be visible.
     let maximizePending = state.maximized;
+    let fullscreenPending = !!state.fullscreen;
     const applyMaximize = () => {
       if (maximizePending) win.maximize();
+      if (fullscreenPending) win.setFullScreen(true);
       maximizePending = false;
+      fullscreenPending = false;
     };
     win.once('ready-to-show', () => {
       if (!show) return;
@@ -62,13 +66,16 @@ export class WindowManager extends EventEmitter<Events> {
     win.on('show', () => this.emit('visibility', state.id, false));
     win.on('hide', () => this.emit('visibility', state.id, true));
     const report = () => {
-      if (win.isDestroyed() || win.isMinimized()) return;
+      // Full screen is no size of its own: the window keeps the bounds it returns to.
+      if (win.isDestroyed() || win.isMinimized() || win.isFullScreen()) return;
       this.emit('bounds', state.id, win.isMaximized() ? win.getNormalBounds() : win.getBounds(), win.isMaximized());
     };
     win.on('resize', report);
     win.on('move', report);
     win.on('maximize', report);
     win.on('unmaximize', report);
+    win.on('enter-full-screen', () => this.emit('fullscreen', state.id, true));
+    win.on('leave-full-screen', () => this.emit('fullscreen', state.id, false));
     win.on('closed', () => this.windows.delete(state.id));
 
     // Never navigate away from the app or open other windows from page content.
@@ -99,6 +106,11 @@ export class WindowManager extends EventEmitter<Events> {
     if (win.isMinimized()) win.restore();
     win.show();
     win.focus();
+  }
+
+  toggleFullscreen(windowId: string): void {
+    const win = this.windows.get(windowId);
+    if (win && !win.isDestroyed()) win.setFullScreen(!win.isFullScreen());
   }
 
   /** Closes a window for good (not just hidden), e.g. an empty secondary window. */

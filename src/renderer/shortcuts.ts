@@ -1,4 +1,4 @@
-// reframe's keyboard shortcuts. They use Ctrl+Shift (Cmd+Shift on macOS), plus Ctrl+1…9, because Claude Code
+// reframe's keyboard shortcuts. They use Ctrl+Shift (Cmd+Shift on macOS), plus Ctrl+1…9 and F11, because Claude Code
 // itself takes many plain Ctrl keys; reframe catches these before the terminal sees them.
 import type { Direction } from './focus-nav';
 
@@ -8,7 +8,8 @@ export type Shortcut =
   | { kind: 'newSession' }
   | { kind: 'newWindow' }
   | { kind: 'toggleCollapse' }
-  | { kind: 'toggleSidebar' };
+  | { kind: 'toggleSidebar' }
+  | { kind: 'toggleFullscreen' };
 
 interface Keys {
   code: string;
@@ -28,6 +29,9 @@ const LETTERS: Record<string, Shortcut> = {
 
 /** The shortcut a key press means, if any (by physical key, so it does not depend on the keyboard layout). */
 export function shortcutFor(keys: Keys, mac: boolean): Shortcut | null {
+  if (keys.code === 'F11' && !keys.ctrlKey && !keys.metaKey && !keys.shiftKey && !keys.altKey) {
+    return { kind: 'toggleFullscreen' };
+  }
   const mod = mac ? keys.metaKey && !keys.ctrlKey : keys.ctrlKey && !keys.metaKey;
   if (!mod || keys.altKey) return null;
   const digit = /^Digit([1-9])$/.exec(keys.code);

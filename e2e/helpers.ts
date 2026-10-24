@@ -18,6 +18,7 @@ export interface SavedSession {
 export interface SavedWindow {
   id: string;
   hidden: boolean;
+  fullscreen?: boolean;
   layout: unknown;
   dock: { sessionId: string }[];
 }

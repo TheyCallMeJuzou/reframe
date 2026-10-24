@@ -37,6 +37,7 @@ On macOS, use Cmd instead of Ctrl. Everything else goes to Claude Code as usual.
 | Ctrl+Shift+L          | Show or hide the session list (and search it)                                               |
 | Ctrl+Shift+T          | New session                                                                                 |
 | Ctrl+Shift+N          | New window                                                                                  |
+| F11                   | Full screen on and off                                                                      |
 | Ctrl+C / Ctrl+V       | Copy the selection (otherwise Ctrl+C goes to Claude) / paste text, copied files or an image |
 
 ## Install

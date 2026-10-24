@@ -195,6 +195,7 @@ export interface ReframeApi {
   openExternal(url: string): void;
   /** Opens a new, empty window next to this one. */
   newWindow(): void;
+  toggleFullscreen(): void;
   /** `process.platform`, e.g. for how to quote paths. */
   readonly platform: string;
   readClipboard(): Promise<ClipboardContents>;
@@ -256,6 +257,7 @@ export const IPC = {
   openExternal: 'reframe:open-external',
   transferNode: 'reframe:transfer-node',
   newWindow: 'reframe:new-window',
+  toggleFullscreen: 'reframe:toggle-fullscreen',
   readClipboard: 'reframe:read-clipboard',
   saveDroppedFile: 'reframe:save-dropped-file',
   tearOut: 'reframe:tear-out',

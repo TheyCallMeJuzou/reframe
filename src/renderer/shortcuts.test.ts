@@ -20,6 +20,8 @@ describe('shortcutFor', () => {
       direction: 'left',
     });
     expect(shortcutFor(press('Digit3', { ctrl: true }), false)).toEqual({ kind: 'focusTile', index: 2 });
+    expect(shortcutFor(press('F11'), false)).toEqual({ kind: 'toggleFullscreen' });
+    expect(shortcutFor(press('F11', { shift: true }), false)).toBeNull();
   });
 
   it('leaves everything else to the terminal (Claude Code uses plain Ctrl keys)', () => {

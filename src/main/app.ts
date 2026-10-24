@@ -228,6 +228,9 @@ export class ReframeApp {
     this.windows.on('bounds', (id, bounds, maximized) => {
       this.mutateWindow(id, (w) => ({ ...w, bounds, maximized }), 'soon');
     });
+    this.windows.on('fullscreen', (id, fullscreen) => {
+      this.mutateWindow(id, (w) => ({ ...w, fullscreen }), 'soon');
+    });
     this.windows.on('visibility', (id, hidden) => {
       this.mutateWindow(id, (w) => ({ ...w, hidden }), 'soon');
       this.refreshTray();
@@ -1228,6 +1231,10 @@ export class ReframeApp {
       this.transferNode(id, { key: request.key, fromWindowId: request.fromWindowId, target: request.target });
     });
     ipcMain.on(IPC.newWindow, (event) => this.newWindow(windowId(event)));
+    ipcMain.on(IPC.toggleFullscreen, (event) => {
+      const id = windowId(event);
+      if (id) this.windows.toggleFullscreen(id);
+    });
     ipcMain.handle(IPC.readClipboard, () => this.clipboardOverride ?? readClipboard());
     ipcMain.handle(IPC.saveDroppedFile, (_event, name: unknown, data: unknown) =>
       typeof name === 'string' && data instanceof ArrayBuffer ? this.saveDroppedFile(name, data) : null,

@@ -50,6 +50,8 @@ export const windowStateSchema = z.object({
   id: z.string(),
   bounds: boundsSchema.nullable(),
   maximized: z.boolean(),
+  /** Full screen (F11); `bounds` stay the window's normal size meanwhile. */
+  fullscreen: z.boolean().optional(),
   hidden: z.boolean(),
   layout: layoutNodeSchema.nullable(),
   dock: z.array(dockEntrySchema),

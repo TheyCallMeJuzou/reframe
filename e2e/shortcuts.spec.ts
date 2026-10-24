@@ -72,3 +72,27 @@ test('keyboard shortcuts and new windows', async () => {
     await cleanup(dir);
   }
 });
+
+test('F11: full screen, kept after a restart', async () => {
+  const { dir, env, state } = setup();
+  try {
+    let { app, page } = await launch(env);
+    const fullscreen = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isFullScreen());
+    await page.keyboard.press('F11');
+    await expect.poll(fullscreen, { timeout: 10_000 }).toBe(true);
+    await expect.poll(() => state().windows[0]!.fullscreen).toBe(true);
+    await quit(app);
+
+    ({ app, page } = await launch(env));
+    await expect.poll(fullscreen, { timeout: 10_000 }).toBe(true);
+    await page.keyboard.press('F11');
+    await expect.poll(fullscreen, { timeout: 10_000 }).toBe(false);
+    await expect.poll(() => state().windows[0]!.fullscreen).toBe(false);
+    await quit(app);
+  } catch (error) {
+    await captureWindows('fullscreen');
+    throw error;
+  } finally {
+    await cleanup(dir);
+  }
+});

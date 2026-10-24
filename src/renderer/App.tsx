@@ -97,6 +97,8 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
           return setDialogOpen(true);
         case 'newWindow':
           return window.reframe.newWindow();
+        case 'toggleFullscreen':
+          return window.reframe.toggleFullscreen();
         case 'toggleCollapse': {
           // In a tile: collapse it. Otherwise: bring back the one collapsed last.
           const active = activeTile();
