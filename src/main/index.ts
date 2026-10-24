@@ -4,6 +4,7 @@ import icon from '../../resources/icon.png?asset';
 import trayIcon from '../../resources/tray.png?asset';
 import trayIcon2x from '../../resources/tray@2x.png?asset';
 import { ReframeApp } from './app';
+import { startedBySystem } from './autostart';
 
 // Tests and side-by-side dev runs use their own profile.
 if (process.env.REFRAME_USER_DATA) app.setPath('userData', process.env.REFRAME_USER_DATA);
@@ -36,7 +37,7 @@ if (!app.requestSingleInstanceLock()) {
   void app.whenReady().then(async () => {
     const locale = resolveLocale(process.env.REFRAME_LOCALE || app.getLocale());
     reframe = new ReframeApp(locale, { icon, trayIcon, trayIcon2x });
-    await reframe.start();
+    await reframe.start({ hidden: startedBySystem() });
     // End-to-end tests drive things a real drag would do (e.g. tearing a tile out at a point).
     if (process.env.REFRAME_E2E) Object.assign(globalThis, { reframe });
   });

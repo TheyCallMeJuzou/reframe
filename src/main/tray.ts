@@ -1,4 +1,5 @@
-// Tray icon: brings hidden windows back, starts sessions, and is the only way to really quit.
+// Tray icon: brings hidden windows back, starts sessions, starts reframe with the system, installs updates,
+// and is the only way to really quit.
 import { Menu, Tray, nativeImage } from 'electron';
 
 export interface TrayWindowItem {
@@ -15,6 +16,11 @@ export interface TrayActions {
   toggleWindow: (id: string, visible: boolean) => void;
   showPrimary: () => void;
   newSession: () => void;
+  autostartLabel: string;
+  autostart: () => boolean;
+  setAutostart: (enabled: boolean) => void;
+  /** "Restart to update" once an update is downloaded. */
+  update: () => { label: string; install: () => void } | null;
   quit: () => void;
 }
 
@@ -25,6 +31,7 @@ export function createTray(icon: string, icon2x: string, actions: TrayActions): 
   tray.setToolTip(actions.tooltip);
 
   const refresh = () => {
+    const update = actions.update();
     tray.setContextMenu(
       Menu.buildFromTemplate([
         ...actions.windows().map((w) => ({
@@ -36,6 +43,16 @@ export function createTray(icon: string, icon2x: string, actions: TrayActions): 
         { type: 'separator' },
         { label: actions.newSessionLabel, click: actions.newSession },
         { type: 'separator' },
+        {
+          label: actions.autostartLabel,
+          type: 'checkbox',
+          checked: actions.autostart(),
+          click: (item) => {
+            actions.setAutostart(item.checked);
+            refresh();
+          },
+        },
+        ...(update ? [{ label: update.label, click: update.install }] : []),
         { label: actions.quitLabel, click: actions.quit },
       ]),
     );

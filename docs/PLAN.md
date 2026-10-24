@@ -31,7 +31,7 @@ Wer mehrere Claude-Code-Sessions parallel nutzt, hat viele einzelne Terminal-Fen
 | Neue Session | Ordner (Pflicht, mit den zuletzt benutzten), Name optional (`--name`), Schalter "Git-Worktree" (`-w`). Eingeklappt unter "Erweitert": Modell (`--model`), Permission-Mode (`--permission-mode`). |
 | Stack | Electron + TypeScript + React, xterm.js, node-pty |
 | Plattformen | Entwicklung auf Windows, von Anfang an portabel, CI für alle 3 OS |
-| Hosting | Entwicklung auf Gitea, zum Open-Source-Release ein GitHub-Spiegel (Runner für alle 3 OS) |
+| Hosting | Entwicklung auf Gitea, Push-Spiegel nach GitHub (`TheyCallMeJuzou/reframe`), dort CI und Releases für alle 3 OS |
 | Lizenz / Name | MIT (Copyright "reframe Team") / **reframe** |
 
 ---
@@ -161,7 +161,13 @@ reframe/
 - Geprüft wird nur, wenn ein bekanntes Terminal-Programm gezogen wird und irgendwo ein externes Claude läuft.
 - Einen Tab aus Windows Terminal über reframe ziehen: Das ist kein Fenster-Verschieben, Windows Terminal öffnet erst nach dem Loslassen ein neues Fenster für den Tab. Erscheint ein neues Terminal-Fenster über reframe, in dem ein schon vorher laufendes Claude steckt, gilt das als Drop an dieser Stelle. Während des Ziehens zeigt reframe die Drop-Vorschau, wenn das Terminal-Fenster, aus dem der Tab kommt, ein Claude enthält. Manuell bestätigt (2026-10-24), Vorschau noch offen.
 
-**Phase 6: Open-Source-Reife**: README, CONTRIBUTING, CI-Matrix (Win/macOS/Linux) über einen GitHub-Spiegel, electron-builder (NSIS/dmg/AppImage+deb), Hinweise zum Code-Signing, optional Auto-Update und Autostart.
+**Phase 6: Open-Source-Reife**: README, CONTRIBUTING, CI-Matrix (Win/macOS/Linux) über einen GitHub-Spiegel, electron-builder (NSIS/dmg/AppImage+deb), Hinweise zum Code-Signing, optional Auto-Update und Autostart. **In Arbeit** (offen: GitHub-Spiegel einrichten, erster CI-Lauf, manueller Test des Installers). Entschieden:
+- CI auf GitHub über den Push-Spiegel (`.github/workflows`). `.gitea/workflows` existiert nur, damit Gitea diese Workflows nicht selbst ausführt.
+- Autostart (Tray: "Mit dem System starten"): reframe startet dann versteckt im Tray, die Sessions laufen im Hintergrund weiter.
+- Auto-Update über GitHub Releases (electron-updater): Windows-Installer und AppImage. macOS erst mit signiertem Build, deb über die Paketverwaltung. Installiert beim Beenden oder über "Neu starten und aktualisieren".
+- Doku für Mitwirkende auf Englisch (README, CONTRIBUTING, `docs/RELEASING.md`). Die Planungsdokumente bleiben auf Deutsch.
+- Windows-Installer ohne Rückfragen und ohne Adminrechte, pro Benutzer (NSIS one-click). Vorerst unsigniert, Hinweise dazu in `docs/RELEASING.md`.
+- Die End-to-End-Tests laufen in CI gegen die gepackte App (`REFRAME_E2E_APP`), unter macOS und Linux vorerst nur informativ.
 
 ---
 

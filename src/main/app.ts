@@ -78,6 +78,8 @@ import { StateStore } from './state/store';
 import { stopExternalClaude } from './takeover';
 import { colorMenu, groupMenu, tileMenu } from './menus';
 import { createTray } from './tray';
+import { Updates } from './updates';
+import { autostartEnabled, setAutostart } from './autostart';
 import { win32 } from './win32';
 import { WindowManager } from './windows';
 
@@ -101,6 +103,7 @@ export class ReframeApp {
   private log = createLogger(path.join(app.getPath('userData'), 'logs'));
   private claudeHome = claudeHome();
   private transcripts = new TranscriptIndex(this.claudeHome);
+  private updates = new Updates(this.log);
 
   constructor(
     private locale: Locale,
@@ -109,7 +112,8 @@ export class ReframeApp {
     this.windows = new WindowManager(assets.icon);
   }
 
-  async start(): Promise<void> {
+  /** `hidden`: started by the system, so the windows stay in the tray (sessions resume all the same). */
+  async start({ hidden = false }: { hidden?: boolean } = {}): Promise<void> {
     const loaded = this.store.load();
     this.state = loaded.state;
     if (this.state.windows.length === 0) this.state.windows.push(emptyWindow(crypto.randomUUID()));
@@ -141,10 +145,11 @@ export class ReframeApp {
     await this.sessions.cleanupOrphans(Object.values(this.state.sessions));
 
     this.registerIpc();
-    this.openWindows();
+    this.openWindows(hidden);
     this.watchForeignWindows();
     this.resumeSessions();
     this.createTray();
+    this.watchUpdates();
     this.save();
   }
 
@@ -170,9 +175,9 @@ export class ReframeApp {
 
   // ---------- windows and views ----------
 
-  private openWindows(): void {
+  private openWindows(hidden: boolean): void {
     const anyVisible = this.state.windows.some((w) => !w.hidden);
-    this.state.windows.forEach((w, i) => this.windows.open(w, !w.hidden || (!anyVisible && i === 0)));
+    this.state.windows.forEach((w, i) => this.windows.open(w, !hidden && (!w.hidden || (!anyVisible && i === 0))));
     this.windows.on('bounds', (id, bounds, maximized) => {
       this.mutateWindow(id, (w) => ({ ...w, bounds, maximized }), 'soon');
     });
@@ -868,9 +873,49 @@ export class ReframeApp {
         this.windows.show(id);
         this.windows.send(id, IPC.openNewSession, null);
       },
+      autostartLabel: t('tray.autostart'),
+      autostart: () => {
+        try {
+          return autostartEnabled();
+        } catch {
+          return false;
+        }
+      },
+      setAutostart: (enabled) => {
+        try {
+          setAutostart(enabled);
+          this.log('info', enabled ? 'starts with the system now' : 'no longer starts with the system');
+        } catch (error) {
+          this.log('warn', 'could not change starting with the system', { error: String(error) });
+        }
+      },
+      update: () =>
+        this.updates.ready
+          ? { label: t('tray.restartToUpdate', { version: this.updates.ready }), install: () => this.restartToUpdate() }
+          : null,
       quit: () => app.quit(),
     });
     this.refreshTray = refresh;
+  }
+
+  private watchUpdates(): void {
+    this.updates.on('ready', (version) => {
+      this.refreshTray();
+      if (!Notification.isSupported() || process.env.REFRAME_DISABLE_NOTIFICATIONS) return;
+      new Notification({
+        title: this.t('update.readyTitle'),
+        body: this.t('update.readyBody', { version }),
+        icon: this.assets.icon,
+      }).show();
+    });
+    this.updates.start();
+  }
+
+  /** Ends the sessions as on quit (they resume after the restart), then installs the update. */
+  private async restartToUpdate(): Promise<void> {
+    this.log('info', 'restarting to install an update', { version: this.updates.ready });
+    await this.shutdown();
+    this.updates.install();
   }
 
   // ---------- IPC ----------

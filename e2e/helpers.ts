@@ -68,8 +68,15 @@ let running: ElectronApplication | null = null;
 /** User data folder of the latest setup(), for the app log of a failed test. */
 let userData: string | null = null;
 
-export async function launch(env: Record<string, string>): Promise<{ app: ElectronApplication; page: Page }> {
-  const app = await electron.launch({ args: [root], env, cwd: root });
+export async function launch(
+  env: Record<string, string>,
+  args: string[] = [],
+): Promise<{ app: ElectronApplication; page: Page }> {
+  // REFRAME_E2E_APP: run against a packaged reframe (e.g. dist/win-unpacked/reframe.exe) instead of the dev build.
+  const packaged = process.env.REFRAME_E2E_APP;
+  const app = await electron.launch(
+    packaged ? { executablePath: packaged, args, env, cwd: root } : { args: [root, ...args], env, cwd: root },
+  );
   running = app;
   // Surface renderer errors in the test output; a crashed React tree otherwise just shows a blank window.
   const watch = (page: Page) => {

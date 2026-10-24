@@ -1,0 +1,59 @@
+# Installers: `npm run dist` builds them for the current system into dist/ (`npm run dist:dir` only the
+# unpacked app). Releases are built and published by .github/workflows/release.yml.
+appId: dev.reframe.app
+productName: reframe
+copyright: Copyright (c) 2026 reframe Team
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**
+  - package.json
+  - '!**/*.{map,pdb}'
+  # node-pty's sources and the build tools it ships; the prebuilt (or, on Linux, freshly built) binaries stay.
+  - '!node_modules/node-pty/{deps,scripts,src,third_party,typings}/**'
+# node-pty and koffi bring native code; programs (OpenConsole.exe, winpty-agent.exe) and node-pty's worker
+# script must be real files on disk, not inside the app archive.
+asarUnpack:
+  - node_modules/node-pty/**
+  - node_modules/@koromix/**
+# node-pty and koffi are Node-API modules: their binaries work in Electron as they are.
+npmRebuild: false
+# Chromium's own UI strings (context menus, dialogs) only for reframe's languages.
+electronLanguages: [en-US, de]
+
+win:
+  target: nsis
+  files:
+    - '!node_modules/node-pty/prebuilds/darwin-*/**'
+    - '!node_modules/node-pty/prebuilds/win32-arm64/**'
+nsis:
+  # Per user, no admin rights, no questions: installs and starts.
+  oneClick: true
+  perMachine: false
+  artifactName: ${productName}-Setup-${version}.${ext}
+  deleteAppDataOnUninstall: false
+
+mac:
+  target: [dmg, zip]
+  category: public.app-category.developer-tools
+  files:
+    - '!node_modules/node-pty/prebuilds/win32-*/**'
+dmg:
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+linux:
+  target: [AppImage, deb]
+  category: Development
+  synopsis: Claude Code sessions side by side
+  maintainer: reframe Team
+  files:
+    - '!node_modules/node-pty/prebuilds/**'
+appImage:
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+publish:
+  provider: github
+  owner: TheyCallMeJuzou
+  repo: reframe
+  releaseType: draft

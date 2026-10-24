@@ -1,0 +1,56 @@
+# Checks every push and pull request on Windows, macOS and Linux: types, lint, format, unit tests, the
+# packaged app, and the end-to-end tests. Those run against the packaged app; on macOS and Linux they are
+# informational for now (reframe is developed on Windows first).
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      # No code signing in CI.
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npx prettier --check .
+      - run: npm test
+      - name: Package (unpacked app)
+        run: npm run dist:dir
+
+      - name: End-to-end tests (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: REFRAME_E2E_APP="$PWD/dist/win-unpacked/reframe.exe" npx playwright test
+      - name: End-to-end tests (macOS, informational)
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        run: REFRAME_E2E_APP="$(ls -d "$PWD"/dist/mac*/reframe.app)/Contents/MacOS/reframe" npx playwright test
+      - name: End-to-end tests (Linux, informational)
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        run: |
+          # Electron's sandbox needs unprivileged user namespaces, which Ubuntu's AppArmor restricts.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          REFRAME_E2E_APP="$PWD/dist/linux-unpacked/reframe" xvfb-run -a npx playwright test
+
+      - name: Keep screenshots of failed end-to-end tests
+        if: failure() || cancelled() || runner.os != 'Windows'
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: test-results-${{ matrix.os }}
+          path: test-results/
+          if-no-files-found: ignore

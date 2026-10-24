@@ -94,6 +94,11 @@ const en = {
   'tray.window': 'Window {n}',
   'tray.newSession': 'New session',
   'tray.quit': 'Quit reframe',
+  'tray.autostart': 'Start with the system',
+  'tray.restartToUpdate': 'Restart to update to {version}',
+  'update.readyTitle': 'Update ready',
+  'update.readyBody':
+    'reframe {version} is installed when you quit it, or right away with "Restart to update" in the tray menu.',
   'notify.done': '{label} is done',
   'notify.doneBody': 'Claude finished responding.',
   'notify.waiting': '{label} needs you',
@@ -194,6 +199,11 @@ const de: Record<MessageKey, string> = {
   'tray.window': 'Fenster {n}',
   'tray.newSession': 'Neue Session',
   'tray.quit': 'reframe beenden',
+  'tray.autostart': 'Mit dem System starten',
+  'tray.restartToUpdate': 'Neu starten und auf {version} aktualisieren',
+  'update.readyTitle': 'Update bereit',
+  'update.readyBody':
+    'reframe {version} wird beim Beenden installiert, oder sofort mit "Neu starten und aktualisieren" im Tray-Menü.',
   'notify.done': '{label} ist fertig',
   'notify.doneBody': 'Claude hat geantwortet.',
   'notify.waiting': '{label} wartet auf dich',
