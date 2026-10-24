@@ -1,0 +1,2 @@
+# LF everywhere (Prettier checks for it), also in Windows checkouts that would convert to CRLF.
+* text=auto eol=lf
