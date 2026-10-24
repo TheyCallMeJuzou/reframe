@@ -9,6 +9,7 @@ import { NewSessionDialog } from './components/NewSessionDialog';
 import { LayoutView } from './components/SplitView';
 import { ListIcon, PlusIcon, WindowIcon } from './components/icons';
 import { neighbor, type Box } from './focus-nav';
+import { useSessionList } from './session-list';
 import { shortcutFor, shortcutLabel, type Shortcut } from './shortcuts';
 import { SessionSidebar } from './components/SessionSidebar';
 import { TakeoverDialog } from './components/TakeoverDialog';
@@ -52,6 +53,9 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
   useEffect(() => {
     if (view) terminals.retain(new Set(Object.keys(view.sessions)));
   }, [view, terminals]);
+
+  const sessionList = useSessionList(!!view?.sidebarOpen);
+  const newFound = !view?.sidebarOpen && sessionList.fresh.size > 0;
 
   // Keyboard shortcuts, caught before the terminal (or anything else) sees the key.
   const viewRef = useRef(view);
@@ -249,6 +253,7 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
           >
             <ListIcon />
             {t('toolbar.sessions')}
+            {newFound && <span className="toolbar-dot" title={t('list.newFound')} aria-hidden="true" />}
           </button>
           <button
             className="button toolbar-button"
@@ -260,7 +265,7 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
           </button>
         </div>
         <div className="workspace">
-          {view.sidebarOpen && <SessionSidebar />}
+          {view.sidebarOpen && <SessionSidebar sessionList={sessionList} />}
           <DockStrip entries={view.dock} />
           <main className="layout">
             {view.layout ? (

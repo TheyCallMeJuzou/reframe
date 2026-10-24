@@ -11,8 +11,11 @@ import {
   Notification,
   screen,
   shell,
+  type BrowserWindow,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
+  type Menu,
+  type MenuItem,
 } from 'electron';
 import {
   addTile,
@@ -33,6 +36,7 @@ import { isGroupColor, nextGroupColor, nextGroupNumber } from '@shared/groups';
 import { translate, type Locale, type MessageKey } from '@shared/i18n';
 import {
   addToGroup,
+  appendNode,
   dissolveGroup as removeGroupFrame,
   findNode,
   groupOf,
@@ -44,6 +48,7 @@ import {
   tileKey,
   type DropTarget,
   type GroupNode,
+  type LayoutNode,
 } from '@shared/layout';
 import {
   IPC,
@@ -55,6 +60,8 @@ import {
   type ForeignPointerReport,
   type ClipboardContents,
   type ListItemRef,
+  type OpenMode,
+  type OpenSessionsRequest,
   type OpenSessionRequest,
   type RunningListItem,
   type SessionList,
@@ -78,7 +85,7 @@ import { PtyHostClient } from './ptyhost-client';
 import { SessionManager, type IdentityPatch, type NotifyKind } from './sessions';
 import { StateStore } from './state/store';
 import { stopExternalClaude } from './takeover';
-import { colorMenu, groupMenu, tileMenu } from './menus';
+import { colorMenu, groupMenu, listMenu, tileMenu } from './menus';
 import { createTray } from './tray';
 import { readClipboard } from './clipboard';
 import { Updates } from './updates';
@@ -458,21 +465,22 @@ export class ReframeApp {
     return this.state.windows.flatMap(windowGroups).find((g) => g.id === groupId);
   }
 
+  /** Name ("Group n") and color for a new group: the next free ones. */
+  private newGroupLook(): { name: string; color: string } {
+    const existing = this.state.windows.flatMap(windowGroups);
+    const nameFor = (n: number) => this.t('group.defaultName', { n });
+    const number = nextGroupNumber(
+      existing.map((g) => g.name),
+      nameFor,
+    );
+    return { name: nameFor(number), color: nextGroupColor(existing.map((g) => g.color)) };
+  }
+
   /** Frames a tile as a new group, named "Group n" with the next free color. */
   createGroup(sessionId: string): void {
     const win = this.windowOf(sessionId);
     if (!win) return;
-    const existing = this.state.windows.flatMap(windowGroups);
-    const nameFor = (n: number) => this.t('group.defaultName', { n });
-    const group = {
-      name: nameFor(
-        nextGroupNumber(
-          existing.map((g) => g.name),
-          nameFor,
-        ),
-      ),
-      color: nextGroupColor(existing.map((g) => g.color)),
-    };
+    const group = this.newGroupLook();
     this.mutateWindow(win.id, (w) => ({ ...w, layout: groupTile(w.layout, sessionId, group) }));
     this.log('info', 'group created', { session: sessionId, ...group });
   }
@@ -513,13 +521,51 @@ export class ReframeApp {
     const browserWindow = this.windows.get(windowId);
     if (!win || !browserWindow || !windowHasSession(win, sessionId)) return;
     const group = groupOf(win.layout, tileKey(sessionId));
-    tileMenu(this.t, {
+    const menu = tileMenu(this.t, {
       group,
       otherGroups: groups(win.layout).filter((g) => g.id !== group?.id),
       newGroup: () => this.createGroup(sessionId),
       addToGroup: (groupId) => this.addSessionToGroup(sessionId, groupId),
       removeFromGroup: () => this.removeSessionFromGroup(sessionId),
-    }).popup({ window: browserWindow });
+    });
+    this.popup(menu, browserWindow);
+  }
+
+  /** The list's menu for the selected entries. */
+  private showListMenu(windowId: string, items: ListItemRef[]): void {
+    const browserWindow = this.windows.get(windowId);
+    if (!browserWindow || items.length === 0) return;
+    const open = (mode: OpenMode) => () =>
+      void this.openSessions(windowId, items, mode, null).catch((error: unknown) =>
+        this.log('error', 'opening sessions from the list failed', { error: String(error) }),
+      );
+    const menu = listMenu(this.t, {
+      count: items.length,
+      open: open('open'),
+      group: open('group'),
+      groupInNewWindow: open('groupInNewWindow'),
+    });
+    this.popup(menu, browserWindow);
+  }
+
+  /** Shows a context menu; end-to-end tests cannot click native menus, so there it is only kept for clickMenuItem. */
+  private popup(menu: Menu, browserWindow: BrowserWindow): void {
+    this.lastMenu = menu;
+    if (!process.env.REFRAME_E2E) menu.popup({ window: browserWindow });
+  }
+  private lastMenu: Menu | null = null;
+
+  /** Test hook (REFRAME_E2E): clicks the item labeled `label` in the menu shown last. */
+  clickMenuItem(label: string): boolean {
+    const find = (items: MenuItem[]): MenuItem | undefined =>
+      items.reduce<MenuItem | undefined>(
+        (found, item) => found ?? (item.label === label ? item : item.submenu ? find(item.submenu.items) : undefined),
+        undefined,
+      );
+    const item = this.lastMenu && find(this.lastMenu.items);
+    if (!item) return false;
+    item.click();
+    return true;
   }
 
   private showGroupMenu(windowId: string, groupId: string, colorsOnly: boolean): void {
@@ -598,30 +644,45 @@ export class ReframeApp {
     return listRunning(this.claudeHome, { pids: ownPids, sessionIds: ownIds }).filter((entry) => entry.cwd);
   }
 
-  /** Opens a list entry in `windowId` at `target`; a session already shown somewhere is just brought up. */
-  private async openSession(windowId: string, item: ListItemRef, target: DropTarget | null): Promise<void> {
-    if (item.kind === 'app') {
-      const record = this.state.sessions[item.sessionId];
-      if (!record) return;
-      if (this.windowOf(record.id)) return this.focusSession(record.id);
-      return this.placeAndResume(windowId, { ...record, lifecycle: 'open' }, target);
-    }
+  /**
+   * The record for a list entry: reframe's own, or a new one for a session found or running elsewhere. One running
+   * elsewhere is ended there first (after asking, unless already `confirmed`), so a conversation never runs twice.
+   * Null when there is nothing (any more) to open.
+   */
+  private async recordFor(windowId: string, item: ListItemRef, confirmed: boolean): Promise<SessionRecord | null> {
+    if (item.kind === 'app') return this.state.sessions[item.sessionId] ?? null;
 
     // A conversation reframe already manages is opened as that session, not a second copy.
     const known = Object.values(this.state.sessions).find((r) => r.claudeSessionId === item.claudeSessionId);
-    if (known) return this.openSession(windowId, { kind: 'app', sessionId: known.id }, target);
+    if (known) return known;
 
     if (item.kind === 'found') {
       const info = await this.transcripts.find(item.claudeSessionId);
-      if (!info?.cwd) return this.log('warn', 'found session has no folder', { claudeSession: item.claudeSessionId });
-      return this.placeAndResume(windowId, this.adopted(item.claudeSessionId, info.cwd), target);
+      if (info?.cwd) return this.adopted(item.claudeSessionId, info.cwd);
+      this.log('warn', 'found session has no folder', { claudeSession: item.claudeSessionId });
+      return null;
     }
 
-    // Running elsewhere: end it there first, so the conversation never runs twice.
     const entry = readRegistryEntry(this.claudeHome, item.pid);
     if (!entry || entry.sessionId !== item.claudeSessionId || !entry.cwd || !isAlive(item.pid)) {
-      return this.log('info', 'running session is gone, nothing to take over', { pid: item.pid });
+      this.log('info', 'running session is gone, nothing to take over', { pid: item.pid });
+      return null;
     }
+    if (!confirmed && !(await this.confirmTakeover(windowId, [entry.name ?? path.basename(entry.cwd)]))) return null;
+    this.log('info', 'taking over session from another terminal', { pid: item.pid, claudeSession: entry.sessionId });
+    const result = await stopExternalClaude(item.pid, this.log);
+    this.log(result === 'failed' ? 'warn' : 'info', 'other terminal stopped', { pid: item.pid, result });
+    if (result === 'failed') {
+      await this.showError(windowId, this.t('takeover.failed'));
+      return null;
+    }
+    // A name the user gave it survives; one Claude made up is made up again.
+    const name = entry.nameSource === 'user' ? entry.name : undefined;
+    return this.adopted(entry.sessionId, entry.cwd, name);
+  }
+
+  /** Asks once before ending sessions that run in other terminals. */
+  private async confirmTakeover(windowId: string, labels: string[]): Promise<boolean> {
     const browserWindow = this.windows.get(windowId);
     const options = {
       type: 'question' as const,
@@ -629,26 +690,113 @@ export class ReframeApp {
       defaultId: 0,
       cancelId: 1,
       title: this.t('takeover.title'),
-      message: this.t('takeover.message', { label: entry.name ?? path.basename(entry.cwd) }),
+      message:
+        labels.length === 1
+          ? this.t('takeover.message', { label: labels[0]! })
+          : this.t('takeover.messageMany', { count: labels.length, labels: labels.join(', ') }),
       detail: this.t('takeover.detail'),
     };
     const { response } = browserWindow
       ? await dialog.showMessageBox(browserWindow, options)
       : await dialog.showMessageBox(options);
-    if (response !== 0) return;
-    this.log('info', 'taking over session from another terminal', { pid: item.pid, claudeSession: entry.sessionId });
-    const result = await stopExternalClaude(item.pid, this.log);
-    this.log(result === 'failed' ? 'warn' : 'info', 'other terminal stopped', { pid: item.pid, result });
-    if (result === 'failed') {
-      const failure = { type: 'error' as const, message: this.t('takeover.failed') };
-      if (browserWindow) await dialog.showMessageBox(browserWindow, failure);
-      else await dialog.showMessageBox(failure);
+    return response === 0;
+  }
+
+  private async showError(windowId: string, message: string): Promise<void> {
+    const browserWindow = this.windows.get(windowId);
+    const options = { type: 'error' as const, message };
+    if (browserWindow) await dialog.showMessageBox(browserWindow, options);
+    else await dialog.showMessageBox(options);
+  }
+
+  /** Opens a list entry in `windowId` at `target`; a session already shown somewhere is just brought up. */
+  private async openSession(windowId: string, item: ListItemRef, target: DropTarget | null): Promise<void> {
+    const record = await this.recordFor(windowId, item, false);
+    if (!record) return;
+    if (this.windowOf(record.id)) return this.focusSession(record.id);
+    this.placeAndResume(windowId, { ...record, lifecycle: 'open' }, target);
+  }
+
+  /**
+   * Opens several list entries at once: one after the other (at `target`, each below the one before), or together
+   * in a new group, in this window or a new one. Sessions running elsewhere are taken over after one question for
+   * all of them. Opening sessions that are shown already just brings them up; dropping them somewhere or grouping
+   * them moves them there.
+   */
+  async openSessions(windowId: string, items: ListItemRef[], mode: OpenMode, target: DropTarget | null): Promise<void> {
+    let wanted = items;
+    const running = items.flatMap((i) => (i.kind === 'running' ? [i] : []));
+    if (running.length > 0) {
+      const labels = running.map((i) => {
+        const entry = readRegistryEntry(this.claudeHome, i.pid);
+        return entry?.name ?? (entry?.cwd ? path.basename(entry.cwd) : String(i.pid));
+      });
+      if (!(await this.confirmTakeover(windowId, labels))) wanted = items.filter((i) => i.kind !== 'running');
+    }
+    const records: SessionRecord[] = [];
+    for (const item of wanted) {
+      const record = await this.recordFor(windowId, item, true);
+      if (record && !records.some((r) => r.id === record.id)) records.push(record);
+    }
+    if (records.length === 0) return;
+    this.log('info', 'opening sessions from the list', { sessions: records.length, mode, at: target ?? 'end' });
+
+    if (mode === 'open' && !target) {
+      for (const record of records) {
+        if (this.windowOf(record.id)) this.focusSession(record.id);
+        else this.placeAndResume(windowId, { ...record, lifecycle: 'open' }, null);
+      }
       return;
     }
-    // Read again: the session id can change until the very end (e.g. after /clear).
-    // A name the user gave it survives; one Claude made up is made up again.
-    const name = entry.nameSource === 'user' ? entry.name : undefined;
-    this.placeAndResume(windowId, this.adopted(entry.sessionId, entry.cwd, name), target);
+
+    const into = mode === 'groupInNewWindow' ? this.newWindow(windowId) : windowId;
+    const ids = records.map((r) => r.id);
+    this.state = {
+      ...this.state,
+      sessions: {
+        ...this.state.sessions,
+        ...Object.fromEntries(records.map((r) => [r.id, { ...(this.state.sessions[r.id] ?? r), lifecycle: 'open' }])),
+      },
+    };
+    // Out of wherever they are shown now; a window left empty by that closes only after they have landed.
+    const left = new Set(ids.map((id) => this.detach(id)).filter((w): w is string => !!w && w !== into));
+    if (mode === 'open') {
+      let next: DropTarget | null = target;
+      for (const id of ids) {
+        this.mutateWindow(into, (w) => putNode(w, tile(id), next));
+        next = { key: tileKey(id), side: 'bottom' };
+      }
+    } else {
+      let child: LayoutNode | null = null;
+      for (const id of ids) child = appendNode(child, tile(id));
+      const group: GroupNode = { kind: 'group', id: crypto.randomUUID(), ...this.newGroupLook(), child: child! };
+      this.mutateWindow(into, (w) => putNode(w, group, target));
+      this.log('info', 'group created from the list', { sessions: ids.length, name: group.name });
+    }
+    for (const id of ids) {
+      if (!this.sessions.isRunning(id)) this.sessions.start(this.state.sessions[id]!, 'resume');
+    }
+    for (const id of left) this.closeIfEmpty(id);
+    this.windows.show(into);
+    this.windows.send(into, IPC.focusTile, ids[0]);
+    this.refreshTray();
+  }
+
+  /** Takes a session's tile out of the window showing it (a collapsed one is put back first); that window's id. */
+  private detach(sessionId: string): string | null {
+    const win = this.windowOf(sessionId);
+    if (!win) return null;
+    let next = win;
+    for (const entry of win.dock) {
+      if (entry.kind === 'tile' && entry.sessionId === sessionId) {
+        next = applyLayoutAction(next, { type: 'tile/expand', sessionId });
+      } else if (entry.kind === 'group' && leaves(entry.node).includes(sessionId)) {
+        next = applyLayoutAction(next, { type: 'group/expand', groupId: entry.node.id });
+      }
+    }
+    const { win: rest } = takeNode(next, tileKey(sessionId));
+    this.mutateWindow(win.id, () => rest);
+    return win.id;
   }
 
   /** A new record for a Claude Code session started outside reframe. */
@@ -1031,6 +1179,18 @@ export class ReframeApp {
       const id = windowId(event);
       if (id && typeof sessionId === 'string') this.showTileMenu(id, sessionId);
     });
+    ipcMain.on(IPC.listMenu, (event, items: unknown) => {
+      const id = windowId(event);
+      if (id && isListItems(items)) this.showListMenu(id, items);
+    });
+    ipcMain.on(IPC.openSessions, (event, request: Partial<OpenSessionsRequest> | null) => {
+      const id = windowId(event);
+      if (!id || !isListItems(request?.items) || !OPEN_MODES.includes(request.mode as OpenMode)) return;
+      if (request.target !== null && !isDropTarget(request.target)) return;
+      void this.openSessions(id, request.items, request.mode as OpenMode, request.target ?? null).catch(
+        (error: unknown) => this.log('error', 'opening sessions from the list failed', { error: String(error) }),
+      );
+    });
     ipcMain.on(IPC.groupMenu, (event, groupId: unknown) => {
       const id = windowId(event);
       if (id && typeof groupId === 'string') this.showGroupMenu(id, groupId, false);
@@ -1099,6 +1259,12 @@ function findClaude(): ClaudeBinary | null {
     override: process.env.REFRAME_CLAUDE_BIN,
     nodeRunner: node ? { file: node, env: {} } : undefined,
   });
+}
+
+const OPEN_MODES: OpenMode[] = ['open', 'group', 'groupInNewWindow'];
+
+function isListItems(value: unknown): value is ListItemRef[] {
+  return Array.isArray(value) && value.length > 0 && value.length <= 200 && value.every(isListItemRef);
 }
 
 function isListItemRef(value: unknown): value is ListItemRef {

@@ -2,7 +2,7 @@
 // and bring back tiles, toggle the session list, open the "New session" dialog and new, empty windows, which
 // come back after a restart.
 import { expect, test, type Page } from '@playwright/test';
-import { captureWindows, cleanup, launch, newSession, quit, setup, tileByLabel } from './helpers';
+import { captureWindows, cleanup, launch, newSession, pageOf, quit, setup, tileByLabel } from './helpers';
 
 /** Label of the tile that has the keyboard focus. */
 const focused = (page: Page) =>
@@ -11,7 +11,9 @@ const focused = (page: Page) =>
 test('keyboard shortcuts and new windows', async () => {
   const { dir, project, env, state } = setup();
   try {
-    let { app, page } = await launch(env);
+    const first = await launch(env);
+    let app = first.app;
+    const page = first.page;
     await newSession(page, project, 'alpha');
     await newSession(page, project, 'beta');
     await newSession(page, project, 'gamma');
@@ -58,9 +60,10 @@ test('keyboard shortcuts and new windows', async () => {
     await expect.poll(() => state().windows.length).toBe(2);
     await quit(app);
 
-    ({ app, page } = await launch(env));
+    const mainId = state().windows[0]!.id;
+    app = (await launch(env)).app;
     await expect.poll(() => app.windows().length, { timeout: 10_000 }).toBe(2);
-    await expect(page.locator('.tile')).toHaveCount(3);
+    await expect((await pageOf(app, mainId)).locator('.tile')).toHaveCount(3);
     await quit(app);
   } catch (error) {
     await captureWindows('shortcuts');

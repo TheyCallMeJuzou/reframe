@@ -711,6 +711,15 @@ select {
 
 /* ---------- session list ---------- */
 
+/* Something new turned up in the (hidden) session list. */
+.toolbar-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
 .toolbar-button.is-active {
   border-color: var(--accent);
 }
@@ -766,6 +775,32 @@ select {
   background: transparent;
   text-align: left;
   cursor: pointer;
+}
+
+.sidebar-row.is-selected,
+.sidebar-row.is-selected:hover {
+  background: rgb(217 119 87 / 18%);
+  box-shadow: inset 0 0 0 1px rgb(217 119 87 / 45%);
+}
+
+/* Popped up while reframe runs (started in another terminal, or used again): lights up for a moment. */
+.sidebar-row.is-new {
+  animation: popped-up 4s ease-out;
+}
+
+@keyframes popped-up {
+  0% {
+    opacity: 0;
+    transform: translateX(-8px);
+    background: rgb(217 119 87 / 40%);
+  }
+  12% {
+    opacity: 1;
+    transform: none;
+  }
+  100% {
+    background: transparent;
+  }
 }
 
 .sidebar-row:hover {

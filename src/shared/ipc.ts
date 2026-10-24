@@ -106,6 +106,15 @@ export interface OpenSessionRequest {
   target: DropTarget | null;
 }
 
+/** Several list entries at once: one after the other, or together in a new group (here or in a new window). */
+export type OpenMode = 'open' | 'group' | 'groupInNewWindow';
+
+export interface OpenSessionsRequest {
+  items: ListItemRef[];
+  mode: OpenMode;
+  target: DropTarget | null;
+}
+
 /** A claude found in a terminal window that was dropped onto reframe. */
 export interface ForeignCandidate {
   pid: number;
@@ -196,6 +205,9 @@ export interface ReframeApi {
   getSessionList(query: string, limit: number): Promise<SessionList>;
   /** Shows a session that is open somewhere, or opens one from the list in this window (resuming it). */
   openSession(request: OpenSessionRequest): void;
+  openSessions(request: OpenSessionsRequest): void;
+  /** Native menu for the selected list entries (open, open in a new group, … in a new window). */
+  showListMenu(items: ListItemRef[]): void;
   /** Forgets an ended session (its Claude Code transcript stays). */
   removeSession(sessionId: string): void;
   /** A terminal window with claude is dragged over this window (content coordinates); null when it left. */
@@ -237,6 +249,8 @@ export const IPC = {
   sessionList: 'reframe:session-list',
   openSession: 'reframe:open-session',
   removeSession: 'reframe:remove-session',
+  openSessions: 'reframe:open-sessions',
+  listMenu: 'reframe:list-menu',
   foreignDrag: 'reframe:foreign-drag',
   foreignDrop: 'reframe:foreign-drop',
   foreignDropAnswer: 'reframe:foreign-drop-answer',
@@ -257,5 +271,5 @@ export type TerminalViewMessage = { type: 'input'; data: string } | { type: 'res
 /** MIME types used for dragging (HTML5 DnD); the type tells tiles from groups before the drop. */
 export const TILE_MIME = 'application/x-reframe-tile';
 export const GROUP_MIME = 'application/x-reframe-group';
-/** A session dragged out of the session list (payload: ListItemRef). */
+/** Sessions dragged out of the session list (payload: ListItemRef[]). */
 export const LIST_MIME = 'application/x-reframe-list-item';

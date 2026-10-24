@@ -1,4 +1,4 @@
-// Native context menus for tiles and groups. They only describe the choices; the actions live in the app.
+// Native context menus for tiles, groups and the session list. They only describe the choices; the actions live in the app.
 import { Menu, nativeImage, type MenuItemConstructorOptions, type NativeImage } from 'electron';
 import { GROUP_COLORS } from '@shared/groups';
 import type { MessageKey } from '@shared/i18n';
@@ -25,6 +25,23 @@ export function tileMenu(t: Translate, o: TileMenuOptions): Menu {
       submenu: o.otherGroups.map((g) => ({ label: g.name, icon: swatch(g.color), click: () => o.addToGroup(g.id) })),
     },
     { label: t('menu.removeFromGroup'), enabled: !!o.group, click: o.removeFromGroup },
+  ]);
+}
+
+export interface ListMenuOptions {
+  /** How many entries are selected. */
+  count: number;
+  open: () => void;
+  group: () => void;
+  groupInNewWindow: () => void;
+}
+
+export function listMenu(t: Translate, o: ListMenuOptions): Menu {
+  return Menu.buildFromTemplate([
+    { label: o.count > 1 ? t('listMenu.openMany', { count: o.count }) : t('listMenu.open'), click: o.open },
+    { type: 'separator' },
+    { label: t('listMenu.group'), click: o.group },
+    { label: t('listMenu.groupInNewWindow'), click: o.groupInNewWindow },
   ]);
 }
 

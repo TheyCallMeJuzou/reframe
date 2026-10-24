@@ -27,8 +27,8 @@ export function dragKind(event: ReactDragEvent | DragEvent): DragKind | null {
   return null;
 }
 
-export function setListDrag(event: ReactDragEvent, item: ListItemRef): void {
-  event.dataTransfer.setData(LIST_MIME, JSON.stringify(item));
+export function setListDrag(event: ReactDragEvent, items: ListItemRef[]): void {
+  event.dataTransfer.setData(LIST_MIME, JSON.stringify(items));
   event.dataTransfer.effectAllowed = 'copyMove';
 }
 
@@ -54,8 +54,9 @@ export function handleDrop(
 ): boolean {
   if (dragKind(event) === 'session') {
     try {
-      const item = JSON.parse(event.dataTransfer.getData(LIST_MIME)) as ListItemRef;
-      window.reframe.openSession({ item, target });
+      const items = JSON.parse(event.dataTransfer.getData(LIST_MIME)) as ListItemRef[];
+      if (items.length === 1) window.reframe.openSession({ item: items[0]!, target });
+      else window.reframe.openSessions({ items, mode: 'open', target });
       return true;
     } catch {
       return false;
