@@ -81,12 +81,16 @@ test('F11: full screen, kept after a restart', async () => {
     await page.keyboard.press('F11');
     await expect.poll(fullscreen, { timeout: 10_000 }).toBe(true);
     await expect.poll(() => state().windows[0]!.fullscreen).toBe(true);
+    // A moment's hint how to leave it, and a button for it in the toolbar while it lasts.
+    await expect(page.locator('.fullscreen-hint')).toContainText('F11');
+    await expect(page.getByRole('button', { name: 'Exit full screen' })).toBeVisible();
     await quit(app);
 
     ({ app, page } = await launch(env));
     await expect.poll(fullscreen, { timeout: 10_000 }).toBe(true);
-    await page.keyboard.press('F11');
+    await page.getByRole('button', { name: 'Exit full screen' }).click();
     await expect.poll(fullscreen, { timeout: 10_000 }).toBe(false);
+    await expect(page.getByRole('button', { name: 'Exit full screen' })).toHaveCount(0);
     await expect.poll(() => state().windows[0]!.fullscreen).toBe(false);
     await quit(app);
   } catch (error) {

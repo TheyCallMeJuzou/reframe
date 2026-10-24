@@ -232,6 +232,7 @@ export class ReframeApp {
     });
     this.windows.on('fullscreen', (id, fullscreen) => {
       this.mutateWindow(id, (w) => ({ ...w, fullscreen }), 'soon');
+      this.push(id); // the window shows how to leave full screen
     });
     this.windows.on('visibility', (id, hidden) => {
       this.mutateWindow(id, (w) => ({ ...w, hidden }), 'soon');
@@ -254,6 +255,7 @@ export class ReframeApp {
         const ws = this.workspaceOf(win);
         return ws ? { id: ws.id, name: ws.name } : null;
       })(),
+      fullscreen: !!win.fullscreen,
       language: this.state.preferences.language,
       systemLocale: this.systemLocale,
       version: app.getVersion(),

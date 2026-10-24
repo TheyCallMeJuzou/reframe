@@ -733,6 +733,39 @@ select {
   height: 28px;
 }
 
+/* How to leave full screen: shown for a moment after going full screen, like browsers do. */
+.fullscreen-hint {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  z-index: 50;
+  padding: 8px 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text);
+  box-shadow: 0 6px 24px rgb(0 0 0 / 35%);
+  transform: translateX(-50%);
+  pointer-events: none;
+  animation: fullscreen-hint 3.5s ease forwards;
+}
+
+@keyframes fullscreen-hint {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -8px);
+  }
+  10%,
+  80% {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+  100% {
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+
 /* About reframe. */
 .modal.about {
   align-items: center;

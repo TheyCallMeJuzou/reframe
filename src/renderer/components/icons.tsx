@@ -34,6 +34,12 @@ export const LayersIcon = () => (
   </svg>
 );
 
+export const ExitFullscreenIcon = () => (
+  <svg {...base} aria-hidden="true">
+    <path d="M6 2.5V6H2.5M10 2.5V6h3.5M6 13.5V10H2.5M10 13.5V10h3.5" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
 export const PlusIcon = () => (
   <svg {...base} aria-hidden="true">
     <path d="M8 3v10M3 8h10" strokeLinecap="round" />

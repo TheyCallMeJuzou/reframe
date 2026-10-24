@@ -7,7 +7,7 @@ import type { TerminalRegistry } from './terminals';
 import { DockStrip } from './components/DockStrip';
 import { NewSessionDialog } from './components/NewSessionDialog';
 import { LayoutView } from './components/SplitView';
-import { InfoIcon, LayersIcon, ListIcon, PlusIcon, WindowIcon } from './components/icons';
+import { ExitFullscreenIcon, InfoIcon, LayersIcon, ListIcon, PlusIcon, WindowIcon } from './components/icons';
 import { SaveWorkspaceDialog } from './components/SaveWorkspaceDialog';
 import { AboutDialog } from './components/AboutDialog';
 import { neighbor, type Box } from './focus-nav';
@@ -285,6 +285,16 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
             {view.workspace?.name ?? t('toolbar.workspaces')}
           </button>
           <span className="spacer" />
+          {view.fullscreen && (
+            <button
+              className="icon-button toolbar-icon"
+              title={`${t('fullscreen.exit')} (F11)`}
+              aria-label={t('fullscreen.exit')}
+              onClick={() => window.reframe.toggleFullscreen()}
+            >
+              <ExitFullscreenIcon />
+            </button>
+          )}
           <button
             className="icon-button toolbar-icon"
             title={t('about.title')}
@@ -332,6 +342,12 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
             )}
           </main>
         </div>
+        {/* Shown for a moment whenever the window goes full screen (it is mounted anew each time). */}
+        {view.fullscreen && (
+          <div className="fullscreen-hint" role="status">
+            {t('fullscreen.hint')}
+          </div>
+        )}
         {dialogOpen && <NewSessionDialog onClose={() => setDialogOpen(false)} />}
         {namingWorkspace && (
           <SaveWorkspaceDialog

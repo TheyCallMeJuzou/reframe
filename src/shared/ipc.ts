@@ -24,6 +24,7 @@ export interface WindowView {
   locale: Locale;
   /** The workspace this window was saved as or opened from. */
   workspace: { id: string; name: string } | null;
+  fullscreen: boolean;
   /** The language setting behind `locale`, and the system's language (for About). */
   language: Language;
   systemLocale: Locale;
