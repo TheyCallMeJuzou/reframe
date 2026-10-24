@@ -9,18 +9,35 @@
   group them, tear them out, pull terminal windows in, and get every session back after a restart.
 </p>
 
+<p align="center">
+  <img src="docs/screenshots/hero.png" alt="reframe with a workspace: a group of four sessions, two more tiles, and the session list with saved workspaces">
+  <br>
+  <sub>The pictures show made-up projects and sessions.</sub>
+</p>
+
 ---
 
 ## What it does
 
 - **All sessions in view.** Every session is a tile, and all tiles are visible at once, in two columns that fill in turn. Drag a tile's header onto another tile's edge to split next to it; the drop zone shows where it lands.
+
+  <img src="docs/screenshots/drag-tile.gif" alt="A tile dragged by its header to below another tile">
+
 - **Out of the way when you want.** The arrow in a tile's corner collapses it into the side bar; a click puts it back where it was.
 - **Groups.** Put tiles into a group (right-click a tile, or drag it onto a group): a colored frame with a name. A group collapses, moves and leaves the window as one; dissolve it or end all its sessions from its menu.
 - **Several windows.** Open a new, empty window (toolbar, tray or Ctrl+Shift+N), or drag a tile or a group out of the window and it gets a window of its own; drag it back, or into another window, whenever you like.
 - **Workspaces.** Save a window under a name (Workspaces in the toolbar) and open it again later, as a window of its own with its tiles, groups and sessions, from the toolbar, the tray or the session list. F11 takes a window to full screen.
+
+  <img src="docs/screenshots/windows.png" alt="Two reframe windows, each saved as a workspace with its own group of sessions">
+
 - **Session list.** The side bar on the left lists the sessions in reframe, the ones running in other terminals and your recent Claude Code sessions, with search. Click or drag one to open it: ended sessions resume, and sessions running elsewhere are taken over (ended there, continued here, history and name included). Select several with Shift or Ctrl+click and open them together from the right-click menu, also as a new group, here or in a new window. Sessions that turn up while reframe runs light up, and the Sessions button gets a dot while the list is hidden.
 - **Pull terminal windows in** (Windows). Drag a Windows Terminal or console window (or just a tab of it) with a running `claude` onto reframe: after a short confirmation the session continues in reframe, at the spot you dropped it, and the terminal tab closes if nothing else runs in it.
 - **Files and screenshots.** Drop files onto a session to type in their paths (Claude Code attaches images among them); Ctrl+V pastes text, files you copied in Explorer or Finder, or a screenshot from the clipboard.
+
+  <img src="docs/screenshots/files.gif" alt="A screenshot dropped onto a session turns into an image for Claude Code">
+
+  <img src="docs/screenshots/paste.gif" alt="Ctrl+V pastes a screenshot from the clipboard into a session">
+
 - **Nothing gets lost.** Every change is saved right away. Quitting from the tray ends the sessions cleanly, and the next start resumes each one (`claude --resume`) in its folder, in its place.
 - **Runs in the background.** Closing a window only hides it: sessions keep working, and you get a notification when Claude is done or needs you, unless you are looking at it anyway.
 - **Starts with the system** if you like (tray menu), quietly in the tray, and **updates itself** from GitHub Releases.
@@ -68,6 +85,7 @@ npm test           # unit tests
 npm run test:e2e   # builds, then runs the end-to-end tests against a fake claude
 npm run typecheck && npm run lint
 npm run dist       # installers for this system, into dist/ (npm run dist:dir: just the unpacked app)
+npm run screenshots  # the pictures in this README, taken from the real app with demo sessions
 ```
 
 A smoke test against the real CLI is opt-in (it starts real sessions; the hooks test sends one short prompt):

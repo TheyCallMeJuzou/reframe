@@ -8,8 +8,18 @@ export default defineConfig(
   js.configs.recommended,
   tseslint.configs.recommended,
   {
-    files: ['scripts/**/*.mjs', 'test/**/*.mjs'],
-    languageOptions: { globals: { Buffer: 'readonly', console: 'readonly', process: 'readonly', fetch: 'readonly' } },
+    files: ['scripts/**/*.mjs', 'test/**/*.mjs', 'screenshots/**/*.mjs'],
+    languageOptions: {
+      globals: {
+        Buffer: 'readonly',
+        console: 'readonly',
+        process: 'readonly',
+        fetch: 'readonly',
+        setTimeout: 'readonly',
+        clearTimeout: 'readonly',
+        setInterval: 'readonly',
+      },
+    },
   },
   {
     files: ['src/renderer/**/*.{ts,tsx}'],

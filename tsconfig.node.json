@@ -8,11 +8,13 @@
     "electron.vite.config.ts",
     "vitest.config.ts",
     "playwright.config.ts",
+    "playwright.screenshots.config.ts",
     "src/main/**/*",
     "src/preload/**/*",
     "src/ptyhost/**/*",
     "src/consolehelper/**/*",
     "src/shared/**/*",
-    "e2e/**/*"
+    "e2e/**/*",
+    "screenshots/**/*"
   ]
 }

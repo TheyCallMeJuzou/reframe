@@ -35,6 +35,16 @@ CI runs the same on Windows, macOS and Linux, plus the end-to-end tests against 
 - **Commits**: one topic per commit, with a short summary line like `fix: tiles keep their size after a restart` (`feat:`, `fix:`, `docs:`, `test:`, `chore:`) and a body that explains why.
 - **Dependencies**: add as few as possible, pin exact versions, and only use releases that are at least two weeks old. Packages with install scripts must be allowed explicitly (`allowScripts` in `package.json`).
 
+## Screenshots
+
+The pictures in the README (`docs/screenshots/`) are taken from the real app by a script, so they can be made again after the UI changes:
+
+```sh
+npm run screenshots
+```
+
+It builds reframe and starts it a few times with demo sessions in a throwaway profile, so windows open briefly. The sessions are drawn by a stand-in for `claude` (`screenshots/demo-claude.mjs`) with the made-up conversations in `screenshots/scenes.mjs`; the scenes and their layouts are in `screenshots/capture.spec.ts`. With `SCREENSHOTS_FRAMES=<folder>`, each GIF's frames also land in that folder as PNGs, to look at them one by one. GitHub's social preview (`social-preview.png`) is uploaded by hand, under Settings → General → Social preview.
+
 ## Where things are
 
 | Path                | What                                                                                          |
@@ -45,7 +55,8 @@ CI runs the same on Windows, macOS and Linux, plus the end-to-end tests against 
 | `src/renderer/`     | The window UI (React, xterm.js)                                                               |
 | `src/shared/`       | Code both sides use: layout tree, state schema, IPC contract, translations                    |
 | `e2e/`              | End-to-end tests                                                                              |
-| `docs/`             | Plan, findings, release notes for maintainers, logo                                           |
+| `screenshots/`      | The script that takes the README's pictures                                                   |
+| `docs/`             | Plan, findings, release notes for maintainers, logo, screenshots                              |
 
 [docs/PLAN.md](docs/PLAN.md) and [docs/PHASE0-FINDINGS.md](docs/PHASE0-FINDINGS.md) (German) explain the design and what was learned about Claude Code, ConPTY and Windows along the way.
 
