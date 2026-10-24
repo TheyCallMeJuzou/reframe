@@ -76,7 +76,12 @@ export function workspaceItems(
   open: (workspaceId: string) => void,
 ): MenuItemConstructorOptions[] {
   if (workspaces.length === 0) return [{ label: t('workspace.none'), enabled: false }];
-  return workspaces.map((w) => ({ label: w.name, type: 'checkbox', checked: w.open, click: () => open(w.id) }));
+  return workspaces.map((w) => ({ label: workspaceLabel(t, w), click: () => open(w.id) }));
+}
+
+/** A workspace in a menu: its name, and whether its window is open. */
+export function workspaceLabel(t: Translate, w: { name: string; open: boolean }): string {
+  return w.open ? `${w.name} ${t('workspace.openMark')}` : w.name;
 }
 
 export function workspaceItemMenu(t: Translate, o: { open: () => void; rename: () => void; remove: () => void }): Menu {

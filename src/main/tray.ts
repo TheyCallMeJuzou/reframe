@@ -27,7 +27,8 @@ export interface TrayActions {
   showPrimary: () => void;
   newSession: () => void;
   newWindow: () => void;
-  workspaces: () => { id: string; name: string; open: boolean }[];
+  /** Saved workspaces with their menu labels. */
+  workspaces: () => { id: string; label: string }[];
   openWorkspace: (workspaceId: string) => void;
   autostart: () => boolean;
   setAutostart: (enabled: boolean) => void;
@@ -45,12 +46,7 @@ export function createTray(icon: string, icon2x: string, actions: TrayActions): 
   const workspaceSubmenu = () => {
     const workspaces = actions.workspaces();
     if (workspaces.length === 0) return [{ label: actions.labels().noWorkspaces, enabled: false }];
-    return workspaces.map((w) => ({
-      label: w.name,
-      type: 'checkbox' as const,
-      checked: w.open,
-      click: () => actions.openWorkspace(w.id),
-    }));
+    return workspaces.map((w) => ({ label: w.label, click: () => actions.openWorkspace(w.id) }));
   };
 
   const refresh = () => {

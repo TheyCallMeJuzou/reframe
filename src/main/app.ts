@@ -79,6 +79,7 @@ import {
   type Preferences,
   type SessionRecord,
   type WindowState,
+  type Workspace,
 } from '@shared/state';
 import { listRunning, TranscriptIndex } from './claude/discovery';
 import { claudeHome, readRegistryEntry, transcriptExists, type RegistryEntry } from './claude/registry';
@@ -93,7 +94,7 @@ import { PtyHostClient } from './ptyhost-client';
 import { SessionManager, type IdentityPatch, type NotifyKind } from './sessions';
 import { StateStore } from './state/store';
 import { stopExternalClaude } from './takeover';
-import { colorMenu, groupMenu, listMenu, tileMenu, workspaceItemMenu, workspaceMenu } from './menus';
+import { colorMenu, groupMenu, listMenu, tileMenu, workspaceItemMenu, workspaceLabel, workspaceMenu } from './menus';
 import { snapshotWindow, windowFromWorkspace } from '@shared/workspaces';
 import { createTray } from './tray';
 import { readClipboard } from './clipboard';
@@ -250,7 +251,7 @@ export class ReframeApp {
       windowId,
       locale: this.locale,
       workspace: (() => {
-        const ws = this.state.workspaces.find((w) => w.id === win.workspaceId);
+        const ws = this.workspaceOf(win);
         return ws ? { id: ws.id, name: ws.name } : null;
       })(),
       language: this.state.preferences.language,
@@ -689,7 +690,7 @@ export class ReframeApp {
       name: w.name,
       sessions: w.sessions.length,
       savedAt: w.savedAt,
-      open: this.state.windows.some((win) => win.workspaceId === w.id),
+      open: !!this.windowOfWorkspace(w.id),
     }));
     return { workspaces, app, running, found, hasMore: past.hasMore };
   }
@@ -930,7 +931,7 @@ export class ReframeApp {
   /** Saves the window again over the workspace it was saved as or opened from. */
   updateWorkspace(windowId: string): void {
     const win = this.findWindow(windowId);
-    const old = this.state.workspaces.find((w) => w.id === win?.workspaceId);
+    const old = win && this.workspaceOf(win);
     if (!win || !old) return;
     const workspace = snapshotWindow(win, this.state.sessions, { id: old.id, name: old.name, savedAt: Date.now() });
     this.state = { ...this.state, workspaces: this.state.workspaces.map((w) => (w.id === old.id ? workspace : w)) };
@@ -945,8 +946,13 @@ export class ReframeApp {
   openWorkspace(workspaceId: string): void {
     const workspace = this.state.workspaces.find((w) => w.id === workspaceId);
     if (!workspace) return;
-    const open = this.state.windows.find((w) => w.workspaceId === workspaceId);
+    const open = this.windowOfWorkspace(workspaceId);
     if (open) return this.windows.show(open.id);
+    // A window that was the workspace's but shows none of its sessions any more is just a window now.
+    this.state = {
+      ...this.state,
+      windows: this.state.windows.map((w) => (w.workspaceId === workspaceId ? { ...w, workspaceId: undefined } : w)),
+    };
 
     const ids = new Map<string, string>();
     const sessions = { ...this.state.sessions };
@@ -1013,11 +1019,25 @@ export class ReframeApp {
   }
 
   private workspaceItems(): { id: string; name: string; open: boolean }[] {
-    return this.state.workspaces.map((w) => ({
-      id: w.id,
-      name: w.name,
-      open: this.state.windows.some((win) => win.workspaceId === w.id),
-    }));
+    return this.state.workspaces.map((w) => ({ id: w.id, name: w.name, open: !!this.windowOfWorkspace(w.id) }));
+  }
+
+  /**
+   * The workspace a window stands for: the one it was saved as or opened from, as long as it still shows some of
+   * that workspace's sessions (a window that has become something else is just a window).
+   */
+  private workspaceOf(win: WindowState): Workspace | null {
+    const workspace = this.state.workspaces.find((w) => w.id === win.workspaceId);
+    if (!workspace) return null;
+    const ids = new Set(workspace.sessions.flatMap((s) => [s.id, s.claudeSessionId]));
+    const shows = windowSessions(win).some(
+      (id) => ids.has(id) || ids.has(this.state.sessions[id]?.claudeSessionId ?? ''),
+    );
+    return shows ? workspace : null;
+  }
+
+  private windowOfWorkspace(workspaceId: string): WindowState | undefined {
+    return this.state.windows.find((w) => w.workspaceId === workspaceId && this.workspaceOf(w));
   }
 
   /** The toolbar's Workspaces menu: save this window, update its workspace, open saved ones. */
@@ -1025,7 +1045,7 @@ export class ReframeApp {
     const browserWindow = this.windows.get(windowId);
     const win = this.findWindow(windowId);
     if (!browserWindow || !win) return;
-    const current = this.state.workspaces.find((w) => w.id === win.workspaceId) ?? null;
+    const current = this.workspaceOf(win);
     const menu = workspaceMenu(this.t, {
       current,
       workspaces: this.workspaceItems(),
@@ -1289,7 +1309,7 @@ export class ReframeApp {
         this.windows.send(id, IPC.openNewSession, null);
       },
       newWindow: () => this.newWindow(),
-      workspaces: () => this.workspaceItems(),
+      workspaces: () => this.workspaceItems().map((w) => ({ id: w.id, label: workspaceLabel(t, w) })),
       openWorkspace: (id) => this.openWorkspace(id),
       about: () => {
         const id = this.state.windows[0]!.id;

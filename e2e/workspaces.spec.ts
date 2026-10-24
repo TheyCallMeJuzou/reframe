@@ -87,3 +87,40 @@ test('workspaces: save a window, open it again, rename and delete it', async () 
     await cleanup(dir);
   }
 });
+
+test('a workspace saved from the main window opens as a window of its own once that window became another', async () => {
+  const { dir, project, env, launches, byName } = setup();
+  try {
+    const { app, page } = await launch(env);
+    await newSession(page, project, 'alpha');
+    await page.getByRole('button', { name: 'Workspaces' }).click();
+    expect(await callMain<boolean>(app, 'clickMenuItem', 'Save this window as a workspace …')).toBe(true);
+    const naming = page.getByRole('dialog', { name: 'Save as a workspace' });
+    await naming.getByRole('textbox').fill('Main work');
+    await naming.getByRole('button', { name: 'Save' }).click();
+    await expect(page.locator('.toolbar')).toContainText('Main work');
+
+    // Its session ends: the main window stays (it always does), but it is not that workspace any more.
+    await page.locator('.tile').getByRole('button', { name: 'End session' }).click();
+    await expect(page.locator('.tile')).toHaveCount(0);
+    await expect(page.locator('.toolbar')).not.toContainText('Main work');
+
+    // So opening the workspace gives it a window of its own again, with the session resumed.
+    await page.getByRole('button', { name: 'Sessions', exact: true }).click();
+    const row = page.locator('.workspace-row', { hasText: 'Main work' });
+    await expect(row).not.toHaveClass(/is-open/);
+    const opened = app.waitForEvent('window');
+    await row.click();
+    const restored = await opened;
+    await expect(restored.locator('.tile')).toHaveCount(1);
+    await expect(restored.locator('.toolbar')).toContainText('Main work');
+    const alpha = byName('alpha').claudeSessionId;
+    await expect.poll(() => launches().filter((l) => l.event === 'start' && l.args.includes(alpha)).length).toBe(2);
+    await quit(app);
+  } catch (error) {
+    await captureWindows('workspace-main-window');
+    throw error;
+  } finally {
+    await cleanup(dir);
+  }
+});
