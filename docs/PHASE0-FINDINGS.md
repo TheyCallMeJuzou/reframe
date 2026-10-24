@@ -80,6 +80,12 @@ Beim Schließen des Spikes (sofortiges `app.quit()`) lief der Claude-Prozess sam
 - **`window.close()` aus der Seite schließt kein `BrowserWindow`**, das nicht per Skript geöffnet wurde (Chromium-Regel). In Tests geht das über `app.browserWindow(page)`.
 - Wird ein Drag ins Leere mit Esc abgebrochen, meldet Chromium dasselbe (`dropEffect: 'none'`) wie ein Loslassen ins Leere. Liegt der Zeiger dann außerhalb aller Fenster, wird die Kachel herausgelöst.
 
+### Nachträge aus Phase 3
+- **Ziehen innerhalb eines Fensters war seit Phase 1 kaputt.** Ein `drop`-Listener in der *Capture*-Phase hat den Drag-Zustand zurückgesetzt. Im Microtask direkt nach diesem Listener rendert React neu und entfernt die Drop-Ebene, bevor Reacts eigener `onDrop` läuft. Zurückgesetzt wird jetzt in der Bubble-Phase. Gefunden hat das erst ein Test mit echtem HTML5-Drag-and-drop.
+- **Die Drop-Seite kommt aus dem `drop`-Ereignis selbst**, nicht aus einem per `dragover` gesetzten State. Bei einem schnellen Drop ist der noch nicht gerendert.
+- **Playwrights `dragTo` erzeugt in Electron echte HTML5-Drag-Ereignisse inklusive eigener MIME-Typen und Daten**, allerdings nur ein einziges `dragover`. Ziehen zwischen Fenstern lässt sich so weiterhin nicht testen.
+- Native Menüs (`Menu.popup`) kann Playwright nicht anklicken. Deshalb rufen die Tests dieselben öffentlichen App-Methoden auf, die auch die Menüs benutzen.
+
 ## Konsequenzen für den Plan
 1. **Status und Session-ID-Tracking:** Primär über HTTP-Hooks (`UserPromptSubmit`, `Stop`, `Notification`; dokumentiert). Für sofortige ID-Wechsel (`/clear`) und den Status zusätzlich die Registry-Datei der bekannten PID beobachten. Einen `SessionStart`-Command-Hook gibt es vorerst nicht, weil er eine Runtime (node) bei den Usern voraussetzen würde.
 2. **Spawn-Umgebung bereinigen** (siehe oben). Gilt auch für die Dev-Umgebung.

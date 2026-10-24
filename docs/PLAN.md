@@ -147,7 +147,11 @@ reframe/
 
 **Phase 2: Mehrere Fenster** ✅ (manuell noch offen: echtes Ziehen zwischen OS-Fenstern): Rausziehen in ein neues Fenster, Drag zwischen Fenstern, versteckte Fenster im Tray, Bounds und Monitor beim Restore. Entschieden: Ein Nebenfenster ohne Kacheln (auch ohne eingeklappte) schließt sich automatisch, das erste Fenster bleibt immer.
 
-**Phase 3: Gruppen**: Rahmen, Gruppieren und Auflösen, Gruppe verschieben, einklappen und rausziehen.
+**Phase 3: Gruppen** ✅: Rahmen, Gruppieren und Auflösen, Gruppe verschieben, einklappen und rausziehen. Entschieden:
+- Anlegen per Rechtsklick auf den Kachelkopf (native Menüs: "Neue Gruppe", "Zu Gruppe hinzufügen", "Aus Gruppe entfernen"). Eine Kachel in den Rahmen ziehen fügt sie hinzu, auf den Rahmenrand ziehen nimmt sie heraus.
+- Name und Farbe automatisch ("Gruppe n", nächste freie von 8 Farben). Umbenennen per Doppelklick, die Farbe über den Farbpunkt.
+- Die Gruppenleiste kann einklappen (ein Eintrag in der Seitenleiste), ziehen (auch in andere oder neue Fenster), auflösen und alle Sessions beenden (ohne Rückfrage, wie das × an einer Kachel).
+- Keine verschachtelten Gruppen. Klappt man die letzte Kachel einer Gruppe ein, klappt die ganze Gruppe ein.
 
 **Phase 4: Session-Liste**: Bereiche "In der App" und "Gefunden" (Discovery über alle Projekte, Start immer im richtigen Ordner), Drag aus der Liste (beendet → resume, extern laufend → "Übernehmen?" statt eines zweiten Prozesses), "Aus Liste entfernen".
 

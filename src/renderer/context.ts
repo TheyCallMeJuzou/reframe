@@ -1,21 +1,27 @@
 import { createContext, useContext } from 'react';
 import { translate, type Locale, type MessageKey } from '@shared/i18n';
 import type { SessionView } from '@shared/ipc';
+import type { DragKind } from './dnd';
 import type { TerminalRegistry } from './terminals';
 
 export type Translate = (key: MessageKey, params?: Record<string, string | number>) => string;
 
-/** A tile drag over this window; sessionId is null when the tile comes from another window. */
+/** A drag over this window; key is null when the tile or group comes from another window. */
 export interface DragState {
-  sessionId: string | null;
+  key: string | null;
+  kind: DragKind;
 }
 
 export interface AppContextValue {
   t: Translate;
+  windowId: string;
   sessions: Record<string, SessionView>;
   terminals: TerminalRegistry;
   dragging: DragState | null;
   setDragging: (drag: DragState | null) => void;
+  /** Group whose name is being edited (started by the group menu's "Rename"). */
+  renaming: string | null;
+  setRenaming: (groupId: string | null) => void;
 }
 
 export const AppContext = createContext<AppContextValue | null>(null);

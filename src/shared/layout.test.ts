@@ -1,10 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
+  addToGroup,
   appendNode,
+  dissolveGroup,
+  groupOf,
+  groups,
+  groupTile,
   insertTile,
   leaves,
+  moveNode,
   moveTile,
   normalize,
+  removeFromGroup,
   removeTile,
   restoreNode,
   setSplitSizes,
@@ -140,6 +147,56 @@ describe('moveTile', () => {
     root = moveTile(root, 'b', { key: tileKey('d'), side: 'top' });
     root = moveTile(root, 'd', { key: tileKey('a'), side: 'left' });
     expect(leaves(root).sort()).toEqual(['a', 'b', 'c', 'd']);
+  });
+});
+
+describe('groups', () => {
+  const G = { id: 'g', name: 'G', color: '#f00' };
+  const H = { id: 'h', name: 'H', color: '#00f' };
+
+  it('frames a tile and grows by adding tiles after its last one', () => {
+    let root: LayoutNode | null = split('row', [tile('a'), tile('b'), tile('c')]);
+    root = groupTile(root, 'a', G);
+    expect(shape(root)).toBe('row(group(a), b, c)');
+    root = addToGroup(root, 'c', 'g');
+    expect(shape(root)).toBe('row(group(row(a, c)), b)');
+    expect(groupOf(root, tileKey('c'))?.id).toBe('g');
+    expect(groupOf(root, tileKey('b'))).toBeNull();
+    expect(groupTile(root, 'a', H)).toBe(root); // already grouped
+  });
+
+  it('takes a tile out next to its group, and an empty group disappears', () => {
+    let root = groupTile(split('row', [tile('a'), tile('b')]), 'a', G);
+    root = addToGroup(root, 'b', 'g');
+    root = removeFromGroup(root, 'b');
+    expect(shape(root)).toBe('row(group(a), b)');
+    root = removeFromGroup(root, 'a');
+    expect(groups(root)).toEqual([]);
+    expect(leaves(root).sort()).toEqual(['a', 'b']);
+  });
+
+  it('dissolves a group into its tiles', () => {
+    let root = groupTile(split('row', [tile('a'), tile('b'), tile('c')]), 'a', G);
+    root = addToGroup(root, 'b', 'g');
+    expect(shape(dissolveGroup(root, 'g'))).toBe('row(a, b, c)');
+  });
+
+  it('moves a whole group, and a dragged tile joins or leaves groups by where it lands', () => {
+    let root = groupTile(split('row', [tile('a'), tile('b'), tile('c')]), 'a', G);
+    root = moveNode(root, 'g', { key: tileKey('c'), side: 'bottom' });
+    expect(shape(root)).toBe('row(b, col(c, group(a)))');
+    root = moveTile(root, 'b', { key: tileKey('a'), side: 'right' });
+    expect(groupOf(root, tileKey('b'))?.id).toBe('g');
+    root = moveTile(root, 'b', { key: tileKey('c'), side: 'left' });
+    expect(groupOf(root, tileKey('b'))).toBeNull();
+  });
+
+  it('never nests groups and ignores drops of a group onto itself', () => {
+    let root = groupTile(split('row', [tile('a'), tile('b')]), 'a', G);
+    root = groupTile(root, 'b', H);
+    const moved = moveNode(root, 'h', { key: tileKey('a'), side: 'bottom' });
+    expect(shape(moved)).toBe('col(group(a), group(b))');
+    expect(moveNode(root, 'g', { key: tileKey('a'), side: 'left' })).toBe(root);
   });
 });
 

@@ -2,13 +2,19 @@ import { describe, expect, it } from 'vitest';
 import {
   addTile,
   applyLayoutAction,
+  dockSessions,
   dropSession,
+  isCollapsed,
   isDropTarget,
   isLayoutAction,
   isWindowEmpty,
+  putNode,
+  takeNode,
+  windowGroups,
   windowHasSession,
+  windowSessions,
 } from './actions';
-import { leaves, tileKey } from './layout';
+import { addToGroup, groupOf, groupTile, leaves, tileKey } from './layout';
 import { emptyWindow } from './state';
 
 const withTiles = (...ids: string[]) => ids.reduce((w, id) => addTile(w, id), emptyWindow('w1'));
@@ -18,7 +24,7 @@ describe('collapse and expand', () => {
     const win = withTiles('a', 'b', 'c');
     const collapsed = applyLayoutAction(win, { type: 'tile/collapse', sessionId: 'b' });
     expect(leaves(collapsed.layout)).toEqual(['a', 'c']);
-    expect(collapsed.dock.map((d) => d.sessionId)).toEqual(['b']);
+    expect(collapsed.dock.flatMap(dockSessions)).toEqual(['b']);
     expect(windowHasSession(collapsed, 'b')).toBe(true);
 
     const expanded = applyLayoutAction(collapsed, { type: 'tile/expand', sessionId: 'b' });
@@ -63,12 +69,68 @@ describe('isDropTarget', () => {
 
 describe('isLayoutAction', () => {
   it('accepts well-formed actions only', () => {
-    expect(isLayoutAction({ type: 'tile/move', sessionId: 'a', target: { key: tileKey('b'), side: 'left' } })).toBe(
+    expect(isLayoutAction({ type: 'node/move', key: tileKey('a'), target: { key: tileKey('b'), side: 'left' } })).toBe(
       true,
     );
-    expect(isLayoutAction({ type: 'tile/move', sessionId: 'a', target: { key: 'x', side: 'middle' } })).toBe(false);
+    expect(isLayoutAction({ type: 'node/move', key: 'a', target: { key: 'x', side: 'middle' } })).toBe(false);
+    expect(isLayoutAction({ type: 'group/rename', groupId: 'g', name: 'x' })).toBe(true);
+    expect(isLayoutAction({ type: 'group/collapse', groupId: 7 })).toBe(false);
     expect(isLayoutAction({ type: 'split/resize', splitId: 's', sizes: [50, '50'] })).toBe(false);
     expect(isLayoutAction({ type: 'tile/delete', sessionId: 'a' })).toBe(false);
     expect(isLayoutAction(null)).toBe(false);
+  });
+});
+
+describe('groups in a window', () => {
+  const grouped = () => {
+    let win = withTiles('a', 'b', 'c');
+    win = { ...win, layout: groupTile(win.layout, 'a', { id: 'g', name: 'G', color: '#f00' }) };
+    return { ...win, layout: addToGroup(win.layout, 'b', 'g') };
+  };
+
+  it('collapses a whole group into one dock entry and restores it', () => {
+    const collapsed = applyLayoutAction(grouped(), { type: 'group/collapse', groupId: 'g' });
+    expect(leaves(collapsed.layout)).toEqual(['c']);
+    expect(collapsed.dock).toHaveLength(1);
+    expect(windowSessions(collapsed).sort()).toEqual(['a', 'b', 'c']);
+    expect(isCollapsed(collapsed, 'a')).toBe(true);
+    expect(windowGroups(collapsed).map((g) => g.id)).toEqual(['g']);
+
+    const expanded = applyLayoutAction(collapsed, { type: 'group/expand', groupId: 'g' });
+    expect(leaves(expanded.layout)).toEqual(['a', 'b', 'c']);
+    expect(groupOf(expanded.layout, tileKey('b'))?.id).toBe('g');
+    expect(expanded.dock).toEqual([]);
+  });
+
+  it('collapsing the last tile of a group takes the group along', () => {
+    let win = withTiles('a', 'b');
+    win = { ...win, layout: groupTile(win.layout, 'a', { id: 'g', name: 'G', color: '#f00' }) };
+    const collapsed = applyLayoutAction(win, { type: 'tile/collapse', sessionId: 'a' });
+    expect(collapsed.dock).toMatchObject([{ kind: 'group', node: { id: 'g' } }]);
+  });
+
+  it('renames a group, visible or collapsed', () => {
+    const renamed = applyLayoutAction(grouped(), { type: 'group/rename', groupId: 'g', name: '  API  ' });
+    expect(windowGroups(renamed)[0]!.name).toBe('API');
+    const collapsed = applyLayoutAction(renamed, { type: 'group/collapse', groupId: 'g' });
+    const again = applyLayoutAction(collapsed, { type: 'group/rename', groupId: 'g', name: 'Backend' });
+    expect(windowGroups(again)[0]!.name).toBe('Backend');
+    expect(applyLayoutAction(again, { type: 'group/rename', groupId: 'g', name: '   ' })).toBe(again);
+  });
+
+  it('drops a session out of a collapsed group, and the group once it is empty', () => {
+    const collapsed = applyLayoutAction(grouped(), { type: 'group/collapse', groupId: 'g' });
+    const one = dropSession(collapsed, 'a');
+    expect(windowSessions(one).sort()).toEqual(['b', 'c']);
+    expect(dropSession(one, 'b').dock).toEqual([]);
+  });
+
+  it('moves a group between windows', () => {
+    const from = grouped();
+    const { win: rest, node } = takeNode(from, 'g');
+    expect(leaves(rest.layout)).toEqual(['c']);
+    const to = putNode(withTiles('x'), node!, { key: tileKey('x'), side: 'bottom' });
+    expect(groupOf(to.layout, tileKey('a'))?.id).toBe('g');
+    expect(putNode(emptyWindow('w2'), node!, null).layout).toEqual(node);
   });
 });

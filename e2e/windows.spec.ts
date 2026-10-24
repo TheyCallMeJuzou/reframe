@@ -1,34 +1,31 @@
 // End to end: several windows. Tiles are torn out into new windows and moved between windows without
 // restarting their sessions; empty secondary windows close; hidden windows and their docks come back.
 // A real OS drag between windows cannot be scripted, so the test calls what a drop calls: the renderer's
-// transferTile and main's tear-out at a screen point (REFRAME_E2E hook).
+// transferNode and main's tear-out at a screen point (REFRAME_E2E hook).
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
-import type { ReframeApi } from '../src/shared/ipc';
-import { captureWindows, cleanup, launch, newSession, pageOf, quit, setup, tileByLabel } from './helpers';
+import { tileKey } from '../src/shared/layout';
+import {
+  captureWindows,
+  cleanup,
+  launch,
+  newSession,
+  pageOf,
+  quit,
+  setup,
+  tearOutNode,
+  tileByLabel,
+  transferNode,
+} from './helpers';
 
-interface Point {
-  x: number;
-  y: number;
-}
+const tearOut = (app: ElectronApplication, sessionId: string, point: { x: number; y: number }) =>
+  tearOutNode(app, tileKey(sessionId), point);
 
-type MainHook = { reframe: { tearOutSession(sessionId: string, point: Point): boolean } };
-
-const tearOut = (app: ElectronApplication, sessionId: string, point: Point) =>
-  app.evaluate((_electron, a) => (globalThis as unknown as MainHook).reframe.tearOutSession(a.sessionId, a.point), {
-    sessionId,
-    point,
-  });
-
-const transfer = (page: Page, sessionId: string, fromWindowId: string, target: { key: string; side: string } | null) =>
-  page.evaluate(
-    (a) =>
-      (globalThis as unknown as { reframe: ReframeApi }).reframe.transferTile({
-        sessionId: a.sessionId,
-        fromWindowId: a.fromWindowId,
-        target: a.target as Parameters<ReframeApi['transferTile']>[0]['target'],
-      }),
-    { sessionId, fromWindowId, target },
-  );
+const transfer = (
+  page: Page,
+  sessionId: string,
+  fromWindowId: string,
+  target: { key: string; side: 'left' | 'right' | 'top' | 'bottom' } | null,
+) => transferNode(page, tileKey(sessionId), fromWindowId, target);
 
 test('tiles move between windows, empty windows close, all windows come back', async () => {
   const { dir, project, env, launches, state, byName } = setup();

@@ -19,6 +19,14 @@ export const PlusIcon = () => (
   </svg>
 );
 
+export const MoreIcon = () => (
+  <svg {...base} aria-hidden="true" stroke="none" fill="currentColor">
+    {[4, 8, 12].map((x) => (
+      <circle key={x} cx={x} cy={8} r={1.3} />
+    ))}
+  </svg>
+);
+
 export const GripIcon = () => (
   <svg {...base} aria-hidden="true" stroke="none" fill="currentColor">
     {[5, 8, 11].flatMap((y) => [6, 10].map((x) => <circle key={`${x}-${y}`} cx={x} cy={y} r={1.1} />))}

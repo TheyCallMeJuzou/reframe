@@ -28,8 +28,12 @@ const api: ReframeApi = {
   onFocusTile: (listener) => subscribe<string>(IPC.focusTile, listener),
   onOpenNewSession: (listener) => subscribe<null>(IPC.openNewSession, () => listener()),
   openExternal: (url) => ipcRenderer.send(IPC.openExternal, url),
-  transferTile: (request) => ipcRenderer.send(IPC.transferTile, request),
-  tearOut: (sessionId, size) => ipcRenderer.send(IPC.tearOut, sessionId, size),
+  transferNode: (request) => ipcRenderer.send(IPC.transferNode, request),
+  tearOut: (key, size) => ipcRenderer.send(IPC.tearOut, key, size),
+  showTileMenu: (sessionId) => ipcRenderer.send(IPC.tileMenu, sessionId),
+  showGroupMenu: (groupId) => ipcRenderer.send(IPC.groupMenu, groupId),
+  showGroupColorMenu: (groupId) => ipcRenderer.send(IPC.groupColorMenu, groupId),
+  onRenameGroup: (listener) => subscribe<string>(IPC.renameGroup, listener),
 };
 
 contextBridge.exposeInMainWorld('reframe', api);

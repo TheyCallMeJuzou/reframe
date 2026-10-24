@@ -44,14 +44,17 @@ export interface DialogDefaults {
   preferences: Preferences;
 }
 
-/** A tile dropped into this window from another one; without a target it fills an empty window. */
+/**
+ * A tile or group (by node key) dropped into this window from another one; without a target it is added
+ * at the end (or fills an empty window).
+ */
 export interface TransferRequest {
-  sessionId: string;
+  key: string;
   fromWindowId: string;
   target: DropTarget | null;
 }
 
-/** Size of the tile when the drag started, so a torn-out window can match it. */
+/** Size of the tile or group when the drag started, so a torn-out window can match it. */
 export interface TileSize {
   width: number;
   height: number;
@@ -79,10 +82,18 @@ export interface ReframeApi {
   onOpenNewSession(listener: () => void): () => void;
   /** Opens an http(s) link from a terminal in the default browser. */
   openExternal(url: string): void;
-  /** Moves a tile from another window into this one. */
-  transferTile(request: TransferRequest): void;
-  /** A tile drag ended without a drop target; if the pointer is outside every window, it becomes a new window. */
-  tearOut(sessionId: string, size: TileSize): void;
+  /** Moves a tile or group from another window into this one. */
+  transferNode(request: TransferRequest): void;
+  /** A drag ended without a drop target; if the pointer is outside every window, the node gets a new window. */
+  tearOut(key: string, size: TileSize): void;
+  /** Native context menu for a tile (grouping). */
+  showTileMenu(sessionId: string): void;
+  /** Native menu for a group (rename, color, dissolve, end all). */
+  showGroupMenu(groupId: string): void;
+  /** Native menu with just the group colors. */
+  showGroupColorMenu(groupId: string): void;
+  /** The group menu's "Rename" asks the window to edit the group's name in place. */
+  onRenameGroup(listener: (groupId: string) => void): () => void;
 }
 
 export const IPC = {
@@ -101,8 +112,12 @@ export const IPC = {
   focusTile: 'reframe:focus-tile',
   openNewSession: 'reframe:open-new-session',
   openExternal: 'reframe:open-external',
-  transferTile: 'reframe:transfer-tile',
+  transferNode: 'reframe:transfer-node',
   tearOut: 'reframe:tear-out',
+  tileMenu: 'reframe:tile-menu',
+  groupMenu: 'reframe:group-menu',
+  groupColorMenu: 'reframe:group-color-menu',
+  renameGroup: 'reframe:rename-group',
 } as const;
 
 /** window.postMessage payload carrying a terminal MessagePort from preload to the page. */
@@ -116,5 +131,6 @@ export type TerminalHostMessage =
 
 export type TerminalViewMessage = { type: 'input'; data: string } | { type: 'resize'; cols: number; rows: number };
 
-/** MIME type used for dragging tiles (HTML5 DnD). */
+/** MIME types used for dragging (HTML5 DnD); the type tells tiles from groups before the drop. */
 export const TILE_MIME = 'application/x-reframe-tile';
+export const GROUP_MIME = 'application/x-reframe-group';

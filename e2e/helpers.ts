@@ -126,6 +126,37 @@ export async function newSession(page: Page, folder: string, name: string): Prom
   await expect(tileByLabel(page, name).locator('.status-idle')).toBeVisible({ timeout: 15_000 });
 }
 
+type Point = { x: number; y: number };
+type MainHook = { reframe: Record<string, (...args: never[]) => unknown> };
+
+/** Calls a public method of the app in the main process (REFRAME_E2E exposes it as globalThis.reframe). */
+export function callMain<T>(app: ElectronApplication, method: string, ...args: unknown[]): Promise<T> {
+  return app.evaluate(
+    (_electron, a) => {
+      const reframe = (globalThis as unknown as MainHook).reframe;
+      return (reframe[a.method] as (...params: unknown[]) => unknown).apply(reframe, a.args);
+    },
+    { method, args },
+  ) as Promise<T>;
+}
+
+/** What a drag that ends outside every window does: the tile or group gets a window at `point`. */
+export const tearOutNode = (app: ElectronApplication, key: string, point: Point) =>
+  callMain<boolean>(app, 'tearOutNode', key, point);
+
+/** What a drop of another window's tile or group does in `page`'s window. */
+export const transferNode = (
+  page: Page,
+  key: string,
+  fromWindowId: string,
+  target: { key: string; side: 'left' | 'right' | 'top' | 'bottom' } | null,
+) =>
+  page.evaluate((a) => (globalThis as unknown as { reframe: ReframeApi }).reframe.transferNode(a), {
+    key,
+    fromWindowId,
+    target,
+  });
+
 /** The page of the window with this id. */
 export async function pageOf(app: ElectronApplication, windowId: string): Promise<Page> {
   for (let attempt = 0; attempt < 50; attempt++) {

@@ -17,13 +17,31 @@ import {
   addTile,
   applyLayoutAction,
   dropSession,
+  isCollapsed,
   isDropTarget,
   isLayoutAction,
   isWindowEmpty,
+  patchGroup,
+  putNode,
+  takeNode,
+  windowGroups,
   windowHasSession,
+  windowSessions,
 } from '@shared/actions';
-import { translate, type Locale } from '@shared/i18n';
-import { leaves, tile } from '@shared/layout';
+import { isGroupColor, nextGroupColor, nextGroupNumber } from '@shared/groups';
+import { translate, type Locale, type MessageKey } from '@shared/i18n';
+import {
+  addToGroup,
+  dissolveGroup as removeGroupFrame,
+  findNode,
+  groupOf,
+  groups,
+  groupTile,
+  leaves,
+  removeFromGroup,
+  tileKey,
+  type GroupNode,
+} from '@shared/layout';
 import {
   IPC,
   type NewSessionRequest,
@@ -41,6 +59,7 @@ import { HookServer } from './hooks/server';
 import { PtyHostClient } from './ptyhost-client';
 import { SessionManager, type IdentityPatch, type NotifyKind } from './sessions';
 import { StateStore } from './state/store';
+import { colorMenu, groupMenu, tileMenu } from './menus';
 import { createTray } from './tray';
 import { WindowManager } from './windows';
 
@@ -132,7 +151,7 @@ export class ReframeApp {
     const win = this.state.windows.find((w) => w.id === windowId);
     if (!win) return null;
     const sessions: Record<string, SessionView> = {};
-    for (const id of [...leaves(win.layout), ...win.dock.map((d) => d.sessionId)]) {
+    for (const id of windowSessions(win)) {
       const record = this.state.sessions[id];
       if (record) sessions[id] = this.sessionView(record);
     }
@@ -170,15 +189,17 @@ export class ReframeApp {
     return this.state.windows.find((w) => w.id === windowId);
   }
 
-  /** Moves a session's tile from another window into `toId`; without a target it fills the window. */
-  private transferTile(toId: string, { sessionId, fromWindowId, target }: TransferRequest): void {
+  /** Moves a tile or group from another window into `toId`; without a target it goes to the end. */
+  private transferNode(toId: string, { key, fromWindowId, target }: TransferRequest): void {
     const from = this.findWindow(fromWindowId);
-    if (!from || !this.findWindow(toId) || from.id === toId || !windowHasSession(from, sessionId)) return;
+    if (!from || !this.findWindow(toId) || from.id === toId) return;
+    const { win: rest, node } = takeNode(from, key);
+    if (!node) return;
     this.state = {
       ...this.state,
       windows: this.state.windows.map((w) => {
-        if (w.id === from.id) return dropSession(w, sessionId);
-        if (w.id === toId) return addTile(w, sessionId, target ?? undefined);
+        if (w.id === from.id) return rest;
+        if (w.id === toId) return putNode(w, node, target);
         return w;
       }),
     };
@@ -187,14 +208,16 @@ export class ReframeApp {
     this.push(toId);
     this.closeIfEmpty(from.id);
     this.windows.show(toId);
-    this.windows.send(toId, IPC.focusTile, sessionId);
+    this.windows.send(toId, IPC.focusTile, leaves(node)[0]);
     this.refreshTray();
   }
 
-  /** Turns a tile into a window of its own at a screen point, unless the point is over one of our windows. */
-  private tearOut(fromId: string, sessionId: string, point: { x: number; y: number }, size?: TileSize): boolean {
+  /** Gives a tile or group a window of its own at a screen point, unless the point is over one of our windows. */
+  private tearOut(fromId: string, key: string, point: { x: number; y: number }, size?: TileSize): boolean {
     const from = this.findWindow(fromId);
-    if (!from || !windowHasSession(from, sessionId) || this.windows.windowAt(point)) return false;
+    if (!from || this.windows.windowAt(point)) return false;
+    const { win: rest, node } = takeNode(from, key);
+    if (!node) return false;
     const clamp = (v: number, min: number, max: number) => Math.round(Math.min(max, Math.max(min, v)));
     const win: WindowState = {
       ...emptyWindow(crypto.randomUUID()),
@@ -205,11 +228,11 @@ export class ReframeApp {
         width: clamp((size?.width ?? 800) + 24, 480, 2400),
         height: clamp((size?.height ?? 500) + 90, 320, 1600),
       },
-      layout: tile(sessionId),
+      layout: node,
     };
     this.state = {
       ...this.state,
-      windows: [...this.state.windows.map((w) => (w.id === from.id ? dropSession(w, sessionId) : w)), win],
+      windows: [...this.state.windows.map((w) => (w.id === from.id ? rest : w)), win],
     };
     this.save();
     this.push(from.id);
@@ -219,10 +242,15 @@ export class ReframeApp {
     return true;
   }
 
-  /** Test hook (REFRAME_E2E): tears a session out at a given point instead of the pointer position. */
+  /** Test hook (REFRAME_E2E): tears a tile or group out at a given point instead of the pointer position. */
+  tearOutNode(key: string, point: { x: number; y: number }): boolean {
+    const from = this.state.windows.find((w) => findNode(w.layout, key));
+    return from ? this.tearOut(from.id, key, point) : false;
+  }
+
+  /** Test hook (REFRAME_E2E): tears a session's tile out at a given point. */
   tearOutSession(sessionId: string, point: { x: number; y: number }): boolean {
-    const from = this.windowOf(sessionId);
-    return from ? this.tearOut(from.id, sessionId, point) : false;
+    return this.tearOutNode(tileKey(sessionId), point);
   }
 
   /** Secondary windows go away once nothing is left in them; the first window always stays. */
@@ -345,14 +373,100 @@ export class ReframeApp {
     this.closeIfEmpty(windowId);
   }
 
+  // ---------- groups (actions of the native menus; public so end-to-end tests can drive them) ----------
+
+  private windowOfGroup(groupId: string): WindowState | undefined {
+    return this.state.windows.find((w) => windowGroups(w).some((g) => g.id === groupId));
+  }
+
+  private findGroup(groupId: string): GroupNode | undefined {
+    return this.state.windows.flatMap(windowGroups).find((g) => g.id === groupId);
+  }
+
+  /** Frames a tile as a new group, named "Group n" with the next free color. */
+  createGroup(sessionId: string): void {
+    const win = this.windowOf(sessionId);
+    if (!win) return;
+    const existing = this.state.windows.flatMap(windowGroups);
+    const nameFor = (n: number) => this.t('group.defaultName', { n });
+    const group = {
+      name: nameFor(
+        nextGroupNumber(
+          existing.map((g) => g.name),
+          nameFor,
+        ),
+      ),
+      color: nextGroupColor(existing.map((g) => g.color)),
+    };
+    this.mutateWindow(win.id, (w) => ({ ...w, layout: groupTile(w.layout, sessionId, group) }));
+  }
+
+  addSessionToGroup(sessionId: string, groupId: string): void {
+    const win = this.windowOf(sessionId);
+    if (win && this.windowOfGroup(groupId)?.id === win.id) {
+      this.mutateWindow(win.id, (w) => ({ ...w, layout: addToGroup(w.layout, sessionId, groupId) }));
+    }
+  }
+
+  removeSessionFromGroup(sessionId: string): void {
+    const win = this.windowOf(sessionId);
+    if (win) this.mutateWindow(win.id, (w) => ({ ...w, layout: removeFromGroup(w.layout, sessionId) }));
+  }
+
+  dissolveGroup(groupId: string): void {
+    const win = this.windowOfGroup(groupId);
+    if (win) this.mutateWindow(win.id, (w) => ({ ...w, layout: removeGroupFrame(w.layout, groupId) }));
+  }
+
+  recolorGroup(groupId: string, color: string): void {
+    const win = this.windowOfGroup(groupId);
+    if (win && isGroupColor(color)) this.mutateWindow(win.id, (w) => patchGroup(w, groupId, { color }));
+  }
+
+  /** Ends every session of the group; like a tile's ×, they stay in the session list. */
+  endGroup(groupId: string): void {
+    const win = this.windowOfGroup(groupId);
+    const group = this.findGroup(groupId);
+    if (win && group) for (const sessionId of leaves(group)) this.endSession(win.id, sessionId);
+  }
+
+  private showTileMenu(windowId: string, sessionId: string): void {
+    const win = this.findWindow(windowId);
+    const browserWindow = this.windows.get(windowId);
+    if (!win || !browserWindow || !windowHasSession(win, sessionId)) return;
+    const group = groupOf(win.layout, tileKey(sessionId));
+    tileMenu(this.t, {
+      group,
+      otherGroups: groups(win.layout).filter((g) => g.id !== group?.id),
+      newGroup: () => this.createGroup(sessionId),
+      addToGroup: (groupId) => this.addSessionToGroup(sessionId, groupId),
+      removeFromGroup: () => this.removeSessionFromGroup(sessionId),
+    }).popup({ window: browserWindow });
+  }
+
+  private showGroupMenu(windowId: string, groupId: string, colorsOnly: boolean): void {
+    const browserWindow = this.windows.get(windowId);
+    const group = this.findGroup(groupId);
+    if (!browserWindow || !group || this.windowOfGroup(groupId)?.id !== windowId) return;
+    const recolor = (hex: string) => this.recolorGroup(groupId, hex);
+    const menu = colorsOnly
+      ? colorMenu(this.t, group, recolor)
+      : groupMenu(this.t, group, {
+          rename: () => this.windows.send(windowId, IPC.renameGroup, groupId),
+          recolor,
+          dissolve: () => this.dissolveGroup(groupId),
+          endAll: () => this.endGroup(groupId),
+        });
+    menu.popup({ window: browserWindow });
+  }
+
   // ---------- notifications and tray ----------
 
   private notify(sessionId: string, kind: NotifyKind): void {
     const win = this.windowOf(sessionId);
     const record = this.state.sessions[sessionId];
     if (!win || !record || !Notification.isSupported() || process.env.REFRAME_DISABLE_NOTIFICATIONS) return;
-    const collapsed = win.dock.some((d) => d.sessionId === sessionId);
-    if (this.windows.isAttentive(win.id) && !collapsed) return;
+    if (this.windows.isAttentive(win.id) && !isCollapsed(win, sessionId)) return;
     const label = this.sessionView(record).label;
     const notification = new Notification({
       title: translate(this.locale, kind === 'done' ? 'notify.done' : 'notify.waiting', { label }),
@@ -367,22 +481,28 @@ export class ReframeApp {
     const win = this.windowOf(sessionId);
     if (!win) return;
     this.windows.show(win.id);
-    if (win.dock.some((d) => d.sessionId === sessionId)) {
-      this.mutateWindow(win.id, (w) => applyLayoutAction(w, { type: 'tile/expand', sessionId }));
+    for (const entry of win.dock) {
+      if (entry.kind === 'tile' && entry.sessionId === sessionId) {
+        this.mutateWindow(win.id, (w) => applyLayoutAction(w, { type: 'tile/expand', sessionId }));
+      } else if (entry.kind === 'group' && leaves(entry.node).includes(sessionId)) {
+        this.mutateWindow(win.id, (w) => applyLayoutAction(w, { type: 'group/expand', groupId: entry.node.id }));
+      }
     }
     this.windows.send(win.id, IPC.focusTile, sessionId);
   }
 
+  private t = (key: MessageKey, params?: Record<string, string | number>): string =>
+    translate(this.locale, key, params);
+
   private createTray(): void {
-    const t = (key: Parameters<typeof translate>[1], params?: Record<string, string | number>) =>
-      translate(this.locale, key, params);
+    const t = this.t;
     const { refresh } = createTray(this.assets.trayIcon, this.assets.trayIcon2x, {
       tooltip: t('tray.tooltip'),
       newSessionLabel: t('tray.newSession'),
       quitLabel: t('tray.quit'),
       windows: () =>
         this.state.windows.map((w, i) => {
-          const labels = [...leaves(w.layout), ...w.dock.map((d) => d.sessionId)]
+          const labels = windowSessions(w)
             .map((id) => this.state.sessions[id])
             .filter((r): r is SessionRecord => !!r)
             .map((r) => this.sessionView(r).label);
@@ -445,21 +565,29 @@ export class ReframeApp {
       const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
       return result.canceled ? null : (result.filePaths[0] ?? null);
     });
-    ipcMain.on(IPC.transferTile, (event, request: Partial<TransferRequest> | null) => {
+    ipcMain.on(IPC.transferNode, (event, request: Partial<TransferRequest> | null) => {
       const id = windowId(event);
-      if (!id || !request || typeof request.sessionId !== 'string' || typeof request.fromWindowId !== 'string') return;
+      if (!id || !request || typeof request.key !== 'string' || typeof request.fromWindowId !== 'string') return;
       if (request.target !== null && !isDropTarget(request.target)) return;
-      this.transferTile(id, {
-        sessionId: request.sessionId,
-        fromWindowId: request.fromWindowId,
-        target: request.target,
-      });
+      this.transferNode(id, { key: request.key, fromWindowId: request.fromWindowId, target: request.target });
     });
-    ipcMain.on(IPC.tearOut, (event, sessionId: unknown, size: Partial<TileSize> | null) => {
+    ipcMain.on(IPC.tearOut, (event, key: unknown, size: Partial<TileSize> | null) => {
       const id = windowId(event);
-      if (!id || typeof sessionId !== 'string') return;
+      if (!id || typeof key !== 'string') return;
       const valid = !!size && Number.isFinite(size.width) && Number.isFinite(size.height);
-      this.tearOut(id, sessionId, screen.getCursorScreenPoint(), valid ? (size as TileSize) : undefined);
+      this.tearOut(id, key, screen.getCursorScreenPoint(), valid ? (size as TileSize) : undefined);
+    });
+    ipcMain.on(IPC.tileMenu, (event, sessionId: unknown) => {
+      const id = windowId(event);
+      if (id && typeof sessionId === 'string') this.showTileMenu(id, sessionId);
+    });
+    ipcMain.on(IPC.groupMenu, (event, groupId: unknown) => {
+      const id = windowId(event);
+      if (id && typeof groupId === 'string') this.showGroupMenu(id, groupId, false);
+    });
+    ipcMain.on(IPC.groupColorMenu, (event, groupId: unknown) => {
+      const id = windowId(event);
+      if (id && typeof groupId === 'string') this.showGroupMenu(id, groupId, true);
     });
     ipcMain.on(IPC.openExternal, (_event, url: unknown) => {
       if (typeof url === 'string' && /^https?:\/\//i.test(url)) void shell.openExternal(url);

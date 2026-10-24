@@ -1,11 +1,21 @@
 // Persisted application state (userData/state.json) and its schema.
 import { z } from 'zod';
 import { PERMISSION_MODES } from './launch';
-import type { LayoutNode } from './layout';
+import type { GroupNode, LayoutNode } from './layout';
 
 export const STATE_VERSION = 1;
 
 const side = z.enum(['left', 'right', 'top', 'bottom']);
+
+export const groupNodeSchema: z.ZodType<GroupNode> = z.lazy(() =>
+  z.object({
+    kind: z.literal('group'),
+    id: z.string(),
+    name: z.string(),
+    color: z.string(),
+    child: layoutNodeSchema,
+  }),
+);
 
 export const layoutNodeSchema: z.ZodType<LayoutNode> = z.lazy(() =>
   z.union([
@@ -17,13 +27,7 @@ export const layoutNodeSchema: z.ZodType<LayoutNode> = z.lazy(() =>
       children: z.array(layoutNodeSchema).min(2),
       sizes: z.array(z.number()),
     }),
-    z.object({
-      kind: z.literal('group'),
-      id: z.string(),
-      name: z.string(),
-      color: z.string(),
-      child: layoutNodeSchema,
-    }),
+    groupNodeSchema,
   ]),
 );
 
@@ -34,11 +38,11 @@ export const restoreHintSchema = z.object({
   share: z.number().optional(),
 });
 
-export const dockEntrySchema = z.object({
-  kind: z.literal('tile'),
-  sessionId: z.string(),
-  hint: restoreHintSchema.nullable(),
-});
+/** A collapsed tile, or a whole collapsed group with its layout. */
+export const dockEntrySchema = z.union([
+  z.object({ kind: z.literal('tile'), sessionId: z.string(), hint: restoreHintSchema.nullable() }),
+  z.object({ kind: z.literal('group'), node: groupNodeSchema, hint: restoreHintSchema.nullable() }),
+]);
 
 export const boundsSchema = z.object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() });
 

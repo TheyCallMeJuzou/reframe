@@ -158,8 +158,112 @@ button {
 }
 
 .panel > .split,
-.panel > .tile {
+.panel > .tile,
+.panel > .group,
+.layout > .group {
   flex: 1;
+}
+
+/* ---------- groups ---------- */
+
+.group {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: 0 4px 4px;
+  border: 2px solid var(--group-color);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--group-color) 7%, transparent);
+}
+
+.group.is-dragging {
+  opacity: 0.5;
+}
+
+.group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  flex: none;
+  cursor: grab;
+  user-select: none;
+}
+
+.group-header:active {
+  cursor: grabbing;
+}
+
+.group-color {
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--group-color);
+  cursor: pointer;
+  flex: none;
+}
+
+.group-name {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.group-name-input {
+  width: 180px;
+  padding: 1px 6px;
+  font-weight: 600;
+}
+
+.group-count {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.group-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.group-body > .split,
+.group-body > .tile {
+  flex: 1;
+}
+
+/* Edges of a group frame take drops that go next to the group, outside of it. */
+.group-band {
+  position: absolute;
+  z-index: 6;
+}
+
+.band-left {
+  inset: 0 auto 0 -2px;
+  width: 14px;
+}
+
+.band-right {
+  inset: 0 -2px 0 auto;
+  width: 14px;
+}
+
+.band-top {
+  inset: -2px 0 auto 0;
+  height: 14px;
+}
+
+.band-bottom {
+  inset: auto 0 -2px 0;
+  height: 14px;
 }
 
 .separator {
@@ -422,6 +526,16 @@ button {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12px;
+}
+
+.dock-group {
+  border-color: var(--group-color);
+  border-left-width: 3px;
+}
+
+.dock-count {
+  color: var(--muted);
+  font-size: 11px;
 }
 
 /* ---------- empty state ---------- */

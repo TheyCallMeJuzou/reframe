@@ -254,11 +254,100 @@ function findParentSplit(node: LayoutNode, key: string): SplitNode | null {
   return null;
 }
 
+/** Moves the node with `key` (a tile or a whole group) next to the target. */
+export function moveNode(root: LayoutNode | null, key: string, target: DropTarget): LayoutNode | null {
+  const node = findNode(root, key);
+  // Dropping a node onto itself or a group onto one of its own tiles changes nothing.
+  if (!node || findNode(node, target.key)) return root;
+  const { root: without, removed } = removeNode(root, key);
+  if (!removed) return root;
+  const resolved = resolveTarget(without, removed, target);
+  return insertNode(without, removed, resolved.key, resolved.side);
+}
+
 export function moveTile(root: LayoutNode | null, sessionId: string, target: DropTarget): LayoutNode | null {
-  if (target.key === tileKey(sessionId)) return root;
+  return moveNode(root, tileKey(sessionId), target);
+}
+
+/** Groups do not nest: a group dropped next to a grouped tile lands next to that tile's group instead. */
+export function resolveTarget(root: LayoutNode | null, node: LayoutNode, target: DropTarget): DropTarget {
+  if (node.kind !== 'group') return target;
+  const group = groupOf(root, target.key);
+  return group ? { key: group.id, side: target.side } : target;
+}
+
+// ---------- groups ----------
+
+/** The group the node with `key` sits in, if any. */
+export function groupOf(root: LayoutNode | null, key: string): GroupNode | null {
+  const walk = (node: LayoutNode, group: GroupNode | null): GroupNode | null | undefined => {
+    if (nodeKey(node) === key) return group;
+    if (node.kind === 'group') return walk(node.child, node);
+    if (node.kind === 'split') {
+      for (const child of node.children) {
+        const found = walk(child, group);
+        if (found !== undefined) return found;
+      }
+    }
+    return undefined;
+  };
+  return root ? (walk(root, null) ?? null) : null;
+}
+
+export function groups(root: LayoutNode | null): GroupNode[] {
+  if (!root || root.kind === 'tile') return [];
+  if (root.kind === 'group') return [root, ...groups(root.child)];
+  return root.children.flatMap(groups);
+}
+
+/** Puts a frame around a single tile, starting a new group. */
+export function groupTile(
+  root: LayoutNode | null,
+  sessionId: string,
+  group: { id?: string; name: string; color: string },
+): LayoutNode | null {
+  if (!root || groupOf(root, tileKey(sessionId))) return root;
+  return replaceNode(root, tileKey(sessionId), (child) => ({
+    kind: 'group',
+    id: group.id ?? newId(),
+    name: group.name,
+    color: group.color,
+    child,
+  }));
+}
+
+/** Removes a group's frame; its tiles stay where they are. */
+export function dissolveGroup(root: LayoutNode | null, groupId: string): LayoutNode | null {
+  if (!root) return root;
+  return normalize(replaceNode(root, groupId, (node) => (node.kind === 'group' ? node.child : node)));
+}
+
+export function updateGroup(
+  root: LayoutNode | null,
+  groupId: string,
+  patch: { name?: string; color?: string },
+): LayoutNode | null {
+  if (!root) return root;
+  return replaceNode(root, groupId, (node) => (node.kind === 'group' ? { ...node, ...patch } : node));
+}
+
+/** Moves a tile into a group, after the group's last tile. */
+export function addToGroup(root: LayoutNode | null, sessionId: string, groupId: string): LayoutNode | null {
+  const target = findNode(root, groupId);
+  if (!target || target.kind !== 'group' || groupOf(root, tileKey(sessionId))?.id === groupId) return root;
+  const { root: without, removed } = removeTile(root, sessionId);
+  const group = findNode(without, groupId);
+  if (!removed || !group) return root;
+  return insertNode(without, removed, tileKey(leaves(group).at(-1)!), 'right');
+}
+
+/** Moves a tile out of its group, next to the group. */
+export function removeFromGroup(root: LayoutNode | null, sessionId: string): LayoutNode | null {
+  const group = groupOf(root, tileKey(sessionId));
+  if (!group) return root;
   const { root: without, removed } = removeTile(root, sessionId);
   if (!removed) return root;
-  return insertNode(without, removed, target.key, target.side);
+  return findNode(without, group.id) ? insertNode(without, removed, group.id, 'right') : appendNode(without, removed);
 }
 
 export function setSplitSizes(root: LayoutNode | null, splitId: string, sizes: number[]): LayoutNode | null {
