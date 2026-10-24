@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ForeignDropRequest, WindowView } from '@shared/ipc';
 import type { DropTarget } from '@shared/layout';
 import { AppContext, makeTranslate, type AppContextValue, type DragState } from './context';
@@ -58,8 +58,9 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
   const newFound = !view?.sidebarOpen && sessionList.fresh.size > 0;
 
   // Keyboard shortcuts, caught before the terminal (or anything else) sees the key.
+  // Updated right after rendering (before the next key press is handled), so a quick second press sees it.
   const viewRef = useRef(view);
-  useEffect(() => {
+  useLayoutEffect(() => {
     viewRef.current = view;
   }, [view]);
   const focusTile = useCallback(
