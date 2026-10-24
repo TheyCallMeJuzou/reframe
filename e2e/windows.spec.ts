@@ -28,7 +28,7 @@ const transfer = (
 ) => transferNode(page, tileKey(sessionId), fromWindowId, target);
 
 test('tiles move between windows, empty windows close, all windows come back', async () => {
-  const { dir, project, env, launches, state, byName } = setup();
+  const { dir, project, env, launches, state, byName, running } = setup();
   try {
     let { app, page } = await launch(env);
     const area = await app.evaluate(({ screen }) => screen.getPrimaryDisplay().workArea);
@@ -111,6 +111,7 @@ test('tiles move between windows, empty windows close, all windows come back', a
     await transfer(mainPage, alpha, thirdId, null);
     await expect(mainPage.locator('.tile')).toHaveCount(1);
     await expect(tileByLabel(mainPage, 'alpha').locator('.status-idle')).toBeVisible();
+    await expect.poll(running, { timeout: 15_000 }).toBe(3);
 
     await quit(app);
     const all = launches();

@@ -61,7 +61,11 @@ export function setup() {
   userData = env.REFRAME_USER_DATA!;
   const state = (): SavedState => JSON.parse(fs.readFileSync(path.join(env.REFRAME_USER_DATA!, 'state.json'), 'utf8'));
   const byName = (name: string): SavedSession => Object.values(state().sessions).find((s) => s.name === name)!;
-  return { dir, project, env, launches, state, byName };
+  // Fake claudes that are up: each writes its registry entry once it reads input (and so handles Ctrl+C), and
+  // removes it when it exits. One ended while still starting leaves no "exit" in the launch log.
+  const registry = path.join(env.REFRAME_CLAUDE_HOME!, 'sessions');
+  const running = (): number => (fs.existsSync(registry) ? fs.readdirSync(registry).length : 0);
+  return { dir, project, env, launches, state, byName, running };
 }
 
 let running: ElectronApplication | null = null;

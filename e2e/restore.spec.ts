@@ -61,11 +61,13 @@ test('sessions survive a restart with layout, dock and latest session ids', asyn
     await expect(page.locator('.dock-item', { hasText: 'beta' })).toBeVisible();
 
     // alpha has a transcript and is resumed; beta never got a prompt, so it starts fresh under its id.
-    const relaunched = launches()
-      .slice(firstRun.length)
-      .filter((l) => l.event === 'start')
-      .map((l) => l.args.slice(0, 2).join(' '));
-    expect(relaunched.sort()).toEqual([`--resume ${alphaAfterClear}`, `--session-id ${betaId}`].sort());
+    const relaunched = () =>
+      launches()
+        .slice(firstRun.length)
+        .filter((l) => l.event === 'start')
+        .map((l) => l.args.slice(0, 2).join(' '))
+        .sort();
+    await expect.poll(relaunched).toEqual([`--resume ${alphaAfterClear}`, `--session-id ${betaId}`].sort());
 
     // Expanding beta brings it back next to alpha.
     await page.locator('.dock-item', { hasText: 'beta' }).click();
