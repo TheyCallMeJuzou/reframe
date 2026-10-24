@@ -106,9 +106,15 @@ export async function captureWindows(name: string): Promise<void> {
     await page.screenshot({ path: `test-results/${name}-window-${i + 1}.png` }).catch(() => {});
   }
   const log = userData && path.join(userData, 'logs', 'main.log');
-  if (log && fs.existsSync(log))
-    console.log(`--- main.log (${name})
-${fs.readFileSync(log, 'utf8')}`);
+  if (!log || !fs.existsSync(log)) return;
+  const text = fs.readFileSync(log, 'utf8');
+  console.log(`--- main.log (${name})\n${text}`);
+  // On GitHub also as an annotation (the end of it), readable without access to the job log.
+  if (process.env.GITHUB_ACTIONS) {
+    const tail = text.split('\n').slice(-40).join('\n');
+    const escape = (value: string) => value.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+    console.log(`::warning title=main.log (${name})::${escape(tail)}`);
+  }
 }
 
 /** For `finally`: closes a still running app and removes the profile without masking test failures. */

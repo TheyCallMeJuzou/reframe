@@ -4,5 +4,6 @@ export default defineConfig({
   testDir: 'e2e',
   timeout: 120_000,
   workers: 1,
-  reporter: 'list',
+  // On GitHub, failures also become annotations of the job, which anyone can read (its log needs admin rights).
+  reporter: process.env.GITHUB_ACTIONS ? [['list'], ['github']] : 'list',
 });
