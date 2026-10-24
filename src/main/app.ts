@@ -539,6 +539,7 @@ export class ReframeApp {
     if (!win || !browserWindow || !windowHasSession(win, sessionId)) return;
     const group = groupOf(win.layout, tileKey(sessionId));
     const menu = tileMenu(this.t, {
+      rename: () => this.windows.send(windowId, IPC.startRenameSession, { sessionId, place: 'tile' }),
       group,
       otherGroups: groups(win.layout).filter((g) => g.id !== group?.id),
       newGroup: () => this.createGroup(sessionId),
@@ -556,7 +557,11 @@ export class ReframeApp {
       void this.openSessions(windowId, items, mode, null).catch((error: unknown) =>
         this.log('error', 'opening sessions from the list failed', { error: String(error) }),
       );
+    const single = items.length === 1 && items[0]!.kind === 'app' ? items[0]!.sessionId : null;
     const menu = listMenu(this.t, {
+      rename: single
+        ? () => this.windows.send(windowId, IPC.startRenameSession, { sessionId: single, place: 'list' })
+        : undefined,
       count: items.length,
       open: open('open'),
       group: open('group'),
@@ -839,6 +844,18 @@ export class ReframeApp {
     this.log('info', 'session opened from the list', { session: record.id, window: windowId });
     this.sessions.start(record, 'resume');
     this.windows.send(windowId, IPC.focusTile, record.id);
+  }
+
+  /** A name the user gives a session (in reframe only); an empty one goes back to the automatic name. */
+  renameSession(sessionId: string, name: string): void {
+    const record = this.state.sessions[sessionId];
+    if (!record) return;
+    const trimmed = name.trim().slice(0, 100);
+    // Claude Code keeps the name it was started with; renaming is reframe's own (shown instead of it).
+    const claudeName = record.claudeName === undefined ? (record.name ?? null) : record.claudeName;
+    this.updateSession(sessionId, { name: trimmed || undefined, claudeName });
+    this.log('info', 'session renamed', { session: sessionId, automatic: !trimmed });
+    this.refreshTray();
   }
 
   /** Forgets an ended session that is in no window; Claude Code's transcript is left alone. */
@@ -1195,6 +1212,9 @@ export class ReframeApp {
     ipcMain.on(IPC.tileMenu, (event, sessionId: unknown) => {
       const id = windowId(event);
       if (id && typeof sessionId === 'string') this.showTileMenu(id, sessionId);
+    });
+    ipcMain.on(IPC.renameSession, (_event, sessionId: unknown, name: unknown) => {
+      if (typeof sessionId === 'string' && typeof name === 'string') this.renameSession(sessionId, name);
     });
     ipcMain.on(IPC.listMenu, (event, items: unknown) => {
       const id = windowId(event);

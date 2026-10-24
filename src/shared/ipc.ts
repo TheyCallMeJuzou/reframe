@@ -133,6 +133,12 @@ export interface ForeignDropRequest {
   candidates: ForeignCandidate[];
 }
 
+/** Where a session's name is edited. */
+export interface SessionRename {
+  sessionId: string;
+  place: 'tile' | 'list';
+}
+
 /** The clipboard as far as pasting into a session goes. */
 export interface ClipboardContents {
   text: string;
@@ -200,6 +206,10 @@ export interface ReframeApi {
   showGroupMenu(groupId: string): void;
   /** Native menu with just the group colors. */
   showGroupColorMenu(groupId: string): void;
+  /** A name the user gives a session; "" goes back to the automatic one. */
+  renameSession(sessionId: string, name: string): void;
+  /** A tile's or the list's menu "Rename" asks the window to edit the session's name in place. */
+  onRenameSession(listener: (rename: SessionRename) => void): () => void;
   /** The group menu's "Rename" asks the window to edit the group's name in place. */
   onRenameGroup(listener: (groupId: string) => void): () => void;
   getSessionList(query: string, limit: number): Promise<SessionList>;
@@ -246,6 +256,8 @@ export const IPC = {
   groupMenu: 'reframe:group-menu',
   groupColorMenu: 'reframe:group-color-menu',
   renameGroup: 'reframe:rename-group',
+  renameSession: 'reframe:rename-session',
+  startRenameSession: 'reframe:start-rename-session',
   sessionList: 'reframe:session-list',
   openSession: 'reframe:open-session',
   removeSession: 'reframe:remove-session',

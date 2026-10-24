@@ -5,6 +5,7 @@ import { useApp } from '../context';
 import { setListDrag, setNodeDrag } from '../dnd';
 import { PAGE, type SessionListState } from '../session-list';
 import { CloseIcon } from './icons';
+import { NameInput } from './NameInput';
 import { StatusDot } from './StatusDot';
 
 const folderName = (cwd: string) => cwd.split(/[\\/]/).filter(Boolean).pop() ?? cwd;
@@ -20,7 +21,7 @@ interface Row {
  * right-click menu or by dragging them into a window.
  */
 export function SessionSidebar({ sessionList }: { sessionList: SessionListState }) {
-  const { t, locale } = useApp();
+  const { t, locale, renamingSession, setRenamingSession } = useApp();
   const { list, query, setQuery, setLimit, fresh, reload } = sessionList;
   const [selected, setSelected] = useState<string[]>([]);
   const anchor = useRef<string | null>(null);
@@ -119,6 +120,25 @@ export function SessionSidebar({ sessionList }: { sessionList: SessionListState 
         {list?.app.length === 0 && <p className="sidebar-empty">{t('list.emptyApp')}</p>}
         {list?.app.map((item) => {
           const row: Row = { key: `app:${item.id}`, ref: { kind: 'app', sessionId: item.id } };
+          if (renamingSession?.place === 'list' && renamingSession.sessionId === item.id) {
+            return (
+              <div className="sidebar-row-wrap" key={item.id}>
+                <div className="sidebar-row is-selected">
+                  <StatusDot status={item.status} />
+                  <NameInput
+                    className="sidebar-name-input"
+                    initial={item.label}
+                    placeholder={t('session.automaticName')}
+                    onCommit={(name) => {
+                      window.reframe.renameSession(item.id, name);
+                      setTimeout(reload, 100);
+                    }}
+                    onDone={() => setRenamingSession(null)}
+                  />
+                </div>
+              </div>
+            );
+          }
           return (
             <div className="sidebar-row-wrap" key={item.id}>
               <ListRow

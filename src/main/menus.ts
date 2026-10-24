@@ -7,6 +7,7 @@ import type { GroupNode } from '@shared/layout';
 type Translate = (key: MessageKey, params?: Record<string, string | number>) => string;
 
 export interface TileMenuOptions {
+  rename: () => void;
   /** The group the tile is in, if any. */
   group: GroupNode | null;
   /** Visible groups in the same window the tile could join. */
@@ -18,6 +19,8 @@ export interface TileMenuOptions {
 
 export function tileMenu(t: Translate, o: TileMenuOptions): Menu {
   return Menu.buildFromTemplate([
+    { label: t('session.rename'), click: o.rename },
+    { type: 'separator' },
     { label: t('menu.newGroup'), enabled: !o.group, click: o.newGroup },
     {
       label: t('menu.addToGroup'),
@@ -34,11 +37,14 @@ export interface ListMenuOptions {
   open: () => void;
   group: () => void;
   groupInNewWindow: () => void;
+  /** For a single session reframe manages. */
+  rename?: () => void;
 }
 
 export function listMenu(t: Translate, o: ListMenuOptions): Menu {
   return Menu.buildFromTemplate([
     { label: o.count > 1 ? t('listMenu.openMany', { count: o.count }) : t('listMenu.open'), click: o.open },
+    ...(o.rename ? [{ label: t('session.rename'), click: o.rename }] : []),
     { type: 'separator' },
     { label: t('listMenu.group'), click: o.group },
     { label: t('listMenu.groupInNewWindow'), click: o.groupInNewWindow },

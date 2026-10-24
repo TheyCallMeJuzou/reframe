@@ -1,6 +1,6 @@
 import { createContext, useContext } from 'react';
 import { translate, type Locale, type MessageKey } from '@shared/i18n';
-import type { SessionView } from '@shared/ipc';
+import type { SessionRename, SessionView } from '@shared/ipc';
 import type { DragKind } from './dnd';
 import type { TerminalRegistry } from './terminals';
 
@@ -25,6 +25,9 @@ export interface AppContextValue {
   /** Group whose name is being edited (started by the group menu's "Rename"). */
   renaming: string | null;
   setRenaming: (groupId: string | null) => void;
+  /** Session whose name is being edited, in its tile or in the session list. */
+  renamingSession: SessionRename | null;
+  setRenamingSession: (rename: SessionRename | null) => void;
 }
 
 export const AppContext = createContext<AppContextValue | null>(null);

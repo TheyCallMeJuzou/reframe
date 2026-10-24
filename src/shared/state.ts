@@ -69,7 +69,13 @@ export const sessionRecordSchema = z.object({
   /** The Claude Code session id; changes on /clear, so it is updated while the session runs. */
   claudeSessionId: z.string(),
   cwd: z.string(),
+  /** The name reframe shows; without one, Claude Code's name for the session. */
   name: z.string().optional(),
+  /**
+   * The name Claude Code gets (--name) on every start, so it keeps it when resumed: null for none. Absent until
+   * the session is renamed in reframe, and until then the same as `name`; renaming changes only reframe's.
+   */
+  claudeName: z.string().nullable().optional(),
   launch: launchOptionsSchema,
   /** open: should run (resumed on start). ended: kept in the list but not running. */
   lifecycle: z.enum(['open', 'ended']),

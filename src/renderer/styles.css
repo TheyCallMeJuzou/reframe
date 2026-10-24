@@ -325,6 +325,23 @@ button {
   pointer-events: none;
 }
 
+/* A session's name being edited, in its tile or in the list. */
+.tile-label-input,
+.sidebar-name-input {
+  min-width: 0;
+  flex: 1;
+  padding: 2px 6px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.tile-label-input {
+  max-width: 260px;
+}
+
 .tile.is-dragging {
   opacity: 0.5;
 }

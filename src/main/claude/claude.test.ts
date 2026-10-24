@@ -76,6 +76,11 @@ describe('claudeArgs', () => {
     ]);
   });
 
+  it('keeps the name Claude Code was started with when the session is renamed in reframe', () => {
+    expect(claudeArgs(session({ name: 'Shown', claudeName: 'api' }), 'resume', 'S.json')).toContain('api');
+    expect(claudeArgs(session({ name: 'Shown', claudeName: null }), 'resume', 'S.json')).not.toContain('--name');
+  });
+
   it('resumes without creating another worktree', () => {
     const s = session({ launch: { worktree: true } });
     expect(claudeArgs(s, 'resume', 'S.json')).toEqual(['--resume', s.claudeSessionId, '--settings', 'S.json']);

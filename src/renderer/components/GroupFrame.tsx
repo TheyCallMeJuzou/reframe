@@ -3,6 +3,7 @@ import { leaves, type GroupNode, type Side } from '@shared/layout';
 import { useApp } from '../context';
 import { dragKind, handleDrop, setNodeDrag } from '../dnd';
 import { CollapseIcon, GripIcon, MoreIcon } from './icons';
+import { NameInput } from './NameInput';
 
 const SIDES: Side[] = ['left', 'right', 'top', 'bottom'];
 
@@ -59,7 +60,12 @@ export function GroupFrame({ group, children }: { group: GroupNode; children: Re
           onClick={() => window.reframe.showGroupColorMenu(group.id)}
         />
         {renaming === group.id ? (
-          <GroupNameInput group={group} onDone={() => setRenaming(null)} />
+          <NameInput
+            className="group-name-input"
+            initial={group.name}
+            onCommit={(name) => name && window.reframe.dispatch({ type: 'group/rename', groupId: group.id, name })}
+            onDone={() => setRenaming(null)}
+          />
         ) : (
           <span className="group-name" title={t('group.renameHint')} onDoubleClick={() => setRenaming(group.id)}>
             {group.name}
@@ -98,29 +104,5 @@ export function GroupFrame({ group, children }: { group: GroupNode; children: Re
         ))}
       {dragging && band && <div className={`drop-preview drop-${band}`} />}
     </div>
-  );
-}
-
-function GroupNameInput({ group, onDone }: { group: GroupNode; onDone: () => void }) {
-  const [value, setValue] = useState(group.name);
-  const commit = () => {
-    if (value.trim() && value.trim() !== group.name) {
-      window.reframe.dispatch({ type: 'group/rename', groupId: group.id, name: value });
-    }
-    onDone();
-  };
-  return (
-    <input
-      className="group-name-input"
-      value={value}
-      autoFocus
-      onFocus={(event) => event.currentTarget.select()}
-      onChange={(event) => setValue(event.target.value)}
-      onBlur={commit}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter') commit();
-        if (event.key === 'Escape') onDone();
-      }}
-    />
   );
 }

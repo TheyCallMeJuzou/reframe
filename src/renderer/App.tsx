@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { ForeignDropRequest, WindowView } from '@shared/ipc';
+import type { ForeignDropRequest, SessionRename, WindowView } from '@shared/ipc';
 import type { DropTarget } from '@shared/layout';
 import { AppContext, makeTranslate, type AppContextValue, type DragState } from './context';
 import { dragKind, dropTargetAt, handleDrop, type PreviewRect } from './dnd';
@@ -32,6 +32,7 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
   const [dragging, setDragging] = useState<DragState | null>(null);
   const [emptyDropActive, setEmptyDropActive] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
+  const [renamingSession, setRenamingSession] = useState<SessionRename | null>(null);
   // A terminal window from another app dragged over this window, and dropped on it.
   const [foreignPreview, setForeignPreview] = useState<PreviewRect | null>(null);
   const [foreignDrop, setForeignDrop] = useState<{ request: ForeignDropRequest; target: DropTarget | null } | null>(
@@ -147,6 +148,7 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
 
   useEffect(() => window.reframe.onOpenNewSession(() => setDialogOpen(true)), []);
   useEffect(() => window.reframe.onRenameGroup(setRenaming), []);
+  useEffect(() => window.reframe.onRenameSession(setRenamingSession), []);
   useEffect(
     () => window.reframe.onForeignDrag((point) => setForeignPreview(point && dropTargetAt(point.x, point.y).rect)),
     [],
@@ -227,8 +229,10 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
         setDragging,
         renaming,
         setRenaming,
+        renamingSession,
+        setRenamingSession,
       },
-    [view, terminals, dragging, renaming],
+    [view, terminals, dragging, renaming, renamingSession],
   );
 
   if (!view || !context) return null;

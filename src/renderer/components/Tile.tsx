@@ -3,11 +3,13 @@ import { tileKey, type GroupNode, type Side } from '@shared/layout';
 import { useApp } from '../context';
 import { dragKind, handleDrop, setNodeDrag, sideAt } from '../dnd';
 import { CloseIcon, CollapseIcon, GripIcon } from './icons';
+import { NameInput } from './NameInput';
 import { StatusDot } from './StatusDot';
 
 /** A session's tile; `group` is the group it sits in, if any. */
 export function Tile({ sessionId, group }: { sessionId: string; group: GroupNode | null }) {
-  const { t, keys, windowId, sessions, terminals, dragging, setDragging } = useApp();
+  const { t, keys, windowId, sessions, terminals, dragging, setDragging, renamingSession, setRenamingSession } =
+    useApp();
   const session = sessions[sessionId];
   const slot = useRef<HTMLDivElement>(null);
   const tileRef = useRef<HTMLElement>(null);
@@ -36,6 +38,7 @@ export function Tile({ sessionId, group }: { sessionId: string; group: GroupNode
   }, [session?.status, sessionId, terminals]);
 
   if (!session) return null;
+  const editingName = renamingSession?.sessionId === sessionId && renamingSession.place === 'tile';
 
   const onDragOver = (event: DragEvent) => {
     if (!dragKind(event) || !acceptsDrop) return;
@@ -81,7 +84,7 @@ export function Tile({ sessionId, group }: { sessionId: string; group: GroupNode
     <section ref={tileRef} className={`tile${isDragged ? ' is-dragging' : ''}`} data-session={sessionId}>
       <header
         className="tile-header"
-        draggable
+        draggable={!editingName}
         title={t('tile.dragHint')}
         onContextMenu={(event) => {
           event.preventDefault();
@@ -112,7 +115,27 @@ export function Tile({ sessionId, group }: { sessionId: string; group: GroupNode
           <GripIcon />
         </span>
         <StatusDot status={session.status} />
-        <span className="tile-label">{session.label}</span>
+        {editingName ? (
+          <NameInput
+            className="tile-label-input"
+            initial={session.label}
+            placeholder={t('session.automaticName')}
+            onCommit={(name) => window.reframe.renameSession(sessionId, name)}
+            onDone={() => {
+              setRenamingSession(null);
+              // Back to typing in the session, once the field is gone.
+              requestAnimationFrame(() => terminals.focus(sessionId));
+            }}
+          />
+        ) : (
+          <span
+            className="tile-label"
+            title={t('session.renameHint')}
+            onDoubleClick={() => setRenamingSession({ sessionId, place: 'tile' })}
+          >
+            {session.label}
+          </span>
+        )}
         <span className="tile-cwd" title={session.cwd}>
           {session.cwd}
         </span>

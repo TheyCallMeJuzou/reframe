@@ -5,7 +5,8 @@ export type LaunchMode = 'new' | 'resume';
 
 export function claudeArgs(session: SessionRecord, mode: LaunchMode, settingsFile: string): string[] {
   const args = mode === 'new' ? ['--session-id', session.claudeSessionId] : ['--resume', session.claudeSessionId];
-  if (session.name) args.push('--name', session.name);
+  const name = session.claudeName === undefined ? session.name : session.claudeName;
+  if (name) args.push('--name', name);
   if (session.launch.model) args.push('--model', session.launch.model);
   if (session.launch.permissionMode) args.push('--permission-mode', session.launch.permissionMode);
   // A resumed worktree session already runs in the worktree folder; -w again would create another one.
