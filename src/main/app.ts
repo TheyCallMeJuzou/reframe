@@ -98,6 +98,7 @@ import { colorMenu, groupMenu, listMenu, tileMenu, workspaceItemMenu, workspaceL
 import { snapshotWindow, windowFromWorkspace } from '@shared/workspaces';
 import { createTray } from './tray';
 import { readClipboard } from './clipboard';
+import { homeRelative } from './paths';
 import { Updates } from './updates';
 import { autostartEnabled, setAutostart } from './autostart';
 import { win32 } from './win32';
@@ -273,6 +274,7 @@ export class ReframeApp {
       id: record.id,
       label: record.name || this.sessions.registryName(record.id) || path.basename(record.cwd) || record.cwd,
       cwd: record.cwd,
+      cwdLabel: homeRelative(record.cwd, os.homedir(), process.platform === 'win32'),
       status,
       lifecycle: record.lifecycle,
       error: runtime?.error,

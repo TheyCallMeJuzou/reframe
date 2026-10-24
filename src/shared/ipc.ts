@@ -13,6 +13,8 @@ export interface SessionView {
   /** What the tile shows: the user's name, else Claude's name for the session, else the folder. */
   label: string;
   cwd: string;
+  /** `cwd` as shown: under the home folder from "~". */
+  cwdLabel: string;
   status: SessionStatus;
   lifecycle: SessionRecord['lifecycle'];
   /** Translation key of the error shown in the tile, if any. */

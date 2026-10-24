@@ -137,7 +137,8 @@ export function Tile({ sessionId, group }: { sessionId: string; group: GroupNode
           </span>
         )}
         <span className="tile-cwd" title={session.cwd}>
-          {session.cwd}
+          {/* Cut off at the start (right to left), but read left to right, also when it starts with "~\". */}
+          <bdi>{session.cwdLabel}</bdi>
         </span>
         <button
           className="icon-button"
