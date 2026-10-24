@@ -30,7 +30,8 @@ export type LayoutAction =
   | { type: 'group/collapse'; groupId: string }
   | { type: 'group/expand'; groupId: string }
   | { type: 'group/rename'; groupId: string; name: string }
-  | { type: 'split/resize'; splitId: string; sizes: number[] };
+  | { type: 'split/resize'; splitId: string; sizes: number[] }
+  | { type: 'window/sidebar'; open: boolean };
 
 export function dockSessions(entry: DockEntry): string[] {
   return entry.kind === 'tile' ? [entry.sessionId] : leaves(entry.node);
@@ -93,6 +94,8 @@ export function applyLayoutAction(win: WindowState, action: LayoutAction): Windo
     }
     case 'split/resize':
       return { ...win, layout: setSplitSizes(win.layout, action.splitId, action.sizes) };
+    case 'window/sidebar':
+      return { ...win, sidebarOpen: action.open };
   }
 }
 
@@ -171,6 +174,8 @@ export function isLayoutAction(value: unknown): value is LayoutAction {
       return typeof a.groupId === 'string' && typeof a.name === 'string';
     case 'split/resize':
       return typeof a.splitId === 'string' && Array.isArray(a.sizes) && a.sizes.every((s) => typeof s === 'number');
+    case 'window/sidebar':
+      return typeof a.open === 'boolean';
     default:
       return false;
   }

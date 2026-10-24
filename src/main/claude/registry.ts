@@ -9,6 +9,8 @@ export interface RegistryEntry {
   sessionId: string;
   cwd?: string;
   name?: string;
+  /** Whether the user named the session ('user'), or Claude did ('auto', 'derived'). */
+  nameSource?: string;
   status?: 'idle' | 'busy' | 'waiting';
 }
 
@@ -28,6 +30,7 @@ export function parseRegistryEntry(value: unknown): RegistryEntry | null {
     sessionId: v.sessionId,
     cwd: typeof v.cwd === 'string' ? v.cwd : undefined,
     name: typeof v.name === 'string' && v.name ? v.name : undefined,
+    nameSource: typeof v.nameSource === 'string' ? v.nameSource : undefined,
     status: typeof v.status === 'string' && STATUSES.has(v.status) ? (v.status as RegistryEntry['status']) : undefined,
   };
 }

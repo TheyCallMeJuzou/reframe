@@ -86,6 +86,13 @@ Beim Schließen des Spikes (sofortiges `app.quit()`) lief der Claude-Prozess sam
 - **Playwrights `dragTo` erzeugt in Electron echte HTML5-Drag-Ereignisse inklusive eigener MIME-Typen und Daten**, allerdings nur ein einziges `dragover`. Ziehen zwischen Fenstern lässt sich so weiterhin nicht testen.
 - Native Menüs (`Menu.popup`) kann Playwright nicht anklicken. Deshalb rufen die Tests dieselben öffentlichen App-Methoden auf, die auch die Menüs benutzen.
 
+### Nachträge aus Phase 4
+- **Transcript-Format:** `ai-title` (`aiTitle`, der neueste gilt), `agent-name` (`agentName`), `last-prompt` (`lastPrompt`), das `cwd` steht in jedem `user`-Eintrag. Transcripts werden mehrere MB groß, gelesen werden nur die ersten 64 KB und die letzten 256 KB.
+- **Registry `nameSource`:** `user` (selbst vergeben), `auto` (von Claude erzeugt), `derived` (aus dem Ordner). Nur `user`-Namen werden bei der Übernahme mitgenommen.
+- **Übernahme unter Windows funktioniert über `AttachConsole` + `WriteConsoleInputW`:** Zwei Strg+C-Tastenereignisse (VK 0x43, Scan 0x2E, Zeichen 0x03, LEFT_CTRL_PRESSED) kommen bei Claude als echte Eingabe an ("Press Ctrl-C again to exit", dann Exit 0). Getestet mit dem echten `claude` in einer ConPTY, also wie in einem Windows-Terminal-Tab. Das läuft in einem kurzlebigen `utilityProcess`, damit der Main-Prozess nie die Konsole wechselt. Unter macOS und Linux ist der Weg `SIGINT` ×2.
+- **Race beim Neustarten einer Session:** Beenden (×) läuft asynchron. Ein sofortiges Wiederöffnen startete den neuen Prozess, und das Aufräumen des alten traf danach den neuen. Deshalb hat jetzt jeder Start eine Instanznummer, und PTY-Ereignisse, Aufräumen und die Strg+C-Schleife gelten nur für ihre eigene Instanz.
+- Das "AttachConsole failed" auf stderr kommt aus node-pty selbst, wenn man `kill()` auf einen schon beendeten Prozess aufruft. Es ist harmlos und wird in Tests vermieden.
+
 ## Konsequenzen für den Plan
 1. **Status und Session-ID-Tracking:** Primär über HTTP-Hooks (`UserPromptSubmit`, `Stop`, `Notification`; dokumentiert). Für sofortige ID-Wechsel (`/clear`) und den Status zusätzlich die Registry-Datei der bekannten PID beobachten. Einen `SessionStart`-Command-Hook gibt es vorerst nicht, weil er eine Runtime (node) bei den Usern voraussetzen würde.
 2. **Spawn-Umgebung bereinigen** (siehe oben). Gilt auch für die Dev-Umgebung.

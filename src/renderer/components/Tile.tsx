@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type DragEvent } from 'react';
 import { tileKey, type GroupNode, type Side } from '@shared/layout';
 import { useApp } from '../context';
-import { dragKind, dropNode, readNodeDrag, setNodeDrag, sideAt } from '../dnd';
+import { dragKind, handleDrop, setNodeDrag, sideAt } from '../dnd';
 import { CloseIcon, CollapseIcon, GripIcon } from './icons';
 import { StatusDot } from './StatusDot';
 
@@ -43,13 +43,10 @@ export function Tile({ sessionId, group }: { sessionId: string; group: GroupNode
     setDropSide(sideAt(event.currentTarget.getBoundingClientRect(), event.clientX, event.clientY));
   };
   const onDrop = (event: DragEvent) => {
-    const data = readNodeDrag(event);
     // Taken from the drop itself: the state set by dragover may not have rendered yet on a quick drop.
     const side = sideAt(event.currentTarget.getBoundingClientRect(), event.clientX, event.clientY);
     setDropSide(null);
-    if (!data || data.key === key) return;
-    event.preventDefault();
-    dropNode(data, windowId, { key, side });
+    if (handleDrop(event, windowId, { key, side })) event.preventDefault();
   };
 
   return (

@@ -27,7 +27,8 @@ function record(event) {
 
 function writeRegistry(status) {
   fs.mkdirSync(path.dirname(registryFile), { recursive: true });
-  const entry = { pid: process.pid, sessionId, cwd: process.cwd(), name, status };
+  const nameSource = option('--name') ? 'user' : 'auto';
+  const entry = { pid: process.pid, sessionId, cwd: process.cwd(), name, nameSource, status };
   fs.writeFileSync(registryFile, JSON.stringify(entry));
 }
 

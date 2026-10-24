@@ -19,6 +19,12 @@ export const PlusIcon = () => (
   </svg>
 );
 
+export const ListIcon = () => (
+  <svg {...base} aria-hidden="true">
+    <path d="M3 4h10M3 8h10M3 12h10" strokeLinecap="round" />
+  </svg>
+);
+
 export const MoreIcon = () => (
   <svg {...base} aria-hidden="true" stroke="none" fill="currentColor">
     {[4, 8, 12].map((x) => (

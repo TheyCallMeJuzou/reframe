@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { WindowView } from '@shared/ipc';
 import { AppContext, makeTranslate, type AppContextValue, type DragState } from './context';
-import { dragKind, dropNode, readNodeDrag } from './dnd';
+import { dragKind, handleDrop } from './dnd';
 import type { TerminalRegistry } from './terminals';
 import { DockStrip } from './components/DockStrip';
 import { NewSessionDialog } from './components/NewSessionDialog';
 import { LayoutView } from './components/SplitView';
-import { PlusIcon } from './components/icons';
+import { ListIcon, PlusIcon } from './components/icons';
+import { SessionSidebar } from './components/SessionSidebar';
 
 export function App({ terminals }: { terminals: TerminalRegistry }) {
   const [view, setView] = useState<WindowView | null>(null);
@@ -82,6 +83,7 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
     () =>
       view && {
         t: makeTranslate(view.locale),
+        locale: view.locale,
         windowId: view.windowId,
         sessions: view.sessions,
         terminals,
@@ -104,8 +106,17 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
             <PlusIcon />
             {t('toolbar.newSession')}
           </button>
+          <button
+            className={`button toolbar-button${view.sidebarOpen ? ' is-active' : ''}`}
+            aria-pressed={view.sidebarOpen}
+            onClick={() => window.reframe.dispatch({ type: 'window/sidebar', open: !view.sidebarOpen })}
+          >
+            <ListIcon />
+            {t('toolbar.sessions')}
+          </button>
         </div>
         <div className="workspace">
+          {view.sidebarOpen && <SessionSidebar />}
           <DockStrip entries={view.dock} />
           <main className="layout">
             {view.layout ? (
@@ -132,10 +143,7 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
                     onDragLeave={() => setEmptyDropActive(false)}
                     onDrop={(event) => {
                       setEmptyDropActive(false);
-                      const data = readNodeDrag(event);
-                      if (!data || data.windowId === view.windowId) return;
-                      event.preventDefault();
-                      dropNode(data, view.windowId, null);
+                      if (handleDrop(event, view.windowId, null)) event.preventDefault();
                     }}
                   >
                     {emptyDropActive && <div className="drop-preview drop-fill" />}

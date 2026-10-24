@@ -34,6 +34,9 @@ const api: ReframeApi = {
   showGroupMenu: (groupId) => ipcRenderer.send(IPC.groupMenu, groupId),
   showGroupColorMenu: (groupId) => ipcRenderer.send(IPC.groupColorMenu, groupId),
   onRenameGroup: (listener) => subscribe<string>(IPC.renameGroup, listener),
+  getSessionList: (query, limit) => ipcRenderer.invoke(IPC.sessionList, query, limit),
+  openSession: (request) => ipcRenderer.send(IPC.openSession, request),
+  removeSession: (sessionId) => ipcRenderer.send(IPC.removeSession, sessionId),
 };
 
 contextBridge.exposeInMainWorld('reframe', api);

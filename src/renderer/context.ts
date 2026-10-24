@@ -14,6 +14,7 @@ export interface DragState {
 
 export interface AppContextValue {
   t: Translate;
+  locale: Locale;
   windowId: string;
   sessions: Record<string, SessionView>;
   terminals: TerminalRegistry;

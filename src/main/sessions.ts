@@ -11,12 +11,15 @@ import { readRegistryEntry, transcriptExists } from './claude/registry';
 import type { ClaudeBinary } from './claude/resolve';
 import { writeHookSettings } from './claude/settings';
 import type { HookMessage, HookServer } from './hooks/server';
+import type { LogFn } from './log';
 import { isAlive, killTree } from './process';
 import type { PtyHostClient } from './ptyhost-client';
 
 export type NotifyKind = 'done' | 'waiting';
 
 interface Runtime {
+  /** Which start of the session this is; events of an older process carry an older number. */
+  instance: number;
   status: SessionStatus;
   mode: LaunchMode;
   startedAt: number;
@@ -24,7 +27,7 @@ interface Runtime {
   error?: SessionView['error'];
   registryName?: string;
   registryStatus?: string;
-  stopping?: boolean;
+  stopping?: Promise<void>;
   exited?: Promise<void>;
   markExited?: () => void;
 }
@@ -36,6 +39,7 @@ export interface SessionManagerDeps {
   settingsDir: string;
   resolveClaude: () => ClaudeBinary | null;
   env: NodeJS.ProcessEnv;
+  log?: LogFn;
 }
 
 export type IdentityPatch = Partial<Pick<SessionRecord, 'claudeSessionId' | 'cwd' | 'pid' | 'used'>>;
@@ -55,11 +59,18 @@ const POLL_MS = 1000;
 
 export class SessionManager extends EventEmitter<Events> {
   private runtimes = new Map<string, Runtime>();
+  private instances = 0;
   private poller: NodeJS.Timeout;
+
+  private log: LogFn;
 
   constructor(private deps: SessionManagerDeps) {
     super();
+    this.log = deps.log ?? (() => {});
     deps.host.on('event', (event) => {
+      const runtime = this.runtimes.get(event.sessionId);
+      // A process that is still going away while its session was started again: not this runtime's business.
+      if (!runtime || runtime.instance !== event.instance) return;
       if (event.type === 'spawned') this.onSpawned(event.sessionId, event.pid);
       if (event.type === 'spawn-failed') this.fail(event.sessionId, 'spawnFailed');
       if (event.type === 'exit') this.onExit(event.sessionId, event.exitCode);
@@ -91,7 +102,12 @@ export class SessionManager extends EventEmitter<Events> {
     // resume: an unused session starts fresh under the same id; a used one has lost its history.
     const missing = requested === 'resume' && !transcriptExists(this.deps.claudeHome, session.claudeSessionId);
     const mode: LaunchMode = missing ? 'new' : requested;
-    const runtime: Runtime = { status: 'starting', mode, startedAt: Date.now() };
+    const previous = this.runtimes.get(session.id);
+    if (previous?.pid && previous.status !== 'ended' && previous.status !== 'error') {
+      // Started again before the old process was gone (e.g. reopened right after ending it).
+      void killTree(previous.pid);
+    }
+    const runtime: Runtime = { instance: ++this.instances, status: 'starting', mode, startedAt: Date.now() };
     runtime.exited = new Promise((resolve) => (runtime.markExited = resolve));
     this.runtimes.set(session.id, runtime);
 
@@ -101,8 +117,17 @@ export class SessionManager extends EventEmitter<Events> {
     if (!claude) return this.fail(session.id, 'claudeNotFound');
 
     const settings = writeHookSettings(this.deps.settingsDir, this.deps.hooks.port, this.deps.hooks.token, session.id);
+    this.log('info', 'session start', {
+      session: session.id,
+      claudeSession: session.claudeSessionId,
+      mode,
+      ...(missing ? { note: 'no transcript yet, starting fresh under the same id' } : {}),
+      cwd: session.cwd,
+      claude: claude.source,
+    });
     this.deps.host.spawn({
       sessionId: session.id,
+      instance: runtime.instance,
       file: claude.file,
       args: [...claude.prefixArgs, ...claudeArgs(session, mode, settings)],
       cwd: session.cwd,
@@ -114,24 +139,36 @@ export class SessionManager extends EventEmitter<Events> {
   }
 
   /** Ends a session the way a user would (Ctrl+C), then kills the process tree if it does not exit. */
-  async stop(sessionId: string, timeoutMs = 5000): Promise<void> {
+  stop(sessionId: string, timeoutMs = 5000): Promise<void> {
     const runtime = this.runtimes.get(sessionId);
-    if (!runtime) return;
-    runtime.stopping = true;
+    if (!runtime) return Promise.resolve();
+    // A second stop (e.g. removing a session that is still ending) joins the first one.
+    runtime.stopping ??= this.stopRuntime(sessionId, runtime, timeoutMs);
+    return runtime.stopping;
+  }
+
+  private async stopRuntime(sessionId: string, runtime: Runtime, timeoutMs: number): Promise<void> {
     if (this.isRunning(sessionId)) {
       const deadline = Date.now() + timeoutMs;
       for (let i = 0; i < 3 && Date.now() < deadline; i++) {
+        // Once the session was started again, Ctrl+C would hit the new process; start() kills this one.
+        if (this.runtimes.get(sessionId) !== runtime) break;
         this.deps.host.write(sessionId, '\x03');
         if (await settle(runtime.exited!, 700)) break;
       }
       const left = deadline - Date.now();
       if (!(await settle(runtime.exited!, Math.max(0, left))) && runtime.pid) {
+        this.log('warn', 'session did not exit on Ctrl+C, killing its process tree', {
+          session: sessionId,
+          pid: runtime.pid,
+        });
         await killTree(runtime.pid);
         await settle(runtime.exited!, 1000);
       }
     }
-    this.deps.host.dispose(sessionId);
-    this.runtimes.delete(sessionId);
+    this.deps.host.dispose(sessionId, runtime.instance);
+    // Started again in the meantime: the new runtime stays.
+    if (this.runtimes.get(sessionId) === runtime) this.runtimes.delete(sessionId);
   }
 
   stopAll(timeoutMs = 5000): Promise<void> {
@@ -144,7 +181,10 @@ export class SessionManager extends EventEmitter<Events> {
       sessions.map(async (s) => {
         if (!s.pid || !isAlive(s.pid)) return;
         const entry = readRegistryEntry(this.deps.claudeHome, s.pid);
-        if (entry && entry.sessionId === s.claudeSessionId) await killTree(s.pid);
+        if (entry && entry.sessionId === s.claudeSessionId) {
+          this.log('warn', 'killing orphaned claude from a previous run', { session: s.id, pid: s.pid });
+          await killTree(s.pid);
+        }
       }),
     );
   }
@@ -157,6 +197,7 @@ export class SessionManager extends EventEmitter<Events> {
     const runtime = this.runtimes.get(sessionId);
     if (!runtime) return;
     runtime.pid = pid;
+    this.log('info', 'session spawned', { session: sessionId, pid });
     this.emit('identity', sessionId, { pid });
   }
 
@@ -170,6 +211,13 @@ export class SessionManager extends EventEmitter<Events> {
     runtime.status = early ? 'error' : 'ended';
     if (early) runtime.error = runtime.mode === 'resume' ? 'resumeFailed' : 'spawnFailed';
     runtime.markExited?.();
+    this.log(early ? 'warn' : 'info', 'session exited', {
+      session: sessionId,
+      exitCode,
+      status: runtime.status,
+      ...(runtime.error ? { error: runtime.error } : {}),
+      byReframe: !!runtime.stopping,
+    });
     this.emit('changed', sessionId);
     if (!runtime.stopping) this.emit('ended', sessionId);
   }
@@ -180,11 +228,18 @@ export class SessionManager extends EventEmitter<Events> {
     runtime.status = 'error';
     runtime.error = error;
     runtime.markExited?.();
+    this.log('warn', 'session could not start', { session: sessionId, error });
     this.emit('changed', sessionId);
   }
 
   private onHook({ sessionId, event, payload }: HookMessage): void {
     const runtime = this.runtimes.get(sessionId);
+    this.log('info', 'hook', {
+      session: sessionId,
+      event,
+      ...(payload.notification_type ? { type: payload.notification_type } : {}),
+      ...(runtime ? {} : { ignored: 'unknown session' }),
+    });
     if (!runtime || !this.isRunning(sessionId)) return;
     if (payload.session_id || payload.cwd || event === 'UserPromptSubmit') {
       this.emit('identity', sessionId, {

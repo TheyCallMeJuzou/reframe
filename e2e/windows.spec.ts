@@ -85,12 +85,14 @@ test('tiles move between windows, empty windows close, all windows come back', a
     // --- restart: both windows come back, the second one still hidden with gamma collapsed ---
     ({ app, page } = await launch(env));
     await expect.poll(() => app.windows().length, { timeout: 10_000 }).toBe(2);
-    const visible = await app.evaluate(({ BrowserWindow }) =>
-      BrowserWindow.getAllWindows()
-        .map((w) => w.isVisible())
-        .sort(),
-    );
-    expect(visible).toEqual([false, true]);
+    // The visible one appears on ready-to-show, so wait for it rather than look once.
+    const visibility = () =>
+      app.evaluate(({ BrowserWindow }) =>
+        BrowserWindow.getAllWindows()
+          .map((w) => w.isVisible())
+          .sort(),
+      );
+    await expect.poll(visibility, { timeout: 10_000 }).toEqual([false, true]);
     const mainPage = await pageOf(app, mainId);
     const hiddenPage = await pageOf(app, thirdId);
     await expect(mainPage.locator('.tile')).toHaveCount(2);

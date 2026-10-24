@@ -38,8 +38,8 @@ export class PtyHostClient extends EventEmitter<Events> {
     this.send({ type: 'write', sessionId, data });
   }
 
-  dispose(sessionId: string): void {
-    this.send({ type: 'dispose', sessionId });
+  dispose(sessionId: string, instance: number): void {
+    this.send({ type: 'dispose', sessionId, instance });
   }
 
   /** Connects a window to a session's terminal through a fresh MessagePort pair. */

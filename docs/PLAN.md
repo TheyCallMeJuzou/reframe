@@ -153,7 +153,7 @@ reframe/
 - Die Gruppenleiste kann einklappen (ein Eintrag in der Seitenleiste), ziehen (auch in andere oder neue Fenster), auflösen und alle Sessions beenden (ohne Rückfrage, wie das × an einer Kachel).
 - Keine verschachtelten Gruppen. Klappt man die letzte Kachel einer Gruppe ein, klappt die ganze Gruppe ein.
 
-**Phase 4: Session-Liste**: Bereiche "In der App" und "Gefunden" (Discovery über alle Projekte, Start immer im richtigen Ordner), Drag aus der Liste (beendet → resume, extern laufend → "Übernehmen?" statt eines zweiten Prozesses), "Aus Liste entfernen".
+**Phase 4: Session-Liste** ✅: Linke Seitenleiste (Knopf "Sessions", Zustand pro Fenster), Klick öffnet am Ende des Fensters, Ziehen legt gezielt ab, "Gefunden" nach Zeit mit Suche und "Mehr anzeigen". Die Übernahme extern laufender Sessions ist schon hier eingebaut: Nach einer Rückfrage wird zweimal Strg+C in deren Konsole getippt, danach geht es hier weiter. Ein selbst vergebener Name bleibt erhalten. Dazu kommt ein Log in `%APPDATA%eframelogsmain.log`. Bereiche "In der App" und "Gefunden" (Discovery über alle Projekte, Start immer im richtigen Ordner), Drag aus der Liste (beendet → resume, extern laufend → "Übernehmen?" statt eines zweiten Prozesses), "Aus Liste entfernen".
 
 **Phase 5: Fenster draufziehen (Hybrid)**: zuerst Windows mit Multi-Tab-Auswahl, danach macOS (AX) und Linux X11.
 

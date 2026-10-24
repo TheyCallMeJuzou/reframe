@@ -131,13 +131,17 @@ describe('resolveClaude', () => {
 
 describe('registry', () => {
   it('parses known fields and ignores unknown status values', () => {
-    expect(parseRegistryEntry({ pid: 5, sessionId: 'abc', cwd: '/w', name: 'n', status: 'busy', extra: 1 })).toEqual({
-      pid: 5,
-      sessionId: 'abc',
-      cwd: '/w',
-      name: 'n',
-      status: 'busy',
-    });
+    expect(
+      parseRegistryEntry({
+        pid: 5,
+        sessionId: 'abc',
+        cwd: '/w',
+        name: 'n',
+        nameSource: 'user',
+        status: 'busy',
+        extra: 1,
+      }),
+    ).toEqual({ pid: 5, sessionId: 'abc', cwd: '/w', name: 'n', nameSource: 'user', status: 'busy' });
     expect(parseRegistryEntry({ pid: 5, sessionId: 'abc', status: 'thinking' })?.status).toBeUndefined();
     expect(parseRegistryEntry({ sessionId: 'abc' })).toBeNull();
     expect(parseRegistryEntry('nope')).toBeNull();

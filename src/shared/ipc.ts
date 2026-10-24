@@ -22,6 +22,7 @@ export interface SessionView {
 export interface WindowView {
   windowId: string;
   locale: Locale;
+  sidebarOpen: boolean;
   layout: LayoutNode | null;
   dock: DockEntry[];
   sessions: Record<string, SessionView>;
@@ -51,6 +52,57 @@ export interface DialogDefaults {
 export interface TransferRequest {
   key: string;
   fromWindowId: string;
+  target: DropTarget | null;
+}
+
+/** A session reframe manages, for the session list. */
+export interface AppListItem {
+  kind: 'app';
+  id: string;
+  label: string;
+  cwd: string;
+  status: SessionStatus;
+  lifecycle: SessionRecord['lifecycle'];
+  /** Window that shows it (1-based number for display), or null when it is in no window. */
+  windowId: string | null;
+  windowNumber: number | null;
+  lastActiveAt: number;
+}
+
+/** A claude running outside reframe (from Claude Code's session registry). */
+export interface RunningListItem {
+  kind: 'running';
+  pid: number;
+  claudeSessionId: string;
+  cwd: string;
+  name?: string;
+}
+
+/** A past session found in Claude Code's transcripts. */
+export interface FoundListItem {
+  kind: 'found';
+  claudeSessionId: string;
+  cwd: string;
+  title?: string;
+  modifiedAt: number;
+}
+
+export interface SessionList {
+  app: AppListItem[];
+  running: RunningListItem[];
+  found: FoundListItem[];
+  /** More past sessions exist beyond the requested limit. */
+  hasMore: boolean;
+}
+
+/** What a list entry stands for when it is opened (main looks the details up again itself). */
+export type ListItemRef =
+  | { kind: 'app'; sessionId: string }
+  | { kind: 'running'; pid: number; claudeSessionId: string }
+  | { kind: 'found'; claudeSessionId: string };
+
+export interface OpenSessionRequest {
+  item: ListItemRef;
   target: DropTarget | null;
 }
 
@@ -94,6 +146,11 @@ export interface ReframeApi {
   showGroupColorMenu(groupId: string): void;
   /** The group menu's "Rename" asks the window to edit the group's name in place. */
   onRenameGroup(listener: (groupId: string) => void): () => void;
+  getSessionList(query: string, limit: number): Promise<SessionList>;
+  /** Shows a session that is open somewhere, or opens one from the list in this window (resuming it). */
+  openSession(request: OpenSessionRequest): void;
+  /** Forgets an ended session (its Claude Code transcript stays). */
+  removeSession(sessionId: string): void;
 }
 
 export const IPC = {
@@ -118,6 +175,9 @@ export const IPC = {
   groupMenu: 'reframe:group-menu',
   groupColorMenu: 'reframe:group-color-menu',
   renameGroup: 'reframe:rename-group',
+  sessionList: 'reframe:session-list',
+  openSession: 'reframe:open-session',
+  removeSession: 'reframe:remove-session',
 } as const;
 
 /** window.postMessage payload carrying a terminal MessagePort from preload to the page. */
@@ -134,3 +194,5 @@ export type TerminalViewMessage = { type: 'input'; data: string } | { type: 'res
 /** MIME types used for dragging (HTML5 DnD); the type tells tiles from groups before the drop. */
 export const TILE_MIME = 'application/x-reframe-tile';
 export const GROUP_MIME = 'application/x-reframe-group';
+/** A session dragged out of the session list (payload: ListItemRef). */
+export const LIST_MIME = 'application/x-reframe-list-item';

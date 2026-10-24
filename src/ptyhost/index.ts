@@ -15,6 +15,7 @@ interface View {
 }
 
 interface Session {
+  instance: number;
   proc: pty.IPty;
   mirror: Terminal;
   serializer: SerializeAddon;
@@ -34,7 +35,8 @@ function post(port: MessagePortMain, message: TerminalHostMessage): void {
 }
 
 function spawn(request: Extract<HostRequest, { type: 'spawn' }>): void {
-  dispose(request.sessionId);
+  const { sessionId, instance } = request;
+  dispose(sessionId, null);
   const mirror = new Terminal({ cols: request.cols, rows: request.rows, scrollback: 5000, allowProposedApi: true });
   const serializer = new SerializeAddon();
   mirror.loadAddon(serializer);
@@ -52,13 +54,13 @@ function spawn(request: Extract<HostRequest, { type: 'spawn' }>): void {
     });
   } catch (error) {
     mirror.dispose();
-    emit({ type: 'spawn-failed', sessionId: request.sessionId, message: String(error) });
+    emit({ type: 'spawn-failed', sessionId, instance, message: String(error) });
     return;
   }
 
-  const session: Session = { proc, mirror, serializer, views: new Map(), exitCode: null };
-  sessions.set(request.sessionId, session);
-  emit({ type: 'spawned', sessionId: request.sessionId, pid: proc.pid });
+  const session: Session = { instance, proc, mirror, serializer, views: new Map(), exitCode: null };
+  sessions.set(sessionId, session);
+  emit({ type: 'spawned', sessionId, instance, pid: proc.pid });
 
   proc.onData((data) => {
     mirror.write(data);
@@ -70,7 +72,7 @@ function spawn(request: Extract<HostRequest, { type: 'spawn' }>): void {
   proc.onExit(({ exitCode }) => {
     session.exitCode = exitCode;
     for (const port of session.views.keys()) post(port, { type: 'exit', exitCode });
-    emit({ type: 'exit', sessionId: request.sessionId, pid: proc.pid, exitCode });
+    emit({ type: 'exit', sessionId, instance, pid: proc.pid, exitCode });
   });
 }
 
@@ -110,9 +112,10 @@ function attach(sessionId: string, port: MessagePortMain): void {
   });
 }
 
-function dispose(sessionId: string): void {
+/** Forgets a session; with an instance, only if it is still that one (a newer start must survive). */
+function dispose(sessionId: string, instance: number | null): void {
   const session = sessions.get(sessionId);
-  if (!session) return;
+  if (!session || (instance !== null && session.instance !== instance)) return;
   sessions.delete(sessionId);
   for (const port of session.views.keys()) port.close();
   if (session.exitCode === null) {
@@ -140,7 +143,7 @@ parent.on('message', (event) => {
       if (sessions.get(request.sessionId)?.exitCode === null) sessions.get(request.sessionId)!.proc.write(request.data);
       break;
     case 'dispose':
-      dispose(request.sessionId);
+      dispose(request.sessionId, request.instance);
       break;
   }
 });

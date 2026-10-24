@@ -1,7 +1,7 @@
 import { useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { leaves, type GroupNode, type Side } from '@shared/layout';
 import { useApp } from '../context';
-import { dragKind, dropNode, readNodeDrag, setNodeDrag } from '../dnd';
+import { dragKind, handleDrop, setNodeDrag } from '../dnd';
 import { CollapseIcon, GripIcon, MoreIcon } from './icons';
 
 const SIDES: Side[] = ['left', 'right', 'top', 'bottom'];
@@ -91,11 +91,8 @@ export function GroupFrame({ group, children }: { group: GroupNode; children: Re
             }}
             onDragLeave={() => setBand((current) => (current === side ? null : current))}
             onDrop={(event) => {
-              const data = readNodeDrag(event);
               setBand(null);
-              if (!data || data.key === group.id) return;
-              event.preventDefault();
-              dropNode(data, windowId, { key: group.id, side });
+              if (handleDrop(event, windowId, { key: group.id, side })) event.preventDefault();
             }}
           />
         ))}

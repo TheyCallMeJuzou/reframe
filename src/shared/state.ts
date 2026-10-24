@@ -53,6 +53,8 @@ export const windowStateSchema = z.object({
   hidden: z.boolean(),
   layout: layoutNodeSchema.nullable(),
   dock: z.array(dockEntrySchema),
+  /** Whether the session list is shown in this window. */
+  sidebarOpen: z.boolean().optional(),
 });
 
 export const launchOptionsSchema = z.object({

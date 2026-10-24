@@ -4,7 +4,11 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import * as pty from 'node-pty';
 import { _electron as electron, expect, test, type Page } from '@playwright/test';
+import { claudeEnv } from '../src/main/claude/env';
+import { claudeHome, readRegistryEntry } from '../src/main/claude/registry';
+import { resolveClaude } from '../src/main/claude/resolve';
 
 const root = path.resolve(__dirname, '..');
 const folder = process.env.REFRAME_E2E_FOLDER ?? process.cwd();
@@ -56,4 +60,44 @@ test('real claude: start two sessions, restart, both resume', async () => {
   await closed;
   await new Promise((resolve) => setTimeout(resolve, 3000));
   fs.rmSync(userData, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
+});
+
+test('real claude: take over a session running in another terminal', async () => {
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'reframe-real-'));
+  const env = { ...process.env, REFRAME_USER_DATA: userData, REFRAME_LOCALE: 'de' } as Record<string, string>;
+  // claude in its own hidden pseudo console, like a Windows Terminal tab.
+  const claude = resolveClaude({ env: process.env, platform: process.platform })!;
+  const name = `takeover-${Date.now()}`;
+  const outside = pty.spawn(claude.file, [...claude.prefixArgs, '--name', name, '--model', 'haiku'], {
+    cwd: folder,
+    env: claudeEnv(process.env),
+    cols: 120,
+    rows: 30,
+  });
+  let exited = false;
+  outside.onExit(() => (exited = true));
+  try {
+    await expect.poll(() => readRegistryEntry(claudeHome(), outside.pid)?.name, { timeout: 30_000 }).toBe(name);
+
+    const app = await electron.launch({ args: [root], env, cwd: root });
+    const page = await app.firstWindow();
+    await page.setViewportSize({ width: 1400, height: 820 });
+    await app.evaluate(({ dialog }) => {
+      Object.assign(dialog, { showMessageBox: async () => ({ response: 0, checkboxChecked: false }) });
+    });
+    await page.getByRole('button', { name: 'Sessions' }).click();
+    await page.locator('.sidebar-row', { hasText: name }).click();
+    await expect.poll(() => exited, { timeout: 20_000 }).toBe(true);
+    await expect(page.locator('.tile .status-idle')).toBeVisible({ timeout: 30_000 });
+    await page.waitForTimeout(2500);
+    await page.screenshot({ path: 'test-results/real-5-takeover.png' });
+
+    const closed = app.waitForEvent('close');
+    await app.evaluate(({ app: a }) => a.quit());
+    await closed;
+  } finally {
+    if (!exited) outside.kill();
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    fs.rmSync(userData, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
+  }
 });

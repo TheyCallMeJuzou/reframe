@@ -11,6 +11,7 @@
     "src/main/**/*",
     "src/preload/**/*",
     "src/ptyhost/**/*",
+    "src/consolehelper/**/*",
     "src/shared/**/*",
     "e2e/**/*"
   ]

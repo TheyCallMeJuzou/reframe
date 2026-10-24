@@ -39,13 +39,20 @@ import {
   groupTile,
   leaves,
   removeFromGroup,
+  tile,
   tileKey,
+  type DropTarget,
   type GroupNode,
 } from '@shared/layout';
 import {
   IPC,
   type NewSessionRequest,
   type NewSessionResult,
+  type AppListItem,
+  type ListItemRef,
+  type OpenSessionRequest,
+  type RunningListItem,
+  type SessionList,
   type SessionView,
   type TileSize,
   type TransferRequest,
@@ -53,12 +60,16 @@ import {
 } from '@shared/ipc';
 import { PERMISSION_MODES } from '@shared/launch';
 import { emptyWindow, type AppState, type Preferences, type SessionRecord, type WindowState } from '@shared/state';
-import { claudeHome } from './claude/registry';
+import { listRunning, TranscriptIndex } from './claude/discovery';
+import { claudeHome, readRegistryEntry, transcriptExists } from './claude/registry';
 import { resolveClaude, type ClaudeBinary } from './claude/resolve';
 import { HookServer } from './hooks/server';
+import { createLogger } from './log';
+import { isAlive } from './process';
 import { PtyHostClient } from './ptyhost-client';
 import { SessionManager, type IdentityPatch, type NotifyKind } from './sessions';
 import { StateStore } from './state/store';
+import { stopExternalClaude } from './takeover';
 import { colorMenu, groupMenu, tileMenu } from './menus';
 import { createTray } from './tray';
 import { WindowManager } from './windows';
@@ -80,6 +91,9 @@ export class ReframeApp {
   private windows: WindowManager;
   private refreshTray: () => void = () => {};
   private shuttingDown = false;
+  private log = createLogger(path.join(app.getPath('userData'), 'logs'));
+  private claudeHome = claudeHome();
+  private transcripts = new TranscriptIndex(this.claudeHome);
 
   constructor(
     private locale: Locale,
@@ -89,18 +103,29 @@ export class ReframeApp {
   }
 
   async start(): Promise<void> {
-    this.state = this.store.load().state;
+    const loaded = this.store.load();
+    this.state = loaded.state;
     if (this.state.windows.length === 0) this.state.windows.push(emptyWindow(crypto.randomUUID()));
+    this.log('info', 'reframe starting', {
+      version: app.getVersion(),
+      platform: process.platform,
+      state: loaded.source,
+      windows: this.state.windows.length,
+      sessions: Object.keys(this.state.sessions).length,
+      claude: findClaude()?.source ?? 'not found',
+      claudeHome: this.claudeHome,
+    });
 
     await this.hooks.start();
     this.host.start();
     this.sessions = new SessionManager({
       host: this.host,
       hooks: this.hooks,
-      claudeHome: claudeHome(),
+      claudeHome: this.claudeHome,
       settingsDir: path.join(app.getPath('userData'), 'hooks'),
       env: process.env,
       resolveClaude: findClaude,
+      log: this.log,
     });
     this.sessions.on('changed', (id) => this.pushSession(id));
     this.sessions.on('identity', (id, patch) => this.updateIdentity(id, patch));
@@ -125,12 +150,14 @@ export class ReframeApp {
     if (this.shuttingDown) return;
     this.shuttingDown = true;
     this.windows.quitting = true;
+    this.log('info', 'reframe quitting, ending sessions');
     this.save();
     await this.sessions.stopAll();
     this.sessions.dispose();
     this.host.stop();
     this.hooks.stop();
     this.save();
+    this.log('info', 'reframe stopped');
   }
 
   // ---------- windows and views ----------
@@ -155,7 +182,14 @@ export class ReframeApp {
       const record = this.state.sessions[id];
       if (record) sessions[id] = this.sessionView(record);
     }
-    return { windowId, locale: this.locale, layout: win.layout, dock: win.dock, sessions };
+    return {
+      windowId,
+      locale: this.locale,
+      sidebarOpen: !!win.sidebarOpen,
+      layout: win.layout,
+      dock: win.dock,
+      sessions,
+    };
   }
 
   private sessionView(record: SessionRecord): SessionView {
@@ -204,6 +238,7 @@ export class ReframeApp {
       }),
     };
     this.save();
+    this.log('info', 'moved to another window', { node: key, from: from.id, to: toId });
     this.push(from.id);
     this.push(toId);
     this.closeIfEmpty(from.id);
@@ -235,6 +270,7 @@ export class ReframeApp {
       windows: [...this.state.windows.map((w) => (w.id === from.id ? rest : w)), win],
     };
     this.save();
+    this.log('info', 'torn out into a new window', { node: key, from: from.id, window: win.id });
     this.push(from.id);
     this.windows.open(win);
     this.closeIfEmpty(from.id);
@@ -259,6 +295,7 @@ export class ReframeApp {
     if (!win || win.id === this.state.windows[0]?.id || !isWindowEmpty(win)) return;
     this.state = { ...this.state, windows: this.state.windows.filter((w) => w.id !== windowId) };
     this.save();
+    this.log('info', 'empty window closed', { window: windowId });
     this.windows.destroy(windowId);
     this.refreshTray();
   }
@@ -364,6 +401,7 @@ export class ReframeApp {
 
   private endSession(windowId: string, sessionId: string): void {
     if (!this.state.sessions[sessionId]) return;
+    this.log('info', 'session ended by the user', { session: sessionId });
     void this.sessions.stop(sessionId);
     this.state = {
       ...this.state,
@@ -399,6 +437,7 @@ export class ReframeApp {
       color: nextGroupColor(existing.map((g) => g.color)),
     };
     this.mutateWindow(win.id, (w) => ({ ...w, layout: groupTile(w.layout, sessionId, group) }));
+    this.log('info', 'group created', { session: sessionId, ...group });
   }
 
   addSessionToGroup(sessionId: string, groupId: string): void {
@@ -427,7 +466,9 @@ export class ReframeApp {
   endGroup(groupId: string): void {
     const win = this.windowOfGroup(groupId);
     const group = this.findGroup(groupId);
-    if (win && group) for (const sessionId of leaves(group)) this.endSession(win.id, sessionId);
+    if (!win || !group) return;
+    this.log('info', 'ending all sessions of a group', { group: groupId, sessions: leaves(group).length });
+    for (const sessionId of leaves(group)) this.endSession(win.id, sessionId);
   }
 
   private showTileMenu(windowId: string, sessionId: string): void {
@@ -460,21 +501,169 @@ export class ReframeApp {
     menu.popup({ window: browserWindow });
   }
 
+  // ---------- session list ----------
+
+  private async sessionList(query: string, limit: number): Promise<SessionList> {
+    const q = query.trim().toLowerCase();
+    const matches = (...fields: (string | undefined)[]) => !q || fields.some((f) => f?.toLowerCase().includes(q));
+    const records = Object.values(this.state.sessions);
+
+    const app: AppListItem[] = records
+      .map((record): AppListItem => {
+        const view = this.sessionView(record);
+        const win = this.windowOf(record.id);
+        return {
+          kind: 'app',
+          id: record.id,
+          label: view.label,
+          cwd: record.cwd,
+          status: view.status,
+          lifecycle: record.lifecycle,
+          windowId: win?.id ?? null,
+          windowNumber: win ? this.state.windows.indexOf(win) + 1 : null,
+          lastActiveAt: record.lastActiveAt,
+        };
+      })
+      .filter((item) => matches(item.label, item.cwd))
+      // Sessions in a window first, then the rest; most recently used first within each.
+      .sort((a, b) => Number(!a.windowId) - Number(!b.windowId) || b.lastActiveAt - a.lastActiveAt);
+
+    const ownPids = new Set(records.map((r) => this.sessions.status(r.id)?.pid).filter((p): p is number => !!p));
+    const ownIds = new Set(records.map((r) => r.claudeSessionId));
+    const running: RunningListItem[] = listRunning(this.claudeHome, { pids: ownPids, sessionIds: ownIds })
+      .filter((entry) => entry.cwd && matches(entry.name, entry.cwd))
+      .map((entry) => ({
+        kind: 'running',
+        pid: entry.pid,
+        claudeSessionId: entry.sessionId,
+        cwd: entry.cwd!,
+        name: entry.name,
+      }));
+
+    const exclude = new Set([...ownIds, ...running.map((r) => r.claudeSessionId)]);
+    const past = await this.transcripts.list({ query, limit, exclude });
+    const found = past.items
+      .filter((info) => info.cwd)
+      .map((info) => ({
+        kind: 'found' as const,
+        claudeSessionId: info.sessionId,
+        cwd: info.cwd!,
+        title: info.title,
+        modifiedAt: info.modifiedAt,
+      }));
+    return { app, running, found, hasMore: past.hasMore };
+  }
+
+  /** Opens a list entry in `windowId` at `target`; a session already shown somewhere is just brought up. */
+  private async openSession(windowId: string, item: ListItemRef, target: DropTarget | null): Promise<void> {
+    if (item.kind === 'app') {
+      const record = this.state.sessions[item.sessionId];
+      if (!record) return;
+      if (this.windowOf(record.id)) return this.focusSession(record.id);
+      return this.placeAndResume(windowId, { ...record, lifecycle: 'open' }, target);
+    }
+
+    // A conversation reframe already manages is opened as that session, not a second copy.
+    const known = Object.values(this.state.sessions).find((r) => r.claudeSessionId === item.claudeSessionId);
+    if (known) return this.openSession(windowId, { kind: 'app', sessionId: known.id }, target);
+
+    if (item.kind === 'found') {
+      const info = await this.transcripts.find(item.claudeSessionId);
+      if (!info?.cwd) return this.log('warn', 'found session has no folder', { claudeSession: item.claudeSessionId });
+      return this.placeAndResume(windowId, this.adopted(item.claudeSessionId, info.cwd), target);
+    }
+
+    // Running elsewhere: end it there first, so the conversation never runs twice.
+    const entry = readRegistryEntry(this.claudeHome, item.pid);
+    if (!entry || entry.sessionId !== item.claudeSessionId || !entry.cwd || !isAlive(item.pid)) {
+      return this.log('info', 'running session is gone, nothing to take over', { pid: item.pid });
+    }
+    const browserWindow = this.windows.get(windowId);
+    const options = {
+      type: 'question' as const,
+      buttons: [this.t('takeover.confirm'), this.t('dialog.cancel')],
+      defaultId: 0,
+      cancelId: 1,
+      title: this.t('takeover.title'),
+      message: this.t('takeover.message', { label: entry.name ?? path.basename(entry.cwd) }),
+      detail: this.t('takeover.detail'),
+    };
+    const { response } = browserWindow
+      ? await dialog.showMessageBox(browserWindow, options)
+      : await dialog.showMessageBox(options);
+    if (response !== 0) return;
+    this.log('info', 'taking over session from another terminal', { pid: item.pid, claudeSession: entry.sessionId });
+    const result = await stopExternalClaude(item.pid, this.log);
+    this.log(result === 'failed' ? 'warn' : 'info', 'other terminal stopped', { pid: item.pid, result });
+    if (result === 'failed') {
+      const failure = { type: 'error' as const, message: this.t('takeover.failed') };
+      if (browserWindow) await dialog.showMessageBox(browserWindow, failure);
+      else await dialog.showMessageBox(failure);
+      return;
+    }
+    // Read again: the session id can change until the very end (e.g. after /clear).
+    // A name the user gave it survives; one Claude made up is made up again.
+    const name = entry.nameSource === 'user' ? entry.name : undefined;
+    this.placeAndResume(windowId, this.adopted(entry.sessionId, entry.cwd, name), target);
+  }
+
+  /** A new record for a Claude Code session started outside reframe. */
+  private adopted(claudeSessionId: string, cwd: string, name?: string): SessionRecord {
+    // Without a transcript (no prompt yet) it starts fresh under the same id instead of failing to resume.
+    const now = Date.now();
+    return {
+      id: crypto.randomUUID(),
+      claudeSessionId,
+      cwd,
+      name,
+      launch: {},
+      lifecycle: 'open',
+      createdAt: now,
+      lastActiveAt: now,
+      used: transcriptExists(this.claudeHome, claudeSessionId),
+    };
+  }
+
+  private placeAndResume(windowId: string, record: SessionRecord, target: DropTarget | null): void {
+    this.state = { ...this.state, sessions: { ...this.state.sessions, [record.id]: record } };
+    this.mutateWindow(windowId, (w) => putNode(w, tile(record.id), target));
+    this.log('info', 'session opened from the list', { session: record.id, window: windowId });
+    this.sessions.start(record, 'resume');
+    this.windows.send(windowId, IPC.focusTile, record.id);
+  }
+
+  /** Forgets an ended session that is in no window; Claude Code's transcript is left alone. */
+  private removeSession(sessionId: string): void {
+    if (!this.state.sessions[sessionId] || this.windowOf(sessionId)) return;
+    void this.sessions.stop(sessionId); // still ending right after its tile's ×: let it finish in the background
+    const { [sessionId]: _removed, ...rest } = this.state.sessions;
+    this.state = { ...this.state, sessions: rest };
+    this.save();
+    fs.rmSync(path.join(app.getPath('userData'), 'hooks', `${sessionId}.json`), { force: true });
+    this.log('info', 'session removed from the list', { session: sessionId });
+  }
+
   // ---------- notifications and tray ----------
 
   private notify(sessionId: string, kind: NotifyKind): void {
     const win = this.windowOf(sessionId);
     const record = this.state.sessions[sessionId];
-    if (!win || !record || !Notification.isSupported() || process.env.REFRAME_DISABLE_NOTIFICATIONS) return;
-    if (this.windows.isAttentive(win.id) && !isCollapsed(win, sessionId)) return;
+    if (!win || !record) return;
+    const skip = (reason: string) => this.log('info', 'notification skipped', { session: sessionId, kind, reason });
+    if (!Notification.isSupported() || process.env.REFRAME_DISABLE_NOTIFICATIONS) return skip('notifications off');
+    if (this.windows.isAttentive(win.id) && !isCollapsed(win, sessionId)) return skip('window in focus, tile visible');
     const label = this.sessionView(record).label;
     const notification = new Notification({
       title: translate(this.locale, kind === 'done' ? 'notify.done' : 'notify.waiting', { label }),
       body: translate(this.locale, kind === 'done' ? 'notify.doneBody' : 'notify.waitingBody'),
       icon: this.assets.icon,
     });
-    notification.on('click', () => this.focusSession(sessionId));
+    notification.on('click', () => {
+      this.log('info', 'notification clicked', { session: sessionId });
+      this.focusSession(sessionId);
+    });
     notification.show();
+    this.log('info', 'notification shown', { session: sessionId, kind });
   }
 
   private focusSession(sessionId: string): void {
@@ -604,6 +793,21 @@ export class ReframeApp {
       this.save();
     });
     ipcMain.handle(IPC.folderExists, (_event, folder: unknown) => typeof folder === 'string' && isDirectory(folder));
+    ipcMain.handle(IPC.sessionList, (_event, query: unknown, limit: unknown) =>
+      this.sessionList(typeof query === 'string' ? query : '', typeof limit === 'number' ? Math.min(limit, 500) : 20),
+    );
+    ipcMain.on(IPC.openSession, (event, request: Partial<OpenSessionRequest> | null) => {
+      const id = windowId(event);
+      const item = request?.item;
+      if (!id || !item || !isListItemRef(item)) return;
+      if (request.target !== null && !isDropTarget(request.target)) return;
+      void this.openSession(id, item, request.target ?? null).catch((error: unknown) =>
+        this.log('error', 'opening a session from the list failed', { error: String(error) }),
+      );
+    });
+    ipcMain.on(IPC.removeSession, (_event, sessionId: unknown) => {
+      if (typeof sessionId === 'string') this.removeSession(sessionId);
+    });
   }
 }
 
@@ -616,6 +820,15 @@ function findClaude(): ClaudeBinary | null {
     override: process.env.REFRAME_CLAUDE_BIN,
     nodeRunner: node ? { file: node, env: {} } : undefined,
   });
+}
+
+function isListItemRef(value: unknown): value is ListItemRef {
+  if (!value || typeof value !== 'object') return false;
+  const v = value as Record<string, unknown>;
+  if (v.kind === 'app') return typeof v.sessionId === 'string';
+  if (v.kind === 'found') return typeof v.claudeSessionId === 'string';
+  if (v.kind === 'running') return typeof v.pid === 'number' && typeof v.claudeSessionId === 'string';
+  return false;
 }
 
 function isDirectory(folder: string): boolean {
