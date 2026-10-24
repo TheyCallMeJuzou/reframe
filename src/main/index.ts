@@ -11,10 +11,12 @@ import { startedBySystem } from './autostart';
 // Tests and side-by-side dev runs use their own profile.
 if (process.env.REFRAME_USER_DATA) app.setPath('userData', process.env.REFRAME_USER_DATA);
 
-if (!app.requestSingleInstanceLock()) {
+const build = app.isPackaged ? 'installed' : 'development';
+
+if (!app.requestSingleInstanceLock({ build })) {
   // One reframe per profile: the running one shows its windows (second-instance) and this one leaves.
   createLogger(path.join(app.getPath('userData'), 'logs'))('info', 'reframe already runs, showing its windows', {
-    build: app.isPackaged ? 'installed' : 'development',
+    build,
   });
   app.quit();
 } else {
@@ -25,7 +27,13 @@ if (!app.requestSingleInstanceLock()) {
   let reframe: ReframeApp | null = null;
   let quitting = false;
 
-  app.on('second-instance', () => reframe?.revealWindows());
+  app.on('second-instance', (_event, _argv, _cwd, data) => {
+    reframe?.revealWindows();
+    // The installed app started while a development build runs, or the other way round: say so, or one ends up
+    // trying out the build that is not running.
+    const other = (data as { build?: unknown } | null)?.build;
+    if ((other === 'installed' || other === 'development') && other !== build) reframe?.otherBuildStarted(other);
+  });
 
   // Closing windows only hides them; reframe keeps running in the tray until "Quit".
   app.on('window-all-closed', () => {});

@@ -170,6 +170,23 @@ export class ReframeApp {
     for (const w of this.state.windows) this.windows.show(w.id);
   }
 
+  /** Another build of reframe (installed vs. development) was started and handed over to this one. */
+  otherBuildStarted(other: 'installed' | 'development'): void {
+    const own = app.isPackaged ? 'installed' : 'development';
+    this.log('info', 'another build was started, this one keeps running', { started: other, running: own });
+    const browserWindow = this.windows.get(this.state.windows[0]!.id);
+    const options = {
+      type: 'info' as const,
+      title: this.t('otherBuild.title'),
+      message: this.t('otherBuild.message', {
+        started: this.t(`otherBuild.${other}`),
+        running: this.t(`otherBuild.${own}`),
+      }),
+      detail: this.t('otherBuild.detail'),
+    };
+    void (browserWindow ? dialog.showMessageBox(browserWindow, options) : dialog.showMessageBox(options));
+  }
+
   /** Ends all sessions the way a user would, saves, and exits. Sessions stay open and resume next time. */
   async shutdown(): Promise<void> {
     if (this.shuttingDown) return;

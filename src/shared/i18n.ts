@@ -106,6 +106,12 @@ const en = {
   'tray.newWindow': 'New window',
   'tray.quit': 'Quit reframe',
   'tray.autostart': 'Start with the system',
+  'otherBuild.title': 'reframe is already running',
+  'otherBuild.message':
+    'You started the {started}, but the {running} is running already, and only one can run at a time.',
+  'otherBuild.detail': 'To use the other one, quit this one from the tray menu ("Quit reframe") and start it again.',
+  'otherBuild.installed': 'installed version',
+  'otherBuild.development': 'development build (npm run dev)',
   'tray.restartToUpdate': 'Restart to update to {version}',
   'update.readyTitle': 'Update ready',
   'update.readyBody':
@@ -223,6 +229,13 @@ const de: Record<MessageKey, string> = {
   'tray.newWindow': 'Neues Fenster',
   'tray.quit': 'reframe beenden',
   'tray.autostart': 'Mit dem System starten',
+  'otherBuild.title': 'reframe läuft schon',
+  'otherBuild.message':
+    'Du hast die {started} gestartet, es läuft aber schon die {running}, und es kann nur eine laufen.',
+  'otherBuild.detail':
+    'Um die andere zu nutzen, beende diese über das Tray-Menü ("reframe beenden") und starte die andere erneut.',
+  'otherBuild.installed': 'installierte Version',
+  'otherBuild.development': 'Entwicklerversion (npm run dev)',
   'tray.restartToUpdate': 'Neu starten und auf {version} aktualisieren',
   'update.readyTitle': 'Update bereit',
   'update.readyBody':
