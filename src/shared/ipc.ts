@@ -124,6 +124,13 @@ export interface ForeignDropRequest {
   candidates: ForeignCandidate[];
 }
 
+export interface ForeignPointerReport {
+  x: number;
+  y: number;
+  /** Data types the drag offers (logged, to tell terminals apart). */
+  types: string[];
+}
+
 export interface ForeignDropAnswer {
   pids: number[];
   target: DropTarget | null;
@@ -180,6 +187,8 @@ export interface ReframeApi {
   onForeignDrop(listener: (request: ForeignDropRequest) => void): () => void;
   /** Answer to a foreign drop; null cancels. */
   answerForeignDrop(requestId: string, answer: ForeignDropAnswer | null): void;
+  /** Something unknown (not ours, e.g. a terminal tab) is dragged over this window: pointer in screen coordinates. */
+  reportForeignPointer(report: ForeignPointerReport): void;
 }
 
 export const IPC = {
@@ -210,6 +219,7 @@ export const IPC = {
   foreignDrag: 'reframe:foreign-drag',
   foreignDrop: 'reframe:foreign-drop',
   foreignDropAnswer: 'reframe:foreign-drop-answer',
+  foreignPointer: 'reframe:foreign-pointer',
 } as const;
 
 /** window.postMessage payload carrying a terminal MessagePort from preload to the page. */

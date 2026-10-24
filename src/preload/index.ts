@@ -40,6 +40,7 @@ const api: ReframeApi = {
   onForeignDrag: (listener) => subscribe<{ x: number; y: number } | null>(IPC.foreignDrag, listener),
   onForeignDrop: (listener) => subscribe<ForeignDropRequest>(IPC.foreignDrop, listener),
   answerForeignDrop: (requestId, answer) => ipcRenderer.send(IPC.foreignDropAnswer, requestId, answer),
+  reportForeignPointer: (report) => ipcRenderer.send(IPC.foreignPointer, report),
 };
 
 contextBridge.exposeInMainWorld('reframe', api);

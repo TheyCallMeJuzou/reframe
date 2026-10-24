@@ -51,6 +51,7 @@ import {
   type AppListItem,
   type ForeignCandidate,
   type ForeignDropAnswer,
+  type ForeignPointerReport,
   type ListItemRef,
   type OpenSessionRequest,
   type RunningListItem,
@@ -785,6 +786,11 @@ export class ReframeApp {
     return owner ? (owner.owner ?? owner.consoleWindow) : null;
   }
 
+  /** Test hook (REFRAME_E2E): terminal window `hwnd` as if it had just appeared at a screen point (torn-out tab). */
+  terminalWindowAppeared(hwnd: string, point: { x: number; y: number }): void {
+    this.foreign?.appeared(hwnd, point);
+  }
+
   /** Test hook (REFRAME_E2E): what releasing terminal window `hwnd` at a screen point does. */
   async dropTerminalWindow(hwnd: string, point: { x: number; y: number }): Promise<boolean> {
     const windowId = this.windows.windowAt(point);
@@ -955,6 +961,16 @@ export class ReframeApp {
       void this.openSession(id, item, request.target ?? null).catch((error: unknown) =>
         this.log('error', 'opening a session from the list failed', { error: String(error) }),
       );
+    });
+    let pointerLogged = 0;
+    ipcMain.on(IPC.foreignPointer, (_event, report: Partial<ForeignPointerReport> | null) => {
+      if (typeof report?.x !== 'number' || typeof report.y !== 'number') return;
+      this.foreign?.notePointer({ x: report.x, y: report.y });
+      if (Date.now() - pointerLogged > 2000) {
+        const types = Array.isArray(report.types) ? report.types.filter((t) => typeof t === 'string') : [];
+        this.log('info', 'something from another app is dragged over reframe', { types });
+      }
+      pointerLogged = Date.now();
     });
     ipcMain.on(IPC.foreignDropAnswer, (_event, requestId: unknown, answer: Partial<ForeignDropAnswer> | null) => {
       if (typeof requestId !== 'string') return;

@@ -1,7 +1,8 @@
 // End to end (Windows): a terminal window with claude is dropped onto reframe. A fake claude runs under cmd in
-// a real console window (or a Windows Terminal tab, if that is the default terminal). The test does what the
-// release of a dragged window does (REFRAME_E2E hook), confirms the dialog, and checks that the session moved
-// into reframe and that the console, with only cmd left, was closed by typing "exit".
+// a real console window (or a Windows Terminal tab, if that is the default terminal). The tests do what the
+// release of a dragged window, or a terminal tab torn out over reframe, does (REFRAME_E2E hooks), confirm the
+// dialog, and check that the session moved into reframe and that the console, with only cmd left, was closed
+// by typing "exit".
 import { execFileSync, spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -20,8 +21,10 @@ const alive = (pid: number) => {
   }
 };
 
-test('a terminal window dropped onto reframe hands its claude over and closes', async () => {
-  const { dir, project, env, launches, byName } = setup();
+type Setup = ReturnType<typeof setup>;
+
+/** Starts claude (the fake) named "outside" under cmd in its own console; resolves once it is registered. */
+async function outsideTerminal({ dir, project, env }: Setup, started: (shellPid: number) => void) {
   const sessionId = crypto.randomUUID();
   const noHooks = path.join(dir, 'no-hooks.json');
   fs.writeFileSync(noHooks, '{}');
@@ -35,7 +38,6 @@ test('a terminal window dropped onto reframe hands its claude over and closes', 
     stdio: 'ignore',
     windowsVerbatimArguments: true,
   });
-  let shellPid = 0;
   const registry = path.join(env.REFRAME_CLAUDE_HOME!, 'sessions');
   const fakePid = () => {
     try {
@@ -48,22 +50,46 @@ test('a terminal window dropped onto reframe hands its claude over and closes', 
     }
     return 0;
   };
-  try {
-    await expect.poll(fakePid, { timeout: 20_000 }).toBeGreaterThan(0);
-    const pid = fakePid();
-    shellPid = Number(
-      execFileSync(
-        'powershell',
-        ['-NoProfile', '-Command', `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").ParentProcessId`],
-        { encoding: 'utf8' },
-      ).trim(),
-    );
-    expect(shellPid).toBeGreaterThan(0);
+  await expect.poll(fakePid, { timeout: 20_000 }).toBeGreaterThan(0);
+  const pid = fakePid();
+  const shellPid = Number(
+    execFileSync(
+      'powershell',
+      ['-NoProfile', '-Command', `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").ParentProcessId`],
+      { encoding: 'utf8' },
+    ).trim(),
+  );
+  expect(shellPid).toBeGreaterThan(0);
+  started(shellPid);
+  return { sessionId, pid, shellPid };
+}
 
-    const { app, page } = await launch(env);
+/** Runs `body`; on failure keeps screenshots and prints the app log; always ends the outside terminal. */
+async function withOutsideTerminal(name: string, run: (s: Setup, started: (pid: number) => void) => Promise<void>) {
+  const s = setup();
+  let shellPid = 0;
+  try {
+    await run(s, (pid) => (shellPid = pid));
+  } catch (error) {
+    await captureWindows(name);
+    const logFile = path.join(s.env.REFRAME_USER_DATA!, 'logs', 'main.log');
+    if (fs.existsSync(logFile)) console.log(`--- main.log\n${fs.readFileSync(logFile, 'utf8')}`);
+    throw error;
+  } finally {
+    if (shellPid && alive(shellPid)) spawn('taskkill', ['/PID', String(shellPid), '/T', '/F'], { stdio: 'ignore' });
+    await cleanup(s.dir);
+  }
+}
+
+const readLog = (s: Setup) => fs.readFileSync(path.join(s.env.REFRAME_USER_DATA!, 'logs', 'main.log'), 'utf8');
+
+test('a terminal window dropped onto reframe hands its claude over and closes', async () => {
+  await withOutsideTerminal('terminal-window', async (s, started) => {
+    const { sessionId, pid, shellPid } = await outsideTerminal(s, started);
+    const { app, page } = await launch(s.env);
     // A group to drop into: released over its bar (not over a tile), the session must join it.
-    await newSession(page, project, 'alpha');
-    await callMain(app, 'createGroup', byName('alpha').id);
+    await newSession(page, s.project, 'alpha');
+    await callMain(app, 'createGroup', s.byName('alpha').id);
     const header = (await page.locator('.group-header').boundingBox())!;
     const bounds = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.getContentBounds());
     const point = { x: bounds.x + header.x + header.width / 2, y: bounds.y + header.y + header.height / 2 };
@@ -85,23 +111,45 @@ test('a terminal window dropped onto reframe hands its claude over and closes', 
     await expect(tileByLabel(page, 'outside')).toBeVisible({ timeout: 15_000 });
     await expect(page.locator('.group .tile')).toHaveCount(2);
     await expect
-      .poll(() => launches().filter((l) => l.event === 'start' && l.args.join(' ').includes(sessionId)).length)
+      .poll(() => s.launches().filter((l) => l.event === 'start' && l.args.join(' ').includes(sessionId)).length)
       .toBe(2);
 
     // Only cmd was left in that console, so reframe typed "exit" and the console went away.
     await expect.poll(() => alive(shellPid), { timeout: 15_000 }).toBe(false);
-    const log = fs.readFileSync(path.join(env.REFRAME_USER_DATA!, 'logs', 'main.log'), 'utf8');
-    expect(log).toContain('typing exit');
-    expect(log).toContain('repeated drop of the same terminal window ignored');
+    expect(readLog(s)).toContain('typing exit');
+    expect(readLog(s)).toContain('repeated drop of the same terminal window ignored');
 
     await quit(app);
-  } catch (error) {
-    await captureWindows('terminal-window');
-    const logFile = path.join(env.REFRAME_USER_DATA!, 'logs', 'main.log');
-    if (fs.existsSync(logFile)) console.log(`--- main.log\n${fs.readFileSync(logFile, 'utf8')}`);
-    throw error;
-  } finally {
-    if (shellPid && alive(shellPid)) spawn('taskkill', ['/PID', String(shellPid), '/T', '/F'], { stdio: 'ignore' });
-    await cleanup(dir);
-  }
+  });
+});
+
+test('a terminal tab torn out over reframe (a new terminal window there) is taken over too', async () => {
+  await withOutsideTerminal('terminal-tab', async (s, started) => {
+    const { pid, shellPid } = await outsideTerminal(s, started);
+    const { app, page } = await launch(s.env);
+    await newSession(page, s.project, 'alpha');
+    // Released over the lower part of tile alpha.
+    const tile = (await tileByLabel(page, 'alpha').boundingBox())!;
+    const bounds = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.getContentBounds());
+    const point = { x: bounds.x + tile.x + tile.width / 2, y: bounds.y + tile.y + tile.height * 0.9 };
+
+    const hwnd = await callMain<string | null>(app, 'terminalWindowOf', pid);
+    expect(hwnd).toBeTruthy();
+    await callMain(app, 'terminalWindowAppeared', hwnd, point);
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toContainText('outside', { timeout: 10_000 });
+    await dialog.getByRole('button', { name: 'Take over' }).click();
+
+    await expect.poll(() => alive(pid), { timeout: 15_000 }).toBe(false);
+    await expect(tileByLabel(page, 'outside')).toBeVisible({ timeout: 15_000 });
+    // Below alpha: the two tiles are stacked.
+    const alpha = (await tileByLabel(page, 'alpha').boundingBox())!;
+    const outside = (await tileByLabel(page, 'outside').boundingBox())!;
+    expect(outside.y).toBeGreaterThan(alpha.y + alpha.height / 2);
+    await expect.poll(() => alive(shellPid), { timeout: 15_000 }).toBe(false);
+    expect(readLog(s)).toContain('new terminal window appeared');
+
+    await quit(app);
+  });
 });

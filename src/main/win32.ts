@@ -1,10 +1,14 @@
 // Win32 calls the main process makes itself (no console attaching; see the console helper for that):
-// following window drags of other apps and reading a foreign window. Loaded only on Windows.
+// following window drags and new windows of other apps, and reading a foreign window. Loaded only on Windows.
 import koffi from 'koffi';
 
 export interface Win32 {
   /** Calls back when the user starts and ends moving a window of another app (title-bar drag). */
   onMoveSize(callback: (phase: 'start' | 'end', hwnd: string) => void): void;
+  /** Calls back when another app creates or shows a top-level window. */
+  onTopLevel(callback: (phase: 'created' | 'shown', hwnd: string) => void): void;
+  /** Window rectangle in physical screen pixels. */
+  rect(hwnd: string): { x: number; y: number; width: number; height: number } | null;
   processId(hwnd: string): number;
   /** Executable file name of a process, e.g. "WindowsTerminal.exe". */
   imageName(pid: number): string | null;
@@ -35,6 +39,9 @@ function load(): Win32 {
   );
   const GetWindowTextW = user32.func('int __stdcall GetWindowTextW(void* hwnd, _Out_ uint16_t* text, int max)');
   const IsWindow = user32.func('bool __stdcall IsWindow(void* hwnd)');
+  const GetAncestor = user32.func('void* __stdcall GetAncestor(void* hwnd, uint32_t flags)');
+  koffi.struct('RECT', { left: 'int32_t', top: 'int32_t', right: 'int32_t', bottom: 'int32_t' });
+  const GetWindowRect = user32.func('bool __stdcall GetWindowRect(void* hwnd, _Out_ RECT* rect)');
   const OpenProcess = kernel32.func('void* __stdcall OpenProcess(uint32_t access, bool inherit, uint32_t pid)');
   const QueryFullProcessImageNameW = kernel32.func(
     'bool __stdcall QueryFullProcessImageNameW(void* process, uint32_t flags, _Out_ uint16_t* name, _Inout_ uint32_t* size)',
@@ -43,30 +50,51 @@ function load(): Win32 {
 
   const EVENT_SYSTEM_MOVESIZESTART = 0x000a;
   const EVENT_SYSTEM_MOVESIZEEND = 0x000b;
+  const EVENT_OBJECT_CREATE = 0x8000;
+  const EVENT_OBJECT_SHOW = 0x8002;
+  const CHILDID_SELF = 0;
+  const GA_ROOT = 2;
   const WINEVENT_SKIPOWNPROCESS = 0x0002;
   const OBJID_WINDOW = 0;
   const PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
 
   const toHandle = (hwnd: string) => BigInt(hwnd);
   const callbacks: unknown[] = []; // keeps registered callbacks alive
+  const hook = (eventMin: number, eventMax: number, callback: (...args: never[]) => void) => {
+    const registered = koffi.register(callback, koffi.pointer(WINEVENTPROC));
+    callbacks.push(registered);
+    // Out-of-context hooks are delivered through the message loop of this (the UI) thread.
+    SetWinEventHook(eventMin, eventMax, null, registered, 0, 0, WINEVENT_SKIPOWNPROCESS);
+  };
 
   return {
     onMoveSize(callback) {
-      const registered = koffi.register((_hook: unknown, event: number, hwnd: bigint | null, idObject: number) => {
-        if (idObject !== OBJID_WINDOW || !hwnd) return;
-        callback(event === EVENT_SYSTEM_MOVESIZESTART ? 'start' : 'end', String(hwnd));
-      }, koffi.pointer(WINEVENTPROC));
-      callbacks.push(registered);
-      // Out-of-context hooks are delivered through the message loop of this (the UI) thread.
-      SetWinEventHook(
+      hook(
         EVENT_SYSTEM_MOVESIZESTART,
         EVENT_SYSTEM_MOVESIZEEND,
-        null,
-        registered,
-        0,
-        0,
-        WINEVENT_SKIPOWNPROCESS,
+        (_hook: unknown, event: number, hwnd: bigint | null, idObject: number) => {
+          if (idObject !== OBJID_WINDOW || !hwnd) return;
+          callback(event === EVENT_SYSTEM_MOVESIZESTART ? 'start' : 'end', String(hwnd));
+        },
       );
+    },
+    onTopLevel(callback) {
+      // The range includes EVENT_OBJECT_DESTROY, which is skipped like every other event.
+      hook(
+        EVENT_OBJECT_CREATE,
+        EVENT_OBJECT_SHOW,
+        (_hook: unknown, event: number, hwnd: bigint | null, idObject: number, idChild: number) => {
+          if (idObject !== OBJID_WINDOW || idChild !== CHILDID_SELF || !hwnd) return;
+          if (event !== EVENT_OBJECT_CREATE && event !== EVENT_OBJECT_SHOW) return;
+          if (String(GetAncestor(hwnd, GA_ROOT)) !== String(hwnd)) return; // a child window
+          callback(event === EVENT_OBJECT_CREATE ? 'created' : 'shown', String(hwnd));
+        },
+      );
+    },
+    rect(hwnd) {
+      const rect = { left: 0, top: 0, right: 0, bottom: 0 };
+      if (!GetWindowRect(toHandle(hwnd), rect)) return null;
+      return { x: rect.left, y: rect.top, width: rect.right - rect.left, height: rect.bottom - rect.top };
     },
     processId(hwnd) {
       const pid = [0];
