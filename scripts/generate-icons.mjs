@@ -1,11 +1,14 @@
-// Draws reframe's icon (a rounded square holding a 2x2 grid of tiles) into PNGs without dependencies.
+// Draws reframe's icon (a rounded square holding a 2x2 grid of tiles) without dependencies: the PNGs the app
+// uses, and the logo files (SVG and large PNGs, with and without the background) in docs/logo.
 // Usage: node scripts/generate-icons.mjs
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
 
 const out = path.join(import.meta.dirname, '..', 'resources');
+const logo = path.join(import.meta.dirname, '..', 'docs', 'logo');
 fs.mkdirSync(out, { recursive: true });
+fs.mkdirSync(logo, { recursive: true });
 
 const BG = [32, 34, 40];
 const TILE = [86, 92, 107];
@@ -17,9 +20,8 @@ function roundedRect(px, py, x, y, w, h, r) {
   return (px - cx) ** 2 + (py - cy) ** 2 <= r * r && px >= x && px <= x + w && py >= y && py <= y + h;
 }
 
-function draw(size, { background = true } = {}) {
-  const ss = 4; // supersampling per axis
-  const data = Buffer.alloc(size * size * 4);
+/** The shapes, in units of the icon's size: the background square (if any) and the four tiles. */
+function layout({ background = true } = {}) {
   const pad = background ? 0.06 : 0;
   const inner = background ? 0.2 : 0.06;
   const gap = 0.07;
@@ -30,6 +32,29 @@ function draw(size, { background = true } = {}) {
     [inner, inner + cell + gap, TILE],
     [inner + cell + gap, inner + cell + gap, TILE],
   ];
+  return { pad, cell, tiles };
+}
+
+function svg({ background = true } = {}) {
+  const { pad, cell, tiles } = layout({ background });
+  const n = (value) => +(value * 512).toFixed(3);
+  const hex = (c) => '#' + c.map((v) => v.toString(16).padStart(2, '0')).join('');
+  const rect = (x, y, size, radius, color) =>
+    `  <rect x="${n(x)}" y="${n(y)}" width="${n(size)}" height="${n(size)}" rx="${n(radius)}" fill="${hex(color)}"/>`;
+  return [
+    '<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">',
+    '  <title>reframe</title>',
+    ...(background ? [rect(pad, pad, 1 - 2 * pad, 0.2, BG)] : []),
+    ...tiles.map(([x, y, color]) => rect(x, y, cell, cell * 0.18, color)),
+    '</svg>',
+    '',
+  ].join('\n');
+}
+
+function draw(size, { background = true } = {}) {
+  const ss = 4; // supersampling per axis
+  const data = Buffer.alloc(size * size * 4);
+  const { pad, cell, tiles } = layout({ background });
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       let r = 0,
@@ -100,4 +125,9 @@ function png(width, height, rgba) {
 fs.writeFileSync(path.join(out, 'icon.png'), draw(512));
 fs.writeFileSync(path.join(out, 'tray.png'), draw(16, { background: false }));
 fs.writeFileSync(path.join(out, 'tray@2x.png'), draw(32, { background: false }));
-console.log('icons written to', out);
+fs.writeFileSync(path.join(logo, 'reframe-icon.svg'), svg());
+fs.writeFileSync(path.join(logo, 'reframe-icon-1024.png'), draw(1024));
+fs.writeFileSync(path.join(logo, 'reframe-icon-256.png'), draw(256));
+fs.writeFileSync(path.join(logo, 'reframe-mark.svg'), svg({ background: false }));
+fs.writeFileSync(path.join(logo, 'reframe-mark-1024.png'), draw(1024, { background: false }));
+console.log('icons written to', out, 'and', logo);

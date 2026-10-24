@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <title>reframe</title>
+  <rect x="30.72" y="30.72" width="450.56" height="450.56" rx="102.4" fill="#202228"/>
+  <rect x="102.4" y="102.4" width="135.68" height="135.68" rx="24.422" fill="#d97757"/>
+  <rect x="273.92" y="102.4" width="135.68" height="135.68" rx="24.422" fill="#565c6b"/>
+  <rect x="102.4" y="273.92" width="135.68" height="135.68" rx="24.422" fill="#565c6b"/>
+  <rect x="273.92" y="273.92" width="135.68" height="135.68" rx="24.422" fill="#565c6b"/>
+</svg>
