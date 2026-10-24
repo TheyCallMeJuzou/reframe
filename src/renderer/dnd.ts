@@ -1,5 +1,5 @@
 import type { DragEvent as ReactDragEvent } from 'react';
-import type { Side } from '@shared/layout';
+import { tileKey, type Side } from '@shared/layout';
 import { GROUP_MIME, LIST_MIME, TILE_MIME, type ListItemRef } from '@shared/ipc';
 
 /** A tile or group from a window, or a session from the session list. */
@@ -87,4 +87,36 @@ export function sideAt(rect: DOMRect, x: number, y: number): Side {
     ['bottom', 1 - fy],
   ];
   return distances.reduce((best, d) => (d[1] < best[1] ? d : best))[0];
+}
+
+export interface PreviewRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+/** The drop target under a point that no DOM drag event describes (a foreign window dragged over us). */
+export function dropTargetAt(
+  x: number,
+  y: number,
+): { target: { key: string; side: Side } | null; rect: PreviewRect | null } {
+  const element = document.elementFromPoint(x, y);
+  const tile = element?.closest<HTMLElement>('.tile[data-session]');
+  if (tile?.dataset.session) {
+    const rect = (tile.querySelector('.tile-body') ?? tile).getBoundingClientRect();
+    const side = sideAt(rect, x, y);
+    return { target: { key: tileKey(tile.dataset.session), side }, rect: half(rect, side) };
+  }
+  const empty = element?.closest('.empty-area');
+  return { target: null, rect: empty ? empty.getBoundingClientRect() : null };
+}
+
+function half(r: DOMRect, side: Side): PreviewRect {
+  const w = r.width / 2;
+  const h = r.height / 2;
+  if (side === 'left') return { left: r.left, top: r.top, width: w, height: r.height };
+  if (side === 'right') return { left: r.left + w, top: r.top, width: w, height: r.height };
+  if (side === 'top') return { left: r.left, top: r.top, width: r.width, height: h };
+  return { left: r.left, top: r.top + h, width: r.width, height: h };
 }

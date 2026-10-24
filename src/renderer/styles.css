@@ -795,3 +795,36 @@ select {
 .sidebar-more {
   margin: 8px 6px 0;
 }
+
+/* ---------- terminal windows dragged onto reframe ---------- */
+
+.drop-preview.foreign-preview {
+  position: fixed;
+  z-index: 15;
+}
+
+.modal-text {
+  margin: 0;
+}
+
+.modal-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.takeover-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.takeover-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+}

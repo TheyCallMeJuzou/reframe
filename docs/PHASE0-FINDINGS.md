@@ -93,6 +93,11 @@ Beim Schließen des Spikes (sofortiges `app.quit()`) lief der Claude-Prozess sam
 - **Race beim Neustarten einer Session:** Beenden (×) läuft asynchron. Ein sofortiges Wiederöffnen startete den neuen Prozess, und das Aufräumen des alten traf danach den neuen. Deshalb hat jetzt jeder Start eine Instanznummer, und PTY-Ereignisse, Aufräumen und die Strg+C-Schleife gelten nur für ihre eigene Instanz.
 - Das "AttachConsole failed" auf stderr kommt aus node-pty selbst, wenn man `kill()` auf einen schon beendeten Prozess aufruft. Es ist harmlos und wird in Tests vermieden.
 
+### Nachträge aus Phase 5
+- **Fenster → Sessions:** Mit dem Hilfsprozess (`owners`) lassen sich alle extern laufenden Sessions auf einmal ihrem Fenster zuordnen. Bei Windows Terminal ist das der Owner der Pseudo-Konsole, bei conhost das Konsolenfenster selbst. Getestet mit einem cmd-Fenster, das per `start` geöffnet wurde.
+- **Was in einem Tab läuft:** `GetConsoleProcessList` nach `AttachConsole`, die Namen kommen über `QueryFullProcessImageNameW`. Alle Prozesse eines Tabs teilen sich dieselbe Konsoleneingabe, und eingetipptes `exit` liest die vorderste Shell.
+- **Testfallen:** `spawn(…, { detached: true })` gibt cmd unter Windows *keine* Konsole, cmd beendet sich sofort, und das Kindprogramm bekommt eine eigene. Und cmd beantwortet Strg+C in Batch-Dateien mit "Batchvorgang abbrechen?". Realistisch ist `start "Titel" cmd /s /k "<befehl>"`.
+
 ## Konsequenzen für den Plan
 1. **Status und Session-ID-Tracking:** Primär über HTTP-Hooks (`UserPromptSubmit`, `Stop`, `Notification`; dokumentiert). Für sofortige ID-Wechsel (`/clear`) und den Status zusätzlich die Registry-Datei der bekannten PID beobachten. Einen `SessionStart`-Command-Hook gibt es vorerst nicht, weil er eine Runtime (node) bei den Usern voraussetzen würde.
 2. **Spawn-Umgebung bereinigen** (siehe oben). Gilt auch für die Dev-Umgebung.

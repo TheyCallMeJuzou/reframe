@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { WindowView } from '@shared/ipc';
+import type { ForeignDropRequest, WindowView } from '@shared/ipc';
+import type { DropTarget } from '@shared/layout';
 import { AppContext, makeTranslate, type AppContextValue, type DragState } from './context';
-import { dragKind, handleDrop } from './dnd';
+import { dragKind, dropTargetAt, handleDrop, type PreviewRect } from './dnd';
 import type { TerminalRegistry } from './terminals';
 import { DockStrip } from './components/DockStrip';
 import { NewSessionDialog } from './components/NewSessionDialog';
 import { LayoutView } from './components/SplitView';
 import { ListIcon, PlusIcon } from './components/icons';
 import { SessionSidebar } from './components/SessionSidebar';
+import { TakeoverDialog } from './components/TakeoverDialog';
 
 export function App({ terminals }: { terminals: TerminalRegistry }) {
   const [view, setView] = useState<WindowView | null>(null);
@@ -15,6 +17,11 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
   const [dragging, setDragging] = useState<DragState | null>(null);
   const [emptyDropActive, setEmptyDropActive] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
+  // A terminal window from another app dragged over this window, and dropped on it.
+  const [foreignPreview, setForeignPreview] = useState<PreviewRect | null>(null);
+  const [foreignDrop, setForeignDrop] = useState<{ request: ForeignDropRequest; target: DropTarget | null } | null>(
+    null,
+  );
 
   useEffect(() => {
     let pushed = false;
@@ -48,6 +55,19 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
 
   useEffect(() => window.reframe.onOpenNewSession(() => setDialogOpen(true)), []);
   useEffect(() => window.reframe.onRenameGroup(setRenaming), []);
+  useEffect(
+    () => window.reframe.onForeignDrag((point) => setForeignPreview(point && dropTargetAt(point.x, point.y).rect)),
+    [],
+  );
+  useEffect(
+    () =>
+      window.reframe.onForeignDrop((request) => {
+        // Taken before the dialog covers the window.
+        setForeignPreview(null);
+        setForeignDrop({ request, target: dropTargetAt(request.x, request.y).target });
+      }),
+    [],
+  );
 
   // Drag state: tiles and groups from other windows announce themselves only through dragenter. A drop
   // re-parents or removes the dragged node, so its own dragend may never reach React; several events reset it.
@@ -154,6 +174,14 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
           </main>
         </div>
         {dialogOpen && <NewSessionDialog onClose={() => setDialogOpen(false)} />}
+        {foreignPreview && <div className="drop-preview foreign-preview" style={foreignPreview} />}
+        {foreignDrop && (
+          <TakeoverDialog
+            request={foreignDrop.request}
+            target={foreignDrop.target}
+            onDone={() => setForeignDrop(null)}
+          />
+        )}
       </div>
     </AppContext.Provider>
   );

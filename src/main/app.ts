@@ -49,6 +49,8 @@ import {
   type NewSessionRequest,
   type NewSessionResult,
   type AppListItem,
+  type ForeignCandidate,
+  type ForeignDropAnswer,
   type ListItemRef,
   type OpenSessionRequest,
   type RunningListItem,
@@ -61,9 +63,12 @@ import {
 import { PERMISSION_MODES } from '@shared/launch';
 import { emptyWindow, type AppState, type Preferences, type SessionRecord, type WindowState } from '@shared/state';
 import { listRunning, TranscriptIndex } from './claude/discovery';
-import { claudeHome, readRegistryEntry, transcriptExists } from './claude/registry';
+import { claudeHome, readRegistryEntry, transcriptExists, type RegistryEntry } from './claude/registry';
 import { resolveClaude, type ClaudeBinary } from './claude/resolve';
 import { HookServer } from './hooks/server';
+import { consoleHelper } from './console';
+import { ForeignWindowWatcher, type ForeignDrop } from './foreign';
+import { activeByTitle, isShell, onlyShells } from './foreign-match';
 import { createLogger } from './log';
 import { isAlive } from './process';
 import { PtyHostClient } from './ptyhost-client';
@@ -72,6 +77,7 @@ import { StateStore } from './state/store';
 import { stopExternalClaude } from './takeover';
 import { colorMenu, groupMenu, tileMenu } from './menus';
 import { createTray } from './tray';
+import { win32 } from './win32';
 import { WindowManager } from './windows';
 
 export interface AppAssets {
@@ -135,6 +141,7 @@ export class ReframeApp {
 
     this.registerIpc();
     this.openWindows();
+    this.watchForeignWindows();
     this.resumeSessions();
     this.createTray();
     this.save();
@@ -528,10 +535,9 @@ export class ReframeApp {
       // Sessions in a window first, then the rest; most recently used first within each.
       .sort((a, b) => Number(!a.windowId) - Number(!b.windowId) || b.lastActiveAt - a.lastActiveAt);
 
-    const ownPids = new Set(records.map((r) => this.sessions.status(r.id)?.pid).filter((p): p is number => !!p));
     const ownIds = new Set(records.map((r) => r.claudeSessionId));
-    const running: RunningListItem[] = listRunning(this.claudeHome, { pids: ownPids, sessionIds: ownIds })
-      .filter((entry) => entry.cwd && matches(entry.name, entry.cwd))
+    const running: RunningListItem[] = this.externalRunning()
+      .filter((entry) => matches(entry.name, entry.cwd))
       .map((entry) => ({
         kind: 'running',
         pid: entry.pid,
@@ -552,6 +558,14 @@ export class ReframeApp {
         modifiedAt: info.modifiedAt,
       }));
     return { app, running, found, hasMore: past.hasMore };
+  }
+
+  /** Claudes running outside reframe (with a known folder). */
+  private externalRunning(): RegistryEntry[] {
+    const records = Object.values(this.state.sessions);
+    const ownPids = new Set(records.map((r) => this.sessions.status(r.id)?.pid).filter((p): p is number => !!p));
+    const ownIds = new Set(records.map((r) => r.claudeSessionId));
+    return listRunning(this.claudeHome, { pids: ownPids, sessionIds: ownIds }).filter((entry) => entry.cwd);
   }
 
   /** Opens a list entry in `windowId` at `target`; a session already shown somewhere is just brought up. */
@@ -641,6 +655,127 @@ export class ReframeApp {
     this.save();
     fs.rmSync(path.join(app.getPath('userData'), 'hooks', `${sessionId}.json`), { force: true });
     this.log('info', 'session removed from the list', { session: sessionId });
+  }
+
+  // ---------- terminal windows dragged onto reframe (Windows) ----------
+
+  private foreign: ForeignWindowWatcher | null = null;
+  private foreignRequests = new Map<string, (answer: ForeignDropAnswer | null) => void>();
+
+  private watchForeignWindows(): void {
+    const api = win32();
+    if (!api) return;
+    this.foreign = new ForeignWindowWatcher({
+      win32: api,
+      windowAt: (point) => this.windows.windowAt(point),
+      externalSessions: () => this.externalRunning(),
+      log: this.log,
+    });
+    this.foreign.on('hover', (windowId, point) => {
+      this.windows.send(windowId, IPC.foreignDrag, point && this.toContent(windowId, point));
+    });
+    this.foreign.on('drop', (drop) => {
+      void this.takeOverWindow(drop).catch((error: unknown) =>
+        this.log('error', 'taking over a terminal window failed', { error: String(error) }),
+      );
+    });
+    try {
+      this.foreign.start();
+    } catch (error) {
+      this.log('warn', 'cannot follow window drags', { error: String(error) });
+    }
+  }
+
+  private toContent(windowId: string, point: { x: number; y: number }): { x: number; y: number } {
+    const bounds = this.windows.get(windowId)?.getContentBounds() ?? { x: 0, y: 0 };
+    return { x: point.x - bounds.x, y: point.y - bounds.y };
+  }
+
+  /** Asks (in the window it was dropped on) which sessions to take over; resumes them; closes the terminal. */
+  private async takeOverWindow(drop: ForeignDrop): Promise<void> {
+    this.log('info', 'terminal window dropped on reframe', { title: drop.title, sessions: drop.sessions.length });
+    this.windows.show(drop.windowId);
+    const active = activeByTitle(drop.title, drop.sessions);
+    const candidates: ForeignCandidate[] = drop.sessions.map((s) => ({
+      pid: s.pid,
+      claudeSessionId: s.sessionId,
+      cwd: s.cwd!,
+      name: s.name,
+      preselected: drop.sessions.length === 1 || s === active,
+    }));
+    const requestId = crypto.randomUUID();
+    const answer = await new Promise<ForeignDropAnswer | null>((resolve) => {
+      this.foreignRequests.set(requestId, resolve);
+      const { x, y } = this.toContent(drop.windowId, drop.point);
+      this.windows.send(drop.windowId, IPC.foreignDrop, { requestId, x, y, candidates });
+    });
+    const chosen = drop.sessions.filter((s) => answer?.pids.includes(s.pid));
+    if (chosen.length === 0) return this.log('info', 'terminal window takeover cancelled');
+
+    let target = answer?.target ?? null;
+    const shells: (number | undefined)[] = [];
+    for (const session of chosen) {
+      // Remember a shell in that console, to ask it afterwards what is left there.
+      const before = await consoleHelper({ type: 'console-processes', pid: session.pid });
+      shells.push(before.ok ? before.processes?.find((p) => isShell(p.name))?.pid : undefined);
+      this.log(
+        'info',
+        'running in that terminal tab',
+        before.ok ? { processes: before.processes?.map((p) => p.name) } : { error: before.error },
+      );
+      const latest = readRegistryEntry(this.claudeHome, session.pid) ?? session;
+      const result = await stopExternalClaude(session.pid, this.log);
+      this.log(result === 'failed' ? 'warn' : 'info', 'other terminal stopped', { pid: session.pid, result });
+      if (result === 'failed') continue;
+      const name = latest.nameSource === 'user' ? latest.name : undefined;
+      const record = this.adopted(latest.sessionId, latest.cwd ?? session.cwd!, name);
+      this.placeAndResume(drop.windowId, record, target);
+      target = { key: tileKey(record.id), side: 'right' };
+    }
+
+    for (const shell of shells) {
+      // Without a shell, the tab closed on its own together with claude.
+      if (shell !== undefined) await this.closeIdleConsole(shell);
+    }
+  }
+
+  /**
+   * Closes a terminal tab (console) that has nothing but shells left, by typing "exit" as its user would. Only
+   * that tab goes; other tabs of the same terminal window are never touched, and the last one takes the
+   * window with it. Nested shells (e.g. bash started from PowerShell) get one "exit" each.
+   */
+  private async closeIdleConsole(shellPid: number): Promise<void> {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      const left = await consoleHelper({ type: 'console-processes', pid: shellPid });
+      if (!left.ok) return this.log('info', 'terminal tab closed'); // nothing to attach to any more
+      if (!onlyShells(left.processes ?? [])) {
+        return this.log('info', 'terminal tab stays open, something else runs there', {
+          running: left.processes?.map((p) => p.name),
+        });
+      }
+      // Any shell of the tab will do: they share the console input, and the one in front reads the "exit".
+      const shell = left.processes?.find((p) => isShell(p.name) && !/^(conhost|openconsole)\.exe$/i.test(p.name ?? ''));
+      if (!shell) return;
+      this.log('info', 'only a shell is left in the terminal tab, typing exit', { shell: shell.name });
+      await consoleHelper({ type: 'type', pid: shell.pid, text: 'exit\r' });
+    }
+  }
+
+  /** Test hook (REFRAME_E2E): the console window or hosting terminal window of a process. */
+  async terminalWindowOf(pid: number): Promise<string | null> {
+    const result = await consoleHelper({ type: 'owners', pids: [pid] });
+    const owner = result.ok ? result.owners?.[0] : undefined;
+    return owner ? (owner.owner ?? owner.consoleWindow) : null;
+  }
+
+  /** Test hook (REFRAME_E2E): what releasing terminal window `hwnd` at a screen point does. */
+  async dropTerminalWindow(hwnd: string, point: { x: number; y: number }): Promise<boolean> {
+    const windowId = this.windows.windowAt(point);
+    const sessions = this.foreign && windowId ? await this.foreign.sessionsIn(hwnd) : [];
+    if (!windowId || sessions.length === 0) return false;
+    void this.takeOverWindow({ hwnd, title: win32()?.title(hwnd) ?? '', windowId, point, sessions });
+    return true;
   }
 
   // ---------- notifications and tray ----------
@@ -804,6 +939,17 @@ export class ReframeApp {
       void this.openSession(id, item, request.target ?? null).catch((error: unknown) =>
         this.log('error', 'opening a session from the list failed', { error: String(error) }),
       );
+    });
+    ipcMain.on(IPC.foreignDropAnswer, (_event, requestId: unknown, answer: Partial<ForeignDropAnswer> | null) => {
+      if (typeof requestId !== 'string') return;
+      const resolve = this.foreignRequests.get(requestId);
+      this.foreignRequests.delete(requestId);
+      const valid =
+        !!answer &&
+        Array.isArray(answer.pids) &&
+        answer.pids.every((p) => typeof p === 'number') &&
+        (answer.target === null || isDropTarget(answer.target));
+      resolve?.(valid ? { pids: answer.pids!, target: answer.target ?? null } : null);
     });
     ipcMain.on(IPC.removeSession, (_event, sessionId: unknown) => {
       if (typeof sessionId === 'string') this.removeSession(sessionId);

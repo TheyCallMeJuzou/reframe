@@ -1,8 +1,7 @@
 // Ends a claude that runs outside reframe the way its user would: Ctrl+C twice in its terminal. Only when
 // that does not work is the process tree killed. Used before reframe continues the session itself, so the
 // same conversation never runs in two places.
-import path from 'node:path';
-import { utilityProcess } from 'electron';
+import { consoleHelper } from './console';
 import type { LogFn } from './log';
 import { isAlive, killTree } from './process';
 
@@ -29,25 +28,9 @@ export async function stopExternalClaude(pid: number, log: LogFn): Promise<StopR
   return (await exitsWithin(pid, 3000)) ? 'killed' : 'failed';
 }
 
-function typeCtrlC(pid: number): Promise<{ ok: boolean; error?: string }> {
-  return new Promise((resolve) => {
-    const helper = utilityProcess.fork(path.join(__dirname, 'consolehelper.js'), [], {
-      serviceName: 'reframe-console-helper',
-    });
-    const timer = setTimeout(() => {
-      helper.kill();
-      resolve({ ok: false, error: 'helper timed out' });
-    }, 10_000);
-    helper.once('message', (result: { ok: boolean; error?: string }) => {
-      clearTimeout(timer);
-      resolve(result);
-    });
-    helper.once('exit', () => {
-      clearTimeout(timer);
-      resolve({ ok: false, error: 'helper exited' });
-    });
-    helper.postMessage({ pid, times: 2, intervalMs: 700 });
-  });
+async function typeCtrlC(pid: number): Promise<{ ok: boolean; error?: string }> {
+  const result = await consoleHelper({ type: 'interrupt', pid, times: 2, intervalMs: 700 });
+  return result.ok ? { ok: true } : result;
 }
 
 async function exitsWithin(pid: number, ms: number): Promise<boolean> {

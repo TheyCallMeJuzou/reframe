@@ -23,6 +23,11 @@ const en = {
     'reframe ends it there, as if you pressed Ctrl+C twice, and continues it here with its whole history.',
   'takeover.confirm': 'Take over',
   'takeover.failed': 'The session could not be ended in the other terminal.',
+  'foreign.title': 'Take over from the terminal',
+  'foreign.single': 'Continue this session here?',
+  'foreign.multiple': 'Several Claude sessions run in this terminal window. Which ones should move here?',
+  'foreign.detail':
+    'reframe ends them in the terminal, as if you pressed Ctrl+C twice, and continues them here with their whole history. If only an empty shell is left in a terminal tab, that tab is closed; other tabs stay as they are.',
   'empty.title': 'No sessions yet',
   'empty.hint': 'Start a Claude Code session to get going.',
   'tile.collapse': 'Collapse to the side bar',
@@ -118,6 +123,11 @@ const de: Record<MessageKey, string> = {
   'takeover.detail': 'reframe beendet sie dort, wie zweimal Strg+C, und setzt sie hier mit dem ganzen Verlauf fort.',
   'takeover.confirm': 'Übernehmen',
   'takeover.failed': 'Die Session ließ sich im anderen Terminal nicht beenden.',
+  'foreign.title': 'Aus dem Terminal übernehmen',
+  'foreign.single': 'Diese Session hier fortsetzen?',
+  'foreign.multiple': 'In diesem Terminal-Fenster laufen mehrere Claude-Sessions. Welche sollen hierher?',
+  'foreign.detail':
+    'reframe beendet sie im Terminal, wie zweimal Strg+C, und setzt sie hier mit dem ganzen Verlauf fort. Bleibt in einem Terminal-Tab nur eine leere Shell übrig, wird dieser Tab geschlossen. Andere Tabs bleiben, wie sie sind.',
   'empty.title': 'Noch keine Sessions',
   'empty.hint': 'Starte eine Claude-Code-Session, um loszulegen.',
   'tile.collapse': 'In die Seitenleiste einklappen',

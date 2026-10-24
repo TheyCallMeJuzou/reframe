@@ -1,7 +1,7 @@
 // Exposes the typed `window.reframe` API. MessagePorts cannot cross the context bridge, so terminal
 // ports are forwarded to the page with window.postMessage.
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
-import { IPC, TERMINAL_PORT_MESSAGE, type ReframeApi, type WindowView } from '@shared/ipc';
+import { IPC, TERMINAL_PORT_MESSAGE, type ForeignDropRequest, type ReframeApi, type WindowView } from '@shared/ipc';
 
 ipcRenderer.on(IPC.terminalPort, (event, payload: { sessionId: string }) => {
   window.postMessage({ type: TERMINAL_PORT_MESSAGE, sessionId: payload.sessionId }, '*', event.ports);
@@ -37,6 +37,9 @@ const api: ReframeApi = {
   getSessionList: (query, limit) => ipcRenderer.invoke(IPC.sessionList, query, limit),
   openSession: (request) => ipcRenderer.send(IPC.openSession, request),
   removeSession: (sessionId) => ipcRenderer.send(IPC.removeSession, sessionId),
+  onForeignDrag: (listener) => subscribe<{ x: number; y: number } | null>(IPC.foreignDrag, listener),
+  onForeignDrop: (listener) => subscribe<ForeignDropRequest>(IPC.foreignDrop, listener),
+  answerForeignDrop: (requestId, answer) => ipcRenderer.send(IPC.foreignDropAnswer, requestId, answer),
 };
 
 contextBridge.exposeInMainWorld('reframe', api);

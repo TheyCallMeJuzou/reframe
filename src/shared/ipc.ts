@@ -106,6 +106,29 @@ export interface OpenSessionRequest {
   target: DropTarget | null;
 }
 
+/** A claude found in a terminal window that was dropped onto reframe. */
+export interface ForeignCandidate {
+  pid: number;
+  claudeSessionId: string;
+  cwd: string;
+  name?: string;
+  /** The one the terminal window shows right now (or the only one). */
+  preselected: boolean;
+}
+
+/** A terminal window was dropped at (x, y) in this window's content; asks which sessions to take over. */
+export interface ForeignDropRequest {
+  requestId: string;
+  x: number;
+  y: number;
+  candidates: ForeignCandidate[];
+}
+
+export interface ForeignDropAnswer {
+  pids: number[];
+  target: DropTarget | null;
+}
+
 /** Size of the tile or group when the drag started, so a torn-out window can match it. */
 export interface TileSize {
   width: number;
@@ -151,6 +174,12 @@ export interface ReframeApi {
   openSession(request: OpenSessionRequest): void;
   /** Forgets an ended session (its Claude Code transcript stays). */
   removeSession(sessionId: string): void;
+  /** A terminal window with claude is dragged over this window (content coordinates); null when it left. */
+  onForeignDrag(listener: (point: { x: number; y: number } | null) => void): () => void;
+  /** Such a terminal window was dropped here: confirm or pick the sessions to take over. */
+  onForeignDrop(listener: (request: ForeignDropRequest) => void): () => void;
+  /** Answer to a foreign drop; null cancels. */
+  answerForeignDrop(requestId: string, answer: ForeignDropAnswer | null): void;
 }
 
 export const IPC = {
@@ -178,6 +207,9 @@ export const IPC = {
   sessionList: 'reframe:session-list',
   openSession: 'reframe:open-session',
   removeSession: 'reframe:remove-session',
+  foreignDrag: 'reframe:foreign-drag',
+  foreignDrop: 'reframe:foreign-drop',
+  foreignDropAnswer: 'reframe:foreign-drop-answer',
 } as const;
 
 /** window.postMessage payload carrying a terminal MessagePort from preload to the page. */

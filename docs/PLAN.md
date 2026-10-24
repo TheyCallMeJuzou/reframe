@@ -155,7 +155,10 @@ reframe/
 
 **Phase 4: Session-Liste** ✅: Linke Seitenleiste (Knopf "Sessions", Zustand pro Fenster), Klick öffnet am Ende des Fensters, Ziehen legt gezielt ab, "Gefunden" nach Zeit mit Suche und "Mehr anzeigen". Die Übernahme extern laufender Sessions ist schon hier eingebaut: Nach einer Rückfrage wird zweimal Strg+C in deren Konsole getippt, danach geht es hier weiter. Ein selbst vergebener Name bleibt erhalten. Dazu kommt ein Log in `%APPDATA%eframelogsmain.log`. Bereiche "In der App" und "Gefunden" (Discovery über alle Projekte, Start immer im richtigen Ordner), Drag aus der Liste (beendet → resume, extern laufend → "Übernehmen?" statt eines zweiten Prozesses), "Aus Liste entfernen".
 
-**Phase 5: Fenster draufziehen (Hybrid)**: zuerst Windows mit Multi-Tab-Auswahl, danach macOS (AX) und Linux X11.
+**Phase 5: Fenster draufziehen (Hybrid)**: zuerst Windows mit Multi-Tab-Auswahl, danach macOS (AX) und Linux X11. **Windows ✅** (manuell noch offen: echtes Ziehen mit der Maus), macOS und Linux offen. Entschieden:
+- Vor der Übernahme kommt immer eine kurze Bestätigung in reframe. Bei mehreren Tabs gibt es eine Auswahl, vorausgewählt ist der Tab, dessen Titel zum Fenster passt.
+- Was danach im Terminal übrig bleibt: Läuft in einem übernommenen Tab nur noch eine Shell, tippt reframe dort `exit`. So schließt sich nur dieser Tab, und als letzter Tab nimmt er das Fenster mit. Andere Tabs werden nie angefasst. Bewusst kein `WM_CLOSE` an das ganze Fenster: Wer in Windows Terminal die Rückfrage für mehrere Tabs abgeschaltet hat, würde sonst alle Tabs verlieren.
+- Geprüft wird nur, wenn ein bekanntes Terminal-Programm gezogen wird und irgendwo ein externes Claude läuft.
 
 **Phase 6: Open-Source-Reife**: README, CONTRIBUTING, CI-Matrix (Win/macOS/Linux) über einen GitHub-Spiegel, electron-builder (NSIS/dmg/AppImage+deb), Hinweise zum Code-Signing, optional Auto-Update und Autostart.
 
