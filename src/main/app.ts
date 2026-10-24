@@ -71,7 +71,15 @@ import {
   type WindowView,
 } from '@shared/ipc';
 import { PERMISSION_MODES } from '@shared/launch';
-import { emptyWindow, type AppState, type Preferences, type SessionRecord, type WindowState } from '@shared/state';
+import {
+  emptyWindow,
+  LANGUAGES,
+  type Language,
+  type AppState,
+  type Preferences,
+  type SessionRecord,
+  type WindowState,
+} from '@shared/state';
 import { listRunning, TranscriptIndex } from './claude/discovery';
 import { claudeHome, readRegistryEntry, transcriptExists, type RegistryEntry } from './claude/registry';
 import { resolveClaude, type ClaudeBinary } from './claude/resolve';
@@ -115,11 +123,20 @@ export class ReframeApp {
   private transcripts = new TranscriptIndex(this.claudeHome);
   private updates = new Updates(this.log);
 
+  /** The UI language in use: the one chosen in About, else the system's. */
+  private locale: Locale;
+
   constructor(
-    private locale: Locale,
+    private systemLocale: Locale,
     private assets: AppAssets,
   ) {
+    this.locale = systemLocale;
     this.windows = new WindowManager(assets.icon);
+  }
+
+  private applyLanguage(): void {
+    const chosen = this.state.preferences.language;
+    this.locale = chosen === 'system' ? this.systemLocale : chosen;
   }
 
   /** `hidden`: started by the system, so the windows stay in the tray (sessions resume all the same). */
@@ -127,6 +144,7 @@ export class ReframeApp {
     const loaded = this.store.load();
     this.state = loaded.state;
     if (this.state.windows.length === 0) this.state.windows.push(emptyWindow(crypto.randomUUID()));
+    this.applyLanguage();
     this.log('info', 'reframe starting', {
       version: app.getVersion(),
       platform: process.platform,
@@ -227,6 +245,9 @@ export class ReframeApp {
     return {
       windowId,
       locale: this.locale,
+      language: this.state.preferences.language,
+      systemLocale: this.systemLocale,
+      version: app.getVersion(),
       sidebarOpen: !!win.sidebarOpen,
       layout: win.layout,
       dock: win.dock,
@@ -1082,9 +1103,14 @@ export class ReframeApp {
   private createTray(): void {
     const t = this.t;
     const { refresh } = createTray(this.assets.trayIcon, this.assets.trayIcon2x, {
-      tooltip: t('tray.tooltip'),
-      newSessionLabel: t('tray.newSession'),
-      quitLabel: t('tray.quit'),
+      labels: () => ({
+        tooltip: t('tray.tooltip'),
+        newSession: t('tray.newSession'),
+        newWindow: t('tray.newWindow'),
+        autostart: t('tray.autostart'),
+        about: t('tray.about'),
+        quit: t('tray.quit'),
+      }),
       windows: () =>
         this.state.windows.map((w, i) => {
           const labels = windowSessions(w)
@@ -1102,9 +1128,12 @@ export class ReframeApp {
         this.windows.show(id);
         this.windows.send(id, IPC.openNewSession, null);
       },
-      newWindowLabel: t('tray.newWindow'),
       newWindow: () => this.newWindow(),
-      autostartLabel: t('tray.autostart'),
+      about: () => {
+        const id = this.state.windows[0]!.id;
+        this.windows.show(id);
+        this.windows.send(id, IPC.openAbout, null);
+      },
       autostart: () => {
         try {
           return autostartEnabled();
@@ -1247,8 +1276,17 @@ export class ReframeApp {
       if (!patch || typeof patch !== 'object') return;
       const next = { ...this.state.preferences };
       if (typeof patch.nameFromFolder === 'boolean') next.nameFromFolder = patch.nameFromFolder;
+      if (LANGUAGES.includes(patch.language as Language)) next.language = patch.language as Language;
+      const relabel = next.language !== this.state.preferences.language;
       this.state = { ...this.state, preferences: next };
       this.save();
+      if (relabel) {
+        // Every window, the tray and whatever comes next (menus, dialogs, notifications) speak it right away.
+        this.applyLanguage();
+        this.log('info', 'language changed', { language: next.language, locale: this.locale });
+        for (const w of this.state.windows) this.push(w.id);
+        this.refreshTray();
+      }
     });
     ipcMain.handle(IPC.folderExists, (_event, folder: unknown) => typeof folder === 'string' && isDirectory(folder));
     ipcMain.handle(IPC.sessionList, (_event, query: unknown, limit: unknown) =>

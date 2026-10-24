@@ -7,7 +7,8 @@ import type { TerminalRegistry } from './terminals';
 import { DockStrip } from './components/DockStrip';
 import { NewSessionDialog } from './components/NewSessionDialog';
 import { LayoutView } from './components/SplitView';
-import { ListIcon, PlusIcon, WindowIcon } from './components/icons';
+import { InfoIcon, ListIcon, PlusIcon, WindowIcon } from './components/icons';
+import { AboutDialog } from './components/AboutDialog';
 import { neighbor, type Box } from './focus-nav';
 import { useSessionList } from './session-list';
 import { shortcutFor, shortcutLabel, type Shortcut } from './shortcuts';
@@ -29,6 +30,7 @@ function whenShown(selector: string, action: () => void, frames = 60): void {
 export function App({ terminals }: { terminals: TerminalRegistry }) {
   const [view, setView] = useState<WindowView | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
   const [dragging, setDragging] = useState<DragState | null>(null);
   const [emptyDropActive, setEmptyDropActive] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -147,6 +149,7 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
   );
 
   useEffect(() => window.reframe.onOpenNewSession(() => setDialogOpen(true)), []);
+  useEffect(() => window.reframe.onOpenAbout(() => setAboutOpen(true)), []);
   useEffect(() => window.reframe.onRenameGroup(setRenaming), []);
   useEffect(() => window.reframe.onRenameSession(setRenamingSession), []);
   useEffect(
@@ -268,6 +271,15 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
             <WindowIcon />
             {t('toolbar.newWindow')}
           </button>
+          <span className="spacer" />
+          <button
+            className="icon-button toolbar-icon"
+            title={t('about.title')}
+            aria-label={t('about.title')}
+            onClick={() => setAboutOpen(true)}
+          >
+            <InfoIcon />
+          </button>
         </div>
         <div className="workspace">
           {view.sidebarOpen && <SessionSidebar sessionList={sessionList} />}
@@ -308,6 +320,14 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
           </main>
         </div>
         {dialogOpen && <NewSessionDialog onClose={() => setDialogOpen(false)} />}
+        {aboutOpen && (
+          <AboutDialog
+            version={view.version}
+            language={view.language}
+            systemLocale={view.systemLocale}
+            onClose={() => setAboutOpen(false)}
+          />
+        )}
         {foreignPreview && <div className="drop-preview foreign-preview" style={foreignPreview} />}
         {foreignDrop && (
           <TakeoverDialog

@@ -3,7 +3,7 @@ import type { LayoutAction } from './actions';
 import type { DropTarget, LayoutNode } from './layout';
 import type { Locale } from './i18n';
 import type { PermissionMode } from './launch';
-import type { DockEntry, Preferences, SessionRecord } from './state';
+import type { DockEntry, Preferences, SessionRecord, Language } from './state';
 
 /** starting → idle/busy/waiting while running; ended once the process is gone; error if it could not run. */
 export type SessionStatus = 'starting' | 'idle' | 'busy' | 'waiting' | 'ended' | 'error';
@@ -22,6 +22,10 @@ export interface SessionView {
 export interface WindowView {
   windowId: string;
   locale: Locale;
+  /** The language setting behind `locale`, and the system's language (for About). */
+  language: Language;
+  systemLocale: Locale;
+  version: string;
   sidebarOpen: boolean;
   layout: LayoutNode | null;
   dock: DockEntry[];
@@ -183,6 +187,8 @@ export interface ReframeApi {
   setPreferences(patch: Partial<Preferences>): void;
   folderExists(path: string): Promise<boolean>;
   onFocusTile(listener: (sessionId: string) => void): () => void;
+  /** The tray asks the window to show About. */
+  onOpenAbout(listener: () => void): () => void;
   /** The tray asks the window to open the "New session" dialog. */
   onOpenNewSession(listener: () => void): () => void;
   /** Opens an http(s) link from a terminal in the default browser. */
@@ -246,6 +252,7 @@ export const IPC = {
   folderExists: 'reframe:folder-exists',
   focusTile: 'reframe:focus-tile',
   openNewSession: 'reframe:open-new-session',
+  openAbout: 'reframe:open-about',
   openExternal: 'reframe:open-external',
   transferNode: 'reframe:transfer-node',
   newWindow: 'reframe:new-window',

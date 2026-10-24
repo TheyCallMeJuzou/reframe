@@ -34,6 +34,7 @@ const api: ReframeApi = {
   folderExists: (path) => ipcRenderer.invoke(IPC.folderExists, path),
   onFocusTile: (listener) => subscribe<string>(IPC.focusTile, listener),
   onOpenNewSession: (listener) => subscribe<null>(IPC.openNewSession, () => listener()),
+  onOpenAbout: (listener) => subscribe<null>(IPC.openAbout, () => listener()),
   openExternal: (url) => ipcRenderer.send(IPC.openExternal, url),
   transferNode: (request) => ipcRenderer.send(IPC.transferNode, request),
   newWindow: () => ipcRenderer.send(IPC.newWindow),

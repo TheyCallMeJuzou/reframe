@@ -20,6 +20,13 @@ export const WindowIcon = () => (
   </svg>
 );
 
+export const InfoIcon = () => (
+  <svg {...base} aria-hidden="true">
+    <circle cx="8" cy="8" r="6" />
+    <path d="M8 7.2v4M8 4.8v.01" strokeLinecap="round" />
+  </svg>
+);
+
 export const PlusIcon = () => (
   <svg {...base} aria-hidden="true">
     <path d="M8 3v10M3 8h10" strokeLinecap="round" />

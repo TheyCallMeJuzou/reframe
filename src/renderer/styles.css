@@ -728,6 +728,91 @@ select {
 
 /* ---------- session list ---------- */
 
+.toolbar-icon {
+  width: 28px;
+  height: 28px;
+}
+
+/* About reframe. */
+.modal.about {
+  align-items: center;
+  gap: 4px;
+  text-align: center;
+  width: min(420px, 100%);
+}
+
+.about-logo {
+  margin-top: 4px;
+}
+
+.about-name {
+  margin: 6px 0 0;
+  font-size: 20px;
+}
+
+.about-version,
+.about-tagline {
+  margin: 2px 0;
+  color: var(--muted);
+}
+
+.about-language {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 14px 0 6px;
+}
+
+.about-language select {
+  padding: 4px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.about-links {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0;
+}
+
+.about a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.about a:hover {
+  text-decoration: underline;
+}
+
+.about-credit {
+  margin: 8px 0;
+}
+
+.about-license {
+  align-self: stretch;
+  margin: 6px 0 4px;
+  text-align: left;
+}
+
+.about-license summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.about-license pre {
+  max-height: 180px;
+  overflow: auto;
+  padding: 8px;
+  border-radius: 4px;
+  background: var(--bg);
+  font-size: 11px;
+  white-space: pre-wrap;
+}
+
 /* Something new turned up in the (hidden) session list. */
 .toolbar-dot {
   width: 7px;

@@ -90,12 +90,17 @@ export const sessionRecordSchema = z.object({
   used: z.boolean().optional(),
 });
 
+export const LANGUAGES = ['system', 'en', 'de'] as const;
+export type Language = (typeof LANGUAGES)[number];
+
 export const preferencesSchema = z.object({
   /** "New session" fills the name with the folder's name. */
   nameFromFolder: z.boolean(),
+  /** The UI language: the system's, or one chosen in About. */
+  language: z.enum(LANGUAGES).default('system'),
 });
 
-export const DEFAULT_PREFERENCES: z.infer<typeof preferencesSchema> = { nameFromFolder: true };
+export const DEFAULT_PREFERENCES: z.infer<typeof preferencesSchema> = { nameFromFolder: true, language: 'system' };
 
 export const appStateSchema = z.object({
   version: z.literal(STATE_VERSION),

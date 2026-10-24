@@ -8,21 +8,28 @@ export interface TrayWindowItem {
   visible: boolean;
 }
 
-export interface TrayActions {
+/** The menu's texts, read on every refresh (the language can change while reframe runs). */
+export interface TrayLabels {
   tooltip: string;
-  newSessionLabel: string;
-  quitLabel: string;
+  newSession: string;
+  newWindow: string;
+  autostart: string;
+  about: string;
+  quit: string;
+}
+
+export interface TrayActions {
+  labels: () => TrayLabels;
   windows: () => TrayWindowItem[];
   toggleWindow: (id: string, visible: boolean) => void;
   showPrimary: () => void;
   newSession: () => void;
-  newWindowLabel: string;
   newWindow: () => void;
-  autostartLabel: string;
   autostart: () => boolean;
   setAutostart: (enabled: boolean) => void;
   /** "Restart to update" once an update is downloaded. */
   update: () => { label: string; install: () => void } | null;
+  about: () => void;
   quit: () => void;
 }
 
@@ -30,10 +37,11 @@ export function createTray(icon: string, icon2x: string, actions: TrayActions): 
   const image = nativeImage.createFromPath(icon);
   image.addRepresentation({ scaleFactor: 2, buffer: nativeImage.createFromPath(icon2x).toPNG() });
   const tray = new Tray(image);
-  tray.setToolTip(actions.tooltip);
 
   const refresh = () => {
+    const labels = actions.labels();
     const update = actions.update();
+    tray.setToolTip(labels.tooltip);
     tray.setContextMenu(
       Menu.buildFromTemplate([
         ...actions.windows().map((w) => ({
@@ -43,11 +51,11 @@ export function createTray(icon: string, icon2x: string, actions: TrayActions): 
           click: () => actions.toggleWindow(w.id, !w.visible),
         })),
         { type: 'separator' },
-        { label: actions.newSessionLabel, click: actions.newSession },
-        { label: actions.newWindowLabel, click: actions.newWindow },
+        { label: labels.newSession, click: actions.newSession },
+        { label: labels.newWindow, click: actions.newWindow },
         { type: 'separator' },
         {
-          label: actions.autostartLabel,
+          label: labels.autostart,
           type: 'checkbox',
           checked: actions.autostart(),
           click: (item) => {
@@ -56,7 +64,8 @@ export function createTray(icon: string, icon2x: string, actions: TrayActions): 
           },
         },
         ...(update ? [{ label: update.label, click: update.install }] : []),
-        { label: actions.quitLabel, click: actions.quit },
+        { label: labels.about, click: actions.about },
+        { label: labels.quit, click: actions.quit },
       ]),
     );
   };
