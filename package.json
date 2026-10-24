@@ -1,7 +1,7 @@
 {
   "name": "reframe",
   "productName": "reframe",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Tile, group and restore Claude Code sessions in one window",
   "license": "MIT",
   "private": true,
