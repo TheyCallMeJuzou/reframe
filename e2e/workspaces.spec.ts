@@ -1,0 +1,89 @@
+// End to end: a window saved as a workspace (from the toolbar's Workspaces menu, with a name) opens again later as
+// a window of its own, with its group and sessions resumed; opened while its window is there, that one just comes
+// up. Workspaces survive a restart, and are renamed and deleted from the session list.
+import { expect, test, type Page } from '@playwright/test';
+import { callMain, captureWindows, cleanup, launch, newSession, pageOf, quit, setup } from './helpers';
+
+test('workspaces: save a window, open it again, rename and delete it', async () => {
+  const { dir, project, env, launches, state, byName } = setup();
+  const starts = (id: string) =>
+    launches().filter((l) => l.event === 'start' && l.args.includes(byName(id).claudeSessionId)).length;
+  try {
+    let { app, page } = await launch(env);
+    const mainId = state().windows[0]!.id;
+
+    // A second window with two sessions in a group, saved as "Frontend".
+    let opened = app.waitForEvent('window');
+    await page.keyboard.press('ControlOrMeta+Shift+N');
+    const second = await opened;
+    await second.waitForSelector('.app');
+    await newSession(second, project, 'alpha');
+    await newSession(second, project, 'beta');
+    await callMain(app, 'createGroup', byName('alpha').id);
+    const groupId = (await second.locator('.group').getAttribute('data-group'))!;
+    await callMain(app, 'addSessionToGroup', byName('beta').id, groupId);
+    await expect(second.locator('.group .tile')).toHaveCount(2);
+
+    await second.getByRole('button', { name: 'Workspaces' }).click();
+    expect(await callMain<boolean>(app, 'clickMenuItem', 'Save this window as a workspace …')).toBe(true);
+    const naming = second.getByRole('dialog', { name: 'Save as a workspace' });
+    await naming.getByRole('textbox').fill('Frontend');
+    await naming.getByRole('button', { name: 'Save' }).click();
+    await expect.poll(() => state().workspaces.map((w) => w.name)).toEqual(['Frontend']);
+    await expect(second.locator('.toolbar')).toContainText('Frontend');
+
+    // Its sessions end, and the emptied window closes.
+    await callMain(app, 'endGroup', groupId);
+    await expect.poll(() => app.windows().length).toBe(1);
+
+    // Opened from the session list: a window of its own again, with the group and both sessions resumed.
+    await page.getByRole('button', { name: 'Sessions', exact: true }).click();
+    const row = page.locator('.workspace-row', { hasText: 'Frontend' });
+    opened = app.waitForEvent('window');
+    await row.click();
+    const restored = await opened;
+    await expect(restored.locator('.group .tile')).toHaveCount(2);
+    await expect.poll(() => [starts('alpha'), starts('beta')]).toEqual([2, 2]);
+    await expect(row).toHaveClass(/is-open/);
+
+    // Again while its window is open: that one comes up, no second copy.
+    await row.click();
+    await page.waitForTimeout(500);
+    expect(app.windows()).toHaveLength(2);
+
+    // After a restart: still saved, and its window is back like any other.
+    await quit(app);
+    ({ app, page } = await launch(env));
+    await expect.poll(() => app.windows().length, { timeout: 10_000 }).toBe(2);
+    const workspaceWindow = state().windows.find((w) => w.workspaceId)!;
+    const main: Page = await pageOf(app, mainId);
+    const other: Page = await pageOf(app, workspaceWindow.id);
+    await expect(other.locator('.toolbar')).toContainText('Frontend');
+
+    // Rename and delete from the list (main window; its list was open, so it is again).
+    await expect(main.locator('.sidebar')).toBeVisible();
+    const listed = main.locator('.workspace-row', { hasText: 'Frontend' });
+    await listed.click({ button: 'right' });
+    expect(await callMain<boolean>(app, 'clickMenuItem', 'Rename')).toBe(true);
+    await main.locator('.sidebar-name-input').fill('Backend');
+    await main.keyboard.press('Enter');
+    await expect(main.locator('.workspace-row', { hasText: 'Backend' })).toBeVisible();
+    await expect(other.locator('.toolbar')).toContainText('Backend');
+
+    await app.evaluate(({ dialog }) => {
+      Object.assign(dialog, { showMessageBox: async () => ({ response: 0, checkboxChecked: false }) });
+    });
+    await main.locator('.workspace-row', { hasText: 'Backend' }).click({ button: 'right' });
+    expect(await callMain<boolean>(app, 'clickMenuItem', 'Delete')).toBe(true);
+    await expect(main.locator('.workspace-row')).toHaveCount(0);
+    await expect.poll(() => state().workspaces).toEqual([]);
+    await expect(other.locator('.toolbar')).not.toContainText('Backend');
+    await expect(other.locator('.group .tile')).toHaveCount(2); // the window itself stays
+    await quit(app);
+  } catch (error) {
+    await captureWindows('workspaces');
+    throw error;
+  } finally {
+    await cleanup(dir);
+  }
+});

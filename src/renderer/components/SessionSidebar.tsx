@@ -1,10 +1,10 @@
-import { useMemo, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react';
 import type { ListItemRef } from '@shared/ipc';
 import { tileKey } from '@shared/layout';
 import { useApp } from '../context';
 import { setListDrag, setNodeDrag } from '../dnd';
 import { PAGE, type SessionListState } from '../session-list';
-import { CloseIcon } from './icons';
+import { CloseIcon, LayersIcon } from './icons';
 import { NameInput } from './NameInput';
 import { StatusDot } from './StatusDot';
 
@@ -25,6 +25,8 @@ export function SessionSidebar({ sessionList }: { sessionList: SessionListState 
   const { list, query, setQuery, setLimit, fresh, reload } = sessionList;
   const [selected, setSelected] = useState<string[]>([]);
   const anchor = useRef<string | null>(null);
+  const [renamingWorkspace, setRenamingWorkspace] = useState<string | null>(null);
+  useEffect(() => window.reframe.onRenameWorkspace(setRenamingWorkspace), []);
 
   const ago = useMemo(() => {
     const format = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });
@@ -116,6 +118,52 @@ export function SessionSidebar({ sessionList }: { sessionList: SessionListState 
         }}
       />
       <div className="sidebar-scroll">
+        {!!list?.workspaces.length && <h3 className="sidebar-heading">{t('list.workspaces')}</h3>}
+        {list?.workspaces.map((workspace) =>
+          renamingWorkspace === workspace.id ? (
+            <div className="sidebar-row is-selected" key={workspace.id}>
+              <span className="workspace-mark" aria-hidden="true">
+                <LayersIcon />
+              </span>
+              <NameInput
+                className="sidebar-name-input"
+                initial={workspace.name}
+                onCommit={(name) => {
+                  if (name) window.reframe.renameWorkspace(workspace.id, name);
+                  setTimeout(reload, 100);
+                }}
+                onDone={() => setRenamingWorkspace(null)}
+              />
+            </div>
+          ) : (
+            <button
+              key={workspace.id}
+              className={`sidebar-row workspace-row${workspace.open ? ' is-open' : ''}`}
+              data-workspace={workspace.id}
+              title={t('list.workspaceHint')}
+              onClick={() => {
+                window.reframe.openWorkspace(workspace.id);
+                setTimeout(reload, 300);
+              }}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                window.reframe.showWorkspaceItemMenu(workspace.id);
+                setTimeout(reload, 600);
+              }}
+            >
+              <span className="workspace-mark" aria-hidden="true">
+                <LayersIcon />
+              </span>
+              <span className="sidebar-text">
+                <span className="sidebar-title">{workspace.name}</span>
+                <span className="sidebar-meta">
+                  {t('workspace.meta', { count: workspace.sessions, when: ago(workspace.savedAt) })}
+                </span>
+              </span>
+            </button>
+          ),
+        )}
+
         <h3 className="sidebar-heading">{t('list.inApp')}</h3>
         {list?.app.length === 0 && <p className="sidebar-empty">{t('list.emptyApp')}</p>}
         {list?.app.map((item) => {

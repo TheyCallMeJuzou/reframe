@@ -57,6 +57,8 @@ export const windowStateSchema = z.object({
   dock: z.array(dockEntrySchema),
   /** Whether the session list is shown in this window. */
   sidebarOpen: z.boolean().optional(),
+  /** The workspace this window was saved as or opened from. */
+  workspaceId: z.string().optional(),
 });
 
 export const launchOptionsSchema = z.object({
@@ -104,6 +106,22 @@ export const preferencesSchema = z.object({
 
 export const DEFAULT_PREFERENCES: z.infer<typeof preferencesSchema> = { nameFromFolder: true, language: 'system' };
 
+/** A window saved under a name, to be opened again later as a window of its own. */
+export const workspaceSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  savedAt: z.number(),
+  window: z.object({
+    bounds: boundsSchema.nullable(),
+    maximized: z.boolean(),
+    sidebarOpen: z.boolean().optional(),
+    layout: layoutNodeSchema.nullable(),
+    dock: z.array(dockEntrySchema),
+  }),
+  /** Its sessions as they were, so they can be resumed even after they have left the session list. */
+  sessions: z.array(sessionRecordSchema),
+});
+
 export const appStateSchema = z.object({
   version: z.literal(STATE_VERSION),
   sessions: z.record(z.string(), sessionRecordSchema),
@@ -111,9 +129,11 @@ export const appStateSchema = z.object({
   recentFolders: z.array(z.string()),
   // Added after the first release of the format; older files get the defaults.
   preferences: preferencesSchema.default(DEFAULT_PREFERENCES),
+  workspaces: z.array(workspaceSchema).default([]),
 });
 
 export type DockEntry = z.infer<typeof dockEntrySchema>;
+export type Workspace = z.infer<typeof workspaceSchema>;
 export type Bounds = z.infer<typeof boundsSchema>;
 export type WindowState = z.infer<typeof windowStateSchema>;
 export type LaunchOptions = z.infer<typeof launchOptionsSchema>;
@@ -132,5 +152,6 @@ export function defaultState(): AppState {
     windows: [emptyWindow(globalThis.crypto.randomUUID())],
     recentFolders: [],
     preferences: { ...DEFAULT_PREFERENCES },
+    workspaces: [],
   };
 }

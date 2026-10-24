@@ -813,6 +813,16 @@ select {
   white-space: pre-wrap;
 }
 
+/* A saved workspace in the session list; accented while its window is open. */
+.workspace-mark {
+  display: inline-flex;
+  color: var(--muted);
+}
+
+.workspace-row.is-open .workspace-mark {
+  color: var(--accent);
+}
+
 /* Something new turned up in the (hidden) session list. */
 .toolbar-dot {
   width: 7px;

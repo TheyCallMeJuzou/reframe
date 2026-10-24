@@ -22,6 +22,8 @@ export interface SessionView {
 export interface WindowView {
   windowId: string;
   locale: Locale;
+  /** The workspace this window was saved as or opened from. */
+  workspace: { id: string; name: string } | null;
   /** The language setting behind `locale`, and the system's language (for About). */
   language: Language;
   systemLocale: Locale;
@@ -91,7 +93,17 @@ export interface FoundListItem {
   modifiedAt: number;
 }
 
+export interface WorkspaceListItem {
+  id: string;
+  name: string;
+  sessions: number;
+  savedAt: number;
+  /** Its window is open. */
+  open: boolean;
+}
+
 export interface SessionList {
+  workspaces: WorkspaceListItem[];
   app: AppListItem[];
   running: RunningListItem[];
   found: FoundListItem[];
@@ -187,6 +199,18 @@ export interface ReframeApi {
   setPreferences(patch: Partial<Preferences>): void;
   folderExists(path: string): Promise<boolean>;
   onFocusTile(listener: (sessionId: string) => void): () => void;
+  /** The toolbar's Workspaces menu (native). */
+  showWorkspaceMenu(): void;
+  /** A saved workspace's menu in the session list (native). */
+  showWorkspaceItemMenu(workspaceId: string): void;
+  /** Saves this window as a new workspace. */
+  saveWorkspace(name: string): void;
+  openWorkspace(workspaceId: string): void;
+  renameWorkspace(workspaceId: string, name: string): void;
+  /** The Workspaces menu's "Save …" asks the window for a name. */
+  onPromptWorkspaceName(listener: () => void): () => void;
+  /** A workspace's "Rename" asks the session list to edit its name in place. */
+  onRenameWorkspace(listener: (workspaceId: string) => void): () => void;
   /** The tray asks the window to show About. */
   onOpenAbout(listener: () => void): () => void;
   /** The tray asks the window to open the "New session" dialog. */
@@ -254,6 +278,13 @@ export const IPC = {
   focusTile: 'reframe:focus-tile',
   openNewSession: 'reframe:open-new-session',
   openAbout: 'reframe:open-about',
+  workspaceMenu: 'reframe:workspace-menu',
+  workspaceItemMenu: 'reframe:workspace-item-menu',
+  saveWorkspace: 'reframe:save-workspace',
+  openWorkspace: 'reframe:open-workspace',
+  renameWorkspace: 'reframe:rename-workspace',
+  promptWorkspaceName: 'reframe:prompt-workspace-name',
+  startRenameWorkspace: 'reframe:start-rename-workspace',
   openExternal: 'reframe:open-external',
   transferNode: 'reframe:transfer-node',
   newWindow: 'reframe:new-window',

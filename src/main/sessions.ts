@@ -94,6 +94,11 @@ export class SessionManager extends EventEmitter<Events> {
     return status === 'starting' || status === 'idle' || status === 'busy' || status === 'waiting';
   }
 
+  /** Running and staying so: not on its way out after it was ended (then it needs to be started again). */
+  keepsRunning(sessionId: string): boolean {
+    return this.isRunning(sessionId) && !this.runtimes.get(sessionId)?.stopping;
+  }
+
   /** Display name Claude gave the session (used when the user did not name it). */
   registryName(sessionId: string): string | undefined {
     return this.runtimes.get(sessionId)?.registryName;
@@ -106,8 +111,10 @@ export class SessionManager extends EventEmitter<Events> {
     const mode: LaunchMode = missing ? 'new' : requested;
     const previous = this.runtimes.get(session.id);
     if (previous?.pid && previous.status !== 'ended' && previous.status !== 'error') {
-      // Started again before the old process was gone (e.g. reopened right after ending it).
+      // Started again before the old process was gone (e.g. reopened right after ending it): it goes now, and
+      // whoever waits for it to end (its stop) is done; its exit is not reported, being an older instance.
       void killTree(previous.pid);
+      previous.markExited?.();
     }
     const runtime: Runtime = { instance: ++this.instances, status: 'starting', mode, startedAt: Date.now() };
     runtime.exited = new Promise((resolve) => (runtime.markExited = resolve));

@@ -7,7 +7,8 @@ import type { TerminalRegistry } from './terminals';
 import { DockStrip } from './components/DockStrip';
 import { NewSessionDialog } from './components/NewSessionDialog';
 import { LayoutView } from './components/SplitView';
-import { InfoIcon, ListIcon, PlusIcon, WindowIcon } from './components/icons';
+import { InfoIcon, LayersIcon, ListIcon, PlusIcon, WindowIcon } from './components/icons';
+import { SaveWorkspaceDialog } from './components/SaveWorkspaceDialog';
 import { AboutDialog } from './components/AboutDialog';
 import { neighbor, type Box } from './focus-nav';
 import { useSessionList } from './session-list';
@@ -31,6 +32,7 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
   const [view, setView] = useState<WindowView | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [namingWorkspace, setNamingWorkspace] = useState(false);
   const [dragging, setDragging] = useState<DragState | null>(null);
   const [emptyDropActive, setEmptyDropActive] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -152,6 +154,7 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
 
   useEffect(() => window.reframe.onOpenNewSession(() => setDialogOpen(true)), []);
   useEffect(() => window.reframe.onOpenAbout(() => setAboutOpen(true)), []);
+  useEffect(() => window.reframe.onPromptWorkspaceName(() => setNamingWorkspace(true)), []);
   useEffect(() => window.reframe.onRenameGroup(setRenaming), []);
   useEffect(() => window.reframe.onRenameSession(setRenamingSession), []);
   useEffect(
@@ -273,6 +276,14 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
             <WindowIcon />
             {t('toolbar.newWindow')}
           </button>
+          <button
+            className={`button toolbar-button${view.workspace ? ' is-active' : ''}`}
+            title={view.workspace ? `${t('toolbar.workspaces')}: ${view.workspace.name}` : t('toolbar.workspaces')}
+            onClick={() => window.reframe.showWorkspaceMenu()}
+          >
+            <LayersIcon />
+            {view.workspace?.name ?? t('toolbar.workspaces')}
+          </button>
           <span className="spacer" />
           <button
             className="icon-button toolbar-icon"
@@ -322,6 +333,12 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
           </main>
         </div>
         {dialogOpen && <NewSessionDialog onClose={() => setDialogOpen(false)} />}
+        {namingWorkspace && (
+          <SaveWorkspaceDialog
+            suggestion={t('workspace.defaultName', { n: (sessionList.list?.workspaces.length ?? 0) + 1 })}
+            onClose={() => setNamingWorkspace(false)}
+          />
+        )}
         {aboutOpen && (
           <AboutDialog
             version={view.version}

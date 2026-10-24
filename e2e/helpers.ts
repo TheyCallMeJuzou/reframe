@@ -19,6 +19,7 @@ export interface SavedWindow {
   id: string;
   hidden: boolean;
   fullscreen?: boolean;
+  workspaceId?: string;
   layout: unknown;
   dock: { sessionId: string }[];
 }
@@ -27,6 +28,7 @@ export interface SavedState {
   sessions: Record<string, SavedSession>;
   windows: SavedWindow[];
   preferences: { nameFromFolder: boolean; language: 'system' | 'en' | 'de' };
+  workspaces: { id: string; name: string }[];
 }
 
 export interface FakeLaunch {
@@ -100,7 +102,8 @@ export async function launch(
 /** Quits through the app's real shutdown path (as the tray's "Quit" does). */
 export async function quit(app: ElectronApplication): Promise<void> {
   const closed = app.waitForEvent('close');
-  await app.evaluate(({ app: electronApp }) => electronApp.quit());
+  // From the event loop, as a click on the tray's "Quit" would (not from inside the debugger's evaluate call).
+  await app.evaluate(({ app: electronApp }) => void setTimeout(() => electronApp.quit(), 0));
   await closed;
   running = null;
 }
