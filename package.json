@@ -16,7 +16,8 @@
     "test": "vitest run",
     "test:e2e": "electron-vite build && playwright test",
     "dist": "electron-vite build && electron-builder --publish never",
-    "dist:dir": "electron-vite build && electron-builder --dir --publish never"
+    "dist:dir": "electron-vite build && electron-builder --dir --publish never",
+    "postinstall": "node scripts/postinstall.mjs"
   },
   "dependencies": {
     "@xterm/addon-serialize": "0.14.0",

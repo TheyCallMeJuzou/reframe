@@ -32,13 +32,15 @@ test('tiles move between windows, empty windows close, all windows come back', a
   try {
     let { app, page } = await launch(env);
     const area = await app.evaluate(({ screen }) => screen.getPrimaryDisplay().workArea);
+    // Room to its right for torn-out windows, also on small screens (CI runners have 1024 x 768).
+    const width = Math.min(700, area.width - 460);
     await app.evaluate(({ BrowserWindow }, b) => BrowserWindow.getAllWindows()[0]!.setBounds(b), {
       x: area.x + 20,
       y: area.y + 20,
-      width: 700,
+      width,
       height: 520,
     });
-    const outside = { x: area.x + area.width - 420, y: area.y + 80 };
+    const outside = { x: area.x + 20 + width + 40, y: area.y + 80 };
     const inside = { x: area.x + 300, y: area.y + 200 };
 
     await newSession(page, project, 'alpha');
