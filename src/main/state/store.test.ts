@@ -19,6 +19,13 @@ afterEach(() => {
 const withFolder = (folder: string): AppState => ({ ...defaultState(), recentFolders: [folder] });
 
 describe('StateStore', () => {
+  it('gives files from before preferences existed the default preferences', () => {
+    const s = store();
+    const { preferences: _preferences, ...old } = defaultState();
+    fs.writeFileSync(s.file, JSON.stringify(old));
+    expect(s.load()).toMatchObject({ source: 'file', state: { preferences: { nameFromFolder: true } } });
+  });
+
   it('starts from defaults without a file', () => {
     const { state, source } = store().load();
     expect(source).toBe('default');

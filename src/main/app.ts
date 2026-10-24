@@ -34,7 +34,7 @@ import {
   type WindowView,
 } from '@shared/ipc';
 import { PERMISSION_MODES } from '@shared/launch';
-import { emptyWindow, type AppState, type SessionRecord, type WindowState } from '@shared/state';
+import { emptyWindow, type AppState, type Preferences, type SessionRecord, type WindowState } from '@shared/state';
 import { claudeHome } from './claude/registry';
 import { resolveClaude, type ClaudeBinary } from './claude/resolve';
 import { HookServer } from './hooks/server';
@@ -464,7 +464,17 @@ export class ReframeApp {
     ipcMain.on(IPC.openExternal, (_event, url: unknown) => {
       if (typeof url === 'string' && /^https?:\/\//i.test(url)) void shell.openExternal(url);
     });
-    ipcMain.handle(IPC.recentFolders, () => this.state.recentFolders.filter(isDirectory));
+    ipcMain.handle(IPC.dialogDefaults, () => ({
+      recentFolders: this.state.recentFolders.filter(isDirectory),
+      preferences: this.state.preferences,
+    }));
+    ipcMain.on(IPC.setPreferences, (_event, patch: Partial<Preferences> | null) => {
+      if (!patch || typeof patch !== 'object') return;
+      const next = { ...this.state.preferences };
+      if (typeof patch.nameFromFolder === 'boolean') next.nameFromFolder = patch.nameFromFolder;
+      this.state = { ...this.state, preferences: next };
+      this.save();
+    });
     ipcMain.handle(IPC.folderExists, (_event, folder: unknown) => typeof folder === 'string' && isDirectory(folder));
   }
 }

@@ -25,6 +25,7 @@ export interface SavedWindow {
 export interface SavedState {
   sessions: Record<string, SavedSession>;
   windows: SavedWindow[];
+  preferences: { nameFromFolder: boolean };
 }
 
 export interface FakeLaunch {

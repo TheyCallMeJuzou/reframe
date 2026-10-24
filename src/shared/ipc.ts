@@ -3,7 +3,7 @@ import type { LayoutAction } from './actions';
 import type { DropTarget, LayoutNode } from './layout';
 import type { Locale } from './i18n';
 import type { PermissionMode } from './launch';
-import type { DockEntry, SessionRecord } from './state';
+import type { DockEntry, Preferences, SessionRecord } from './state';
 
 /** starting → idle/busy/waiting while running; ended once the process is gone; error if it could not run. */
 export type SessionStatus = 'starting' | 'idle' | 'busy' | 'waiting' | 'ended' | 'error';
@@ -39,6 +39,11 @@ export interface NewSessionRequest {
 
 export type NewSessionResult = { ok: true } | { ok: false; error: 'folderMissing' | 'claudeNotFound' };
 
+export interface DialogDefaults {
+  recentFolders: string[];
+  preferences: Preferences;
+}
+
 /** A tile dropped into this window from another one; without a target it fills an empty window. */
 export interface TransferRequest {
   sessionId: string;
@@ -65,7 +70,9 @@ export interface ReframeApi {
   /** Asks main to send a MessagePort for the session's terminal (arrives as a window message). */
   attachTerminal(sessionId: string): void;
   pickFolder(): Promise<string | null>;
-  getRecentFolders(): Promise<string[]>;
+  /** Recent folders and saved preferences for the "New session" dialog. */
+  getDialogDefaults(): Promise<DialogDefaults>;
+  setPreferences(patch: Partial<Preferences>): void;
   folderExists(path: string): Promise<boolean>;
   onFocusTile(listener: (sessionId: string) => void): () => void;
   /** The tray asks the window to open the "New session" dialog. */
@@ -88,7 +95,8 @@ export const IPC = {
   attachTerminal: 'reframe:attach-terminal',
   terminalPort: 'reframe:terminal-port',
   pickFolder: 'reframe:pick-folder',
-  recentFolders: 'reframe:recent-folders',
+  dialogDefaults: 'reframe:dialog-defaults',
+  setPreferences: 'reframe:set-preferences',
   folderExists: 'reframe:folder-exists',
   focusTile: 'reframe:focus-tile',
   openNewSession: 'reframe:open-new-session',

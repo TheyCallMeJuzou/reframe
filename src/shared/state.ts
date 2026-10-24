@@ -78,11 +78,20 @@ export const sessionRecordSchema = z.object({
   used: z.boolean().optional(),
 });
 
+export const preferencesSchema = z.object({
+  /** "New session" fills the name with the folder's name. */
+  nameFromFolder: z.boolean(),
+});
+
+export const DEFAULT_PREFERENCES: z.infer<typeof preferencesSchema> = { nameFromFolder: true };
+
 export const appStateSchema = z.object({
   version: z.literal(STATE_VERSION),
   sessions: z.record(z.string(), sessionRecordSchema),
   windows: z.array(windowStateSchema),
   recentFolders: z.array(z.string()),
+  // Added after the first release of the format; older files get the defaults.
+  preferences: preferencesSchema.default(DEFAULT_PREFERENCES),
 });
 
 export type DockEntry = z.infer<typeof dockEntrySchema>;
@@ -90,6 +99,7 @@ export type Bounds = z.infer<typeof boundsSchema>;
 export type WindowState = z.infer<typeof windowStateSchema>;
 export type LaunchOptions = z.infer<typeof launchOptionsSchema>;
 export type SessionRecord = z.infer<typeof sessionRecordSchema>;
+export type Preferences = z.infer<typeof preferencesSchema>;
 export type AppState = z.infer<typeof appStateSchema>;
 
 export function emptyWindow(id: string): WindowState {
@@ -102,5 +112,6 @@ export function defaultState(): AppState {
     sessions: {},
     windows: [emptyWindow(globalThis.crypto.randomUUID())],
     recentFolders: [],
+    preferences: { ...DEFAULT_PREFERENCES },
   };
 }

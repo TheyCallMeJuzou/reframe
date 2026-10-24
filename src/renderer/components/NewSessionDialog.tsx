@@ -5,10 +5,14 @@ import { useApp } from '../context';
 
 const MODEL_SUGGESTIONS = ['fable', 'opus', 'sonnet', 'haiku'];
 
+const folderName = (folder: string): string => folder.trim().split(/[\\/]/).filter(Boolean).pop() ?? '';
+
 export function NewSessionDialog({ onClose }: { onClose: () => void }) {
   const { t } = useApp();
   const [cwd, setCwd] = useState('');
-  const [name, setName] = useState('');
+  // null until the user types a name; then the typed name wins over the folder name.
+  const [customName, setCustomName] = useState<string | null>(null);
+  const [nameFromFolder, setNameFromFolder] = useState(false);
   const [worktree, setWorktree] = useState(false);
   const [worktreeName, setWorktreeName] = useState('');
   const [model, setModel] = useState('');
@@ -19,12 +23,23 @@ export function NewSessionDialog({ onClose }: { onClose: () => void }) {
   const folderInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    void window.reframe.getRecentFolders().then((folders) => {
-      setRecent(folders);
-      setCwd((current) => current || folders[0] || '');
+    void window.reframe.getDialogDefaults().then(({ recentFolders, preferences }) => {
+      setRecent(recentFolders);
+      setCwd((current) => current || recentFolders[0] || '');
+      setNameFromFolder(preferences.nameFromFolder);
     });
     folderInput.current?.focus();
   }, []);
+
+  const name = customName ?? (nameFromFolder ? folderName(cwd) : '');
+
+  const toggleNameFromFolder = (on: boolean) => {
+    setNameFromFolder(on);
+    window.reframe.setPreferences({ nameFromFolder: on });
+    // Back on: follow the folder again. Off: drop the folder name, but keep anything typed.
+    if (on) setCustomName(null);
+    else setCustomName((typed) => typed ?? '');
+  };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -94,7 +109,7 @@ export function NewSessionDialog({ onClose }: { onClose: () => void }) {
                   setError(null);
                 }}
               >
-                {folder.split(/[\\/]/).filter(Boolean).pop() ?? folder}
+                {folderName(folder) || folder}
               </button>
             ))}
           </div>
@@ -102,7 +117,15 @@ export function NewSessionDialog({ onClose }: { onClose: () => void }) {
 
         <label className="field">
           <span>{t('dialog.name')}</span>
-          <input value={name} placeholder={t('dialog.namePlaceholder')} onChange={(e) => setName(e.target.value)} />
+          <input
+            value={name}
+            placeholder={t('dialog.namePlaceholder')}
+            onChange={(e) => setCustomName(e.target.value)}
+          />
+        </label>
+        <label className="checkbox nested">
+          <input type="checkbox" checked={nameFromFolder} onChange={(e) => toggleNameFromFolder(e.target.checked)} />
+          <span>{t('dialog.nameFromFolder')}</span>
         </label>
 
         <label className="checkbox">
