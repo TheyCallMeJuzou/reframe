@@ -49,19 +49,23 @@ export function dropSession(win: WindowState, sessionId: string): WindowState {
   };
 }
 
+/** A window with neither tiles nor collapsed tiles. */
+export function isWindowEmpty(win: WindowState): boolean {
+  return win.layout === null && win.dock.length === 0;
+}
+
+export function isDropTarget(value: unknown): value is DropTarget {
+  if (!value || typeof value !== 'object') return false;
+  const t = value as Record<string, unknown>;
+  return typeof t.key === 'string' && ['left', 'right', 'top', 'bottom'].includes(t.side as string);
+}
+
 export function isLayoutAction(value: unknown): value is LayoutAction {
   if (!value || typeof value !== 'object') return false;
   const a = value as Record<string, unknown>;
   switch (a.type) {
-    case 'tile/move': {
-      const t = a.target as Record<string, unknown> | undefined;
-      return (
-        typeof a.sessionId === 'string' &&
-        !!t &&
-        typeof t.key === 'string' &&
-        ['left', 'right', 'top', 'bottom'].includes(t.side as string)
-      );
-    }
+    case 'tile/move':
+      return typeof a.sessionId === 'string' && isDropTarget(a.target);
     case 'tile/collapse':
     case 'tile/expand':
       return typeof a.sessionId === 'string';

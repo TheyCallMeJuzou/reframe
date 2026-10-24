@@ -3,11 +3,36 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { app, dialog, ipcMain, Notification, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron';
-import { addTile, applyLayoutAction, dropSession, isLayoutAction, windowHasSession } from '@shared/actions';
+import {
+  app,
+  dialog,
+  ipcMain,
+  Notification,
+  screen,
+  shell,
+  type IpcMainEvent,
+  type IpcMainInvokeEvent,
+} from 'electron';
+import {
+  addTile,
+  applyLayoutAction,
+  dropSession,
+  isDropTarget,
+  isLayoutAction,
+  isWindowEmpty,
+  windowHasSession,
+} from '@shared/actions';
 import { translate, type Locale } from '@shared/i18n';
-import { leaves } from '@shared/layout';
-import { IPC, type NewSessionRequest, type NewSessionResult, type SessionView, type WindowView } from '@shared/ipc';
+import { leaves, tile } from '@shared/layout';
+import {
+  IPC,
+  type NewSessionRequest,
+  type NewSessionResult,
+  type SessionView,
+  type TileSize,
+  type TransferRequest,
+  type WindowView,
+} from '@shared/ipc';
 import { PERMISSION_MODES } from '@shared/launch';
 import { emptyWindow, type AppState, type SessionRecord, type WindowState } from '@shared/state';
 import { claudeHome } from './claude/registry';
@@ -141,6 +166,75 @@ export class ReframeApp {
     return this.state.windows.find((w) => windowHasSession(w, sessionId));
   }
 
+  private findWindow(windowId: string): WindowState | undefined {
+    return this.state.windows.find((w) => w.id === windowId);
+  }
+
+  /** Moves a session's tile from another window into `toId`; without a target it fills the window. */
+  private transferTile(toId: string, { sessionId, fromWindowId, target }: TransferRequest): void {
+    const from = this.findWindow(fromWindowId);
+    if (!from || !this.findWindow(toId) || from.id === toId || !windowHasSession(from, sessionId)) return;
+    this.state = {
+      ...this.state,
+      windows: this.state.windows.map((w) => {
+        if (w.id === from.id) return dropSession(w, sessionId);
+        if (w.id === toId) return addTile(w, sessionId, target ?? undefined);
+        return w;
+      }),
+    };
+    this.save();
+    this.push(from.id);
+    this.push(toId);
+    this.closeIfEmpty(from.id);
+    this.windows.show(toId);
+    this.windows.send(toId, IPC.focusTile, sessionId);
+    this.refreshTray();
+  }
+
+  /** Turns a tile into a window of its own at a screen point, unless the point is over one of our windows. */
+  private tearOut(fromId: string, sessionId: string, point: { x: number; y: number }, size?: TileSize): boolean {
+    const from = this.findWindow(fromId);
+    if (!from || !windowHasSession(from, sessionId) || this.windows.windowAt(point)) return false;
+    const clamp = (v: number, min: number, max: number) => Math.round(Math.min(max, Math.max(min, v)));
+    const win: WindowState = {
+      ...emptyWindow(crypto.randomUUID()),
+      // Room for the window frame, toolbar and padding around the tile; the title bar lands under the pointer.
+      bounds: {
+        x: Math.round(point.x - 60),
+        y: Math.round(point.y - 16),
+        width: clamp((size?.width ?? 800) + 24, 480, 2400),
+        height: clamp((size?.height ?? 500) + 90, 320, 1600),
+      },
+      layout: tile(sessionId),
+    };
+    this.state = {
+      ...this.state,
+      windows: [...this.state.windows.map((w) => (w.id === from.id ? dropSession(w, sessionId) : w)), win],
+    };
+    this.save();
+    this.push(from.id);
+    this.windows.open(win);
+    this.closeIfEmpty(from.id);
+    this.refreshTray();
+    return true;
+  }
+
+  /** Test hook (REFRAME_E2E): tears a session out at a given point instead of the pointer position. */
+  tearOutSession(sessionId: string, point: { x: number; y: number }): boolean {
+    const from = this.windowOf(sessionId);
+    return from ? this.tearOut(from.id, sessionId, point) : false;
+  }
+
+  /** Secondary windows go away once nothing is left in them; the first window always stays. */
+  private closeIfEmpty(windowId: string): void {
+    const win = this.findWindow(windowId);
+    if (!win || win.id === this.state.windows[0]?.id || !isWindowEmpty(win)) return;
+    this.state = { ...this.state, windows: this.state.windows.filter((w) => w.id !== windowId) };
+    this.save();
+    this.windows.destroy(windowId);
+    this.refreshTray();
+  }
+
   private mutateWindow(
     windowId: string,
     change: (w: WindowState) => WindowState,
@@ -248,6 +342,7 @@ export class ReframeApp {
       sessions: { ...this.state.sessions, [sessionId]: { ...this.state.sessions[sessionId]!, lifecycle: 'ended' } },
     };
     this.mutateWindow(windowId, (w) => dropSession(w, sessionId));
+    this.closeIfEmpty(windowId);
   }
 
   // ---------- notifications and tray ----------
@@ -286,7 +381,15 @@ export class ReframeApp {
       newSessionLabel: t('tray.newSession'),
       quitLabel: t('tray.quit'),
       windows: () =>
-        this.state.windows.map((w, i) => ({ id: w.id, label: t('tray.window', { n: i + 1 }), visible: !w.hidden })),
+        this.state.windows.map((w, i) => {
+          const labels = [...leaves(w.layout), ...w.dock.map((d) => d.sessionId)]
+            .map((id) => this.state.sessions[id])
+            .filter((r): r is SessionRecord => !!r)
+            .map((r) => this.sessionView(r).label);
+          const names = labels.length > 3 ? `${labels.slice(0, 3).join(', ')}, …` : labels.join(', ');
+          const label = t('tray.window', { n: i + 1 }) + (names ? ` – ${names}` : '');
+          return { id: w.id, label, visible: !w.hidden };
+        }),
       toggleWindow: (id, visible) => (visible ? this.windows.show(id) : this.windows.get(id)?.hide()),
       showPrimary: () => this.windows.show(this.state.windows[0]!.id),
       newSession: () => {
@@ -341,6 +444,22 @@ export class ReframeApp {
       const options = { properties: ['openDirectory' as const] };
       const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
       return result.canceled ? null : (result.filePaths[0] ?? null);
+    });
+    ipcMain.on(IPC.transferTile, (event, request: Partial<TransferRequest> | null) => {
+      const id = windowId(event);
+      if (!id || !request || typeof request.sessionId !== 'string' || typeof request.fromWindowId !== 'string') return;
+      if (request.target !== null && !isDropTarget(request.target)) return;
+      this.transferTile(id, {
+        sessionId: request.sessionId,
+        fromWindowId: request.fromWindowId,
+        target: request.target,
+      });
+    });
+    ipcMain.on(IPC.tearOut, (event, sessionId: unknown, size: Partial<TileSize> | null) => {
+      const id = windowId(event);
+      if (!id || typeof sessionId !== 'string') return;
+      const valid = !!size && Number.isFinite(size.width) && Number.isFinite(size.height);
+      this.tearOut(id, sessionId, screen.getCursorScreenPoint(), valid ? (size as TileSize) : undefined);
     });
     ipcMain.on(IPC.openExternal, (_event, url: unknown) => {
       if (typeof url === 'string' && /^https?:\/\//i.test(url)) void shell.openExternal(url);

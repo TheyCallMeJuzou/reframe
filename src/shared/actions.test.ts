@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { addTile, applyLayoutAction, dropSession, isLayoutAction, windowHasSession } from './actions';
+import {
+  addTile,
+  applyLayoutAction,
+  dropSession,
+  isDropTarget,
+  isLayoutAction,
+  isWindowEmpty,
+  windowHasSession,
+} from './actions';
 import { leaves, tileKey } from './layout';
 import { emptyWindow } from './state';
 
@@ -32,6 +40,24 @@ describe('dropSession', () => {
     win = dropSession(dropSession(win, 'b'), 'a');
     expect(win.layout).toBeNull();
     expect(win.dock).toEqual([]);
+  });
+});
+
+describe('isWindowEmpty', () => {
+  it('counts collapsed tiles as content', () => {
+    expect(isWindowEmpty(emptyWindow('w'))).toBe(true);
+    const collapsed = applyLayoutAction(withTiles('a'), { type: 'tile/collapse', sessionId: 'a' });
+    expect(collapsed.layout).toBeNull();
+    expect(isWindowEmpty(collapsed)).toBe(false);
+    expect(isWindowEmpty(dropSession(collapsed, 'a'))).toBe(true);
+  });
+});
+
+describe('isDropTarget', () => {
+  it('accepts a node key with a side', () => {
+    expect(isDropTarget({ key: tileKey('a'), side: 'bottom' })).toBe(true);
+    expect(isDropTarget({ key: 1, side: 'bottom' })).toBe(false);
+    expect(isDropTarget(null)).toBe(false);
   });
 });
 

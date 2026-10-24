@@ -101,6 +101,23 @@ export class WindowManager extends EventEmitter<Events> {
     win.focus();
   }
 
+  /** Closes a window for good (not just hidden), e.g. an empty secondary window. */
+  destroy(windowId: string): void {
+    const win = this.windows.get(windowId);
+    this.windows.delete(windowId);
+    if (win && !win.isDestroyed()) win.destroy();
+  }
+
+  /** The visible window under a screen point, if any. */
+  windowAt(point: { x: number; y: number }): string | undefined {
+    for (const [id, win] of this.windows) {
+      if (win.isDestroyed() || !win.isVisible() || win.isMinimized()) continue;
+      const b = win.getBounds();
+      if (point.x >= b.x && point.x < b.x + b.width && point.y >= b.y && point.y < b.y + b.height) return id;
+    }
+    return undefined;
+  }
+
   /** Whether the user is looking at this window right now. */
   isAttentive(windowId: string): boolean {
     const win = this.windows.get(windowId);

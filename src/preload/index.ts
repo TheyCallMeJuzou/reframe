@@ -27,6 +27,8 @@ const api: ReframeApi = {
   onFocusTile: (listener) => subscribe<string>(IPC.focusTile, listener),
   onOpenNewSession: (listener) => subscribe<null>(IPC.openNewSession, () => listener()),
   openExternal: (url) => ipcRenderer.send(IPC.openExternal, url),
+  transferTile: (request) => ipcRenderer.send(IPC.transferTile, request),
+  tearOut: (sessionId, size) => ipcRenderer.send(IPC.tearOut, sessionId, size),
 };
 
 contextBridge.exposeInMainWorld('reframe', api);

@@ -327,6 +327,10 @@ button {
   inset: 0 0 50% 0;
 }
 
+.drop-fill {
+  inset: 0;
+}
+
 .drop-bottom {
   inset: 50% 0 0 0;
 }
@@ -421,6 +425,12 @@ button {
 }
 
 /* ---------- empty state ---------- */
+
+.empty-area {
+  position: relative;
+  flex: 1;
+  display: flex;
+}
 
 .empty {
   margin: auto;

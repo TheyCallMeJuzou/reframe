@@ -75,6 +75,11 @@ Beim Schließen des Spikes (sofortiges `app.quit()`) lief der Claude-Prozess sam
 - **`electron.exe` als Node (`ELECTRON_RUN_AS_NODE`) bekommt unter ConPTY keine Ein- und Ausgabe**, weil es unter Windows ein GUI-Programm ist. Ein `.js`-Ersatz für `claude` (Tests) läuft deshalb über einen echten Node (`REFRAME_NODE`).
 - **Beenden mit `app.quit()` statt `app.exit()`**, sonst halten Chromiums Hilfsprozesse das Profil noch sekundenlang fest.
 
+### Nachträge aus Phase 2
+- **`react-resizable-panels` kann die Menge der Panels und das Layout nicht in einem Schritt ändern.** `setLayout` mit drei Panels, solange die Gruppe erst zwei kennt, wirft eine Exception ("Invalid 2 panel layout"), und die reißt den ganzen React-Baum mit. Deshalb wird eine Split-Gruppe neu aufgebaut, sobald sich ihre Kinder ändern (React-`key` aus den Kinder-Keys). Die Terminals überleben das, weil sie im `TerminalRegistry` leben und nur umgehängt werden.
+- **`window.close()` aus der Seite schließt kein `BrowserWindow`**, das nicht per Skript geöffnet wurde (Chromium-Regel). In Tests geht das über `app.browserWindow(page)`.
+- Wird ein Drag ins Leere mit Esc abgebrochen, meldet Chromium dasselbe (`dropEffect: 'none'`) wie ein Loslassen ins Leere. Liegt der Zeiger dann außerhalb aller Fenster, wird die Kachel herausgelöst.
+
 ## Konsequenzen für den Plan
 1. **Status und Session-ID-Tracking:** Primär über HTTP-Hooks (`UserPromptSubmit`, `Stop`, `Notification`; dokumentiert). Für sofortige ID-Wechsel (`/clear`) und den Status zusätzlich die Registry-Datei der bekannten PID beobachten. Einen `SessionStart`-Command-Hook gibt es vorerst nicht, weil er eine Runtime (node) bei den Usern voraussetzen würde.
 2. **Spawn-Umgebung bereinigen** (siehe oben). Gilt auch für die Dev-Umgebung.

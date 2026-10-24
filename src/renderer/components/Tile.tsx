@@ -10,8 +10,11 @@ export function Tile({ sessionId, windowId }: { sessionId: string; windowId: str
   const { t, sessions, terminals, dragging, setDragging } = useApp();
   const session = sessions[sessionId];
   const slot = useRef<HTMLDivElement>(null);
+  const tileRef = useRef<HTMLElement>(null);
+  const dragSize = useRef({ width: 0, height: 0 });
   const [dropSide, setDropSide] = useState<Side | null>(null);
   const running = session && ['starting', 'idle', 'busy', 'waiting'].includes(session.status);
+  const isDragged = dragging?.sessionId === sessionId;
 
   useLayoutEffect(() => {
     const el = slot.current;
@@ -31,7 +34,7 @@ export function Tile({ sessionId, windowId }: { sessionId: string; windowId: str
   if (!session) return null;
 
   const onDragOver = (event: DragEvent) => {
-    if (!isTileDrag(event) || dragging === sessionId) return;
+    if (!isTileDrag(event) || isDragged) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
     setDropSide(sideAt(event.currentTarget.getBoundingClientRect(), event.clientX, event.clientY));
@@ -42,24 +45,28 @@ export function Tile({ sessionId, windowId }: { sessionId: string; windowId: str
     setDropSide(null);
     if (!data || !side || data.sessionId === sessionId) return;
     event.preventDefault();
-    window.reframe.dispatch({
-      type: 'tile/move',
-      sessionId: data.sessionId,
-      target: { key: tileKey(sessionId), side },
-    });
+    const target = { key: tileKey(sessionId), side };
+    if (data.windowId === windowId) window.reframe.dispatch({ type: 'tile/move', sessionId: data.sessionId, target });
+    else window.reframe.transferTile({ sessionId: data.sessionId, fromWindowId: data.windowId, target });
   };
 
   return (
-    <section className={`tile${dragging === sessionId ? ' is-dragging' : ''}`} data-session={sessionId}>
+    <section ref={tileRef} className={`tile${isDragged ? ' is-dragging' : ''}`} data-session={sessionId}>
       <header
         className="tile-header"
         draggable
         title={t('tile.dragHint')}
         onDragStart={(event) => {
           setTileDrag(event, { sessionId, windowId });
-          setDragging(sessionId);
+          const rect = tileRef.current?.getBoundingClientRect();
+          dragSize.current = { width: rect?.width ?? 0, height: rect?.height ?? 0 };
+          setDragging({ sessionId });
         }}
-        onDragEnd={() => setDragging(null)}
+        onDragEnd={(event) => {
+          setDragging(null);
+          // No drop target took it; main tears it out if the pointer is outside every reframe window.
+          if (event.dataTransfer.dropEffect === 'none') window.reframe.tearOut(sessionId, dragSize.current);
+        }}
       >
         <button
           className="icon-button"
@@ -110,7 +117,7 @@ export function Tile({ sessionId, windowId }: { sessionId: string; windowId: str
             </div>
           </div>
         )}
-        {dragging !== null && dragging !== sessionId && (
+        {dragging && !isDragged && (
           <div className="drop-layer" onDragOver={onDragOver} onDragLeave={() => setDropSide(null)} onDrop={onDrop}>
             {dropSide && <div className={`drop-preview drop-${dropSide}`} />}
           </div>

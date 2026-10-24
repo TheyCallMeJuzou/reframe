@@ -35,5 +35,7 @@ if (!app.requestSingleInstanceLock()) {
     const locale = resolveLocale(process.env.REFRAME_LOCALE || app.getLocale());
     reframe = new ReframeApp(locale, { icon, trayIcon, trayIcon2x });
     await reframe.start();
+    // End-to-end tests drive things a real drag would do (e.g. tearing a tile out at a point).
+    if (process.env.REFRAME_E2E) Object.assign(globalThis, { reframe });
   });
 }

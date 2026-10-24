@@ -1,103 +1,8 @@
 // End to end: real app, fake claude. Creates sessions, collapses one, changes a session id with
 // /clear, quits through the real shutdown path and checks that a restart restores the layout, resumes
 // the used session under its latest id and starts the never-used one fresh under its own id.
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test';
-
-const root = path.resolve(__dirname, '..');
-
-interface SavedSession {
-  id: string;
-  name?: string;
-  claudeSessionId: string;
-  lifecycle: string;
-  used?: boolean;
-}
-
-interface SavedState {
-  sessions: Record<string, SavedSession>;
-  windows: { hidden: boolean; dock: { sessionId: string }[] }[];
-}
-
-interface FakeLaunch {
-  pid: number;
-  event: 'start' | 'exit';
-  args: string[];
-}
-
-function setup() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'reframe-e2e-'));
-  const project = path.join(dir, 'project');
-  fs.mkdirSync(project);
-  const env = {
-    ...process.env,
-    REFRAME_USER_DATA: path.join(dir, 'user-data'),
-    REFRAME_CLAUDE_HOME: path.join(dir, 'claude-home'),
-    REFRAME_CLAUDE_BIN: path.join(root, 'test', 'fake-claude', 'fake-claude.mjs'),
-    // A real node: electron.exe is a GUI program on Windows and gets no pseudo-console stdio.
-    REFRAME_NODE: process.execPath,
-    REFRAME_FAKE_LOG: path.join(dir, 'fake.log'),
-    REFRAME_LOCALE: 'en',
-    REFRAME_DISABLE_NOTIFICATIONS: '1',
-  } as Record<string, string>;
-  const launches = (): FakeLaunch[] =>
-    fs.existsSync(env.REFRAME_FAKE_LOG!)
-      ? fs
-          .readFileSync(env.REFRAME_FAKE_LOG!, 'utf8')
-          .trim()
-          .split('\n')
-          .map((l) => JSON.parse(l) as FakeLaunch)
-      : [];
-  const state = (): SavedState => JSON.parse(fs.readFileSync(path.join(env.REFRAME_USER_DATA!, 'state.json'), 'utf8'));
-  const byName = (name: string): SavedSession => Object.values(state().sessions).find((s) => s.name === name)!;
-  return { dir, project, env, launches, state, byName };
-}
-
-// Chromium helper processes can hold the profile for a few seconds after the app exits. Cleanup never
-// throws, so a failing assertion is what gets reported.
-async function removeWhenUnlocked(dir: string): Promise<void> {
-  for (let attempt = 0; attempt < 40; attempt++) {
-    try {
-      fs.rmSync(dir, { recursive: true, force: true });
-      return;
-    } catch {
-      await new Promise((resolve) => setTimeout(resolve, 250));
-    }
-  }
-  console.warn(`could not remove ${dir}`);
-}
-
-let running: ElectronApplication | null = null;
-
-async function launch(env: Record<string, string>): Promise<{ app: ElectronApplication; page: Page }> {
-  const app = await electron.launch({ args: [root], env, cwd: root });
-  running = app;
-  const page = await app.firstWindow();
-  await page.waitForSelector('.app');
-  return { app, page };
-}
-
-async function quit(app: ElectronApplication): Promise<void> {
-  const closed = app.waitForEvent('close');
-  await app.evaluate(({ app: electronApp }) => electronApp.quit());
-  await closed;
-  running = null;
-}
-
-const tileByLabel = (page: Page, label: string) =>
-  page.locator('.tile', { has: page.locator('.tile-label', { hasText: label }) });
-
-async function newSession(page: Page, folder: string, name: string): Promise<void> {
-  await page.getByRole('button', { name: 'New session' }).first().click();
-  const dialog = page.getByRole('dialog');
-  await dialog.getByPlaceholder('Path to a project folder').fill(folder);
-  await dialog.getByPlaceholder('Shown on the tile and in notifications').fill(name);
-  await dialog.getByRole('button', { name: 'Start' }).click();
-  await expect(dialog).toBeHidden();
-  await expect(tileByLabel(page, name).locator('.status-idle')).toBeVisible({ timeout: 15_000 });
-}
+import { expect, test } from '@playwright/test';
+import { captureWindows, cleanup, launch, newSession, quit, setup, tileByLabel } from './helpers';
 
 test('sessions survive a restart with layout, dock and latest session ids', async () => {
   const { dir, project, env, launches, state, byName } = setup();
@@ -170,9 +75,10 @@ test('sessions survive a restart with layout, dock and latest session ids', asyn
     await quit(app);
     const all = launches();
     expect(all.filter((l) => l.event === 'exit')).toHaveLength(all.filter((l) => l.event === 'start').length);
+  } catch (error) {
+    await captureWindows('restore');
+    throw error;
   } finally {
-    await running?.close().catch(() => {});
-    running = null;
-    await removeWhenUnlocked(dir);
+    await cleanup(dir);
   }
 });

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { WindowView } from '@shared/ipc';
-import { AppContext, makeTranslate, type AppContextValue } from './context';
+import { AppContext, makeTranslate, type AppContextValue, type DragState } from './context';
+import { isTileDrag, readTileDrag } from './dnd';
 import type { TerminalRegistry } from './terminals';
 import { DockStrip } from './components/DockStrip';
 import { NewSessionDialog } from './components/NewSessionDialog';
@@ -10,7 +11,8 @@ import { PlusIcon } from './components/icons';
 export function App({ terminals }: { terminals: TerminalRegistry }) {
   const [view, setView] = useState<WindowView | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [dragging, setDragging] = useState<string | null>(null);
+  const [dragging, setDragging] = useState<DragState | null>(null);
+  const [emptyDropActive, setEmptyDropActive] = useState(false);
 
   useEffect(() => {
     let pushed = false;
@@ -44,14 +46,30 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
 
   useEffect(() => window.reframe.onOpenNewSession(() => setDialogOpen(true)), []);
 
-  // A drop re-parents the dragged tile, so its own dragend may never reach React; reset here too.
+  // Drag state: tiles from other windows announce themselves only through dragenter. A drop re-parents
+  // or removes the dragged tile, so its own dragend may never reach React; several events reset it.
   useEffect(() => {
     const reset = () => setDragging(null);
+    const enter = (event: DragEvent) => {
+      if (isTileDrag(event)) setDragging((current) => current ?? { sessionId: null });
+    };
+    const leave = (event: DragEvent) => {
+      // relatedTarget is null when the pointer leaves the window.
+      if (event.relatedTarget === null) setDragging((current) => (current?.sessionId === null ? null : current));
+    };
+    // Pointer events are suppressed during a drag, so any pointer movement means it is over.
+    const pointer = () => setDragging((current) => (current ? null : current));
+    window.addEventListener('dragenter', enter, true);
+    window.addEventListener('dragleave', leave, true);
     window.addEventListener('drop', reset, true);
     window.addEventListener('dragend', reset, true);
+    window.addEventListener('pointermove', pointer, true);
     return () => {
+      window.removeEventListener('dragenter', enter, true);
+      window.removeEventListener('dragleave', leave, true);
       window.removeEventListener('drop', reset, true);
       window.removeEventListener('dragend', reset, true);
+      window.removeEventListener('pointermove', pointer, true);
     };
   }, []);
 
@@ -85,13 +103,40 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
             {view.layout ? (
               <LayoutView node={view.layout} windowId={view.windowId} />
             ) : (
-              <div className="empty">
-                <h1>{t('empty.title')}</h1>
-                <p>{t('empty.hint')}</p>
-                <button className="button primary" onClick={() => setDialogOpen(true)}>
-                  <PlusIcon />
-                  {t('toolbar.newSession')}
-                </button>
+              <div className="empty-area">
+                <div className="empty">
+                  <h1>{t('empty.title')}</h1>
+                  <p>{t('empty.hint')}</p>
+                  <button className="button primary" onClick={() => setDialogOpen(true)}>
+                    <PlusIcon />
+                    {t('toolbar.newSession')}
+                  </button>
+                </div>
+                {dragging && (
+                  <div
+                    className="drop-layer"
+                    onDragOver={(event) => {
+                      if (!isTileDrag(event)) return;
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = 'move';
+                      setEmptyDropActive(true);
+                    }}
+                    onDragLeave={() => setEmptyDropActive(false)}
+                    onDrop={(event) => {
+                      setEmptyDropActive(false);
+                      const data = readTileDrag(event);
+                      if (!data || data.windowId === view.windowId) return;
+                      event.preventDefault();
+                      window.reframe.transferTile({
+                        sessionId: data.sessionId,
+                        fromWindowId: data.windowId,
+                        target: null,
+                      });
+                    }}
+                  >
+                    {emptyDropActive && <div className="drop-preview drop-fill" />}
+                  </div>
+                )}
               </div>
             )}
           </main>

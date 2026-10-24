@@ -5,13 +5,17 @@ import type { TerminalRegistry } from './terminals';
 
 export type Translate = (key: MessageKey, params?: Record<string, string | number>) => string;
 
+/** A tile drag over this window; sessionId is null when the tile comes from another window. */
+export interface DragState {
+  sessionId: string | null;
+}
+
 export interface AppContextValue {
   t: Translate;
   sessions: Record<string, SessionView>;
   terminals: TerminalRegistry;
-  /** Session currently being dragged inside this window, if any. */
-  dragging: string | null;
-  setDragging: (sessionId: string | null) => void;
+  dragging: DragState | null;
+  setDragging: (drag: DragState | null) => void;
 }
 
 export const AppContext = createContext<AppContextValue | null>(null);

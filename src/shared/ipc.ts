@@ -39,6 +39,19 @@ export interface NewSessionRequest {
 
 export type NewSessionResult = { ok: true } | { ok: false; error: 'folderMissing' | 'claudeNotFound' };
 
+/** A tile dropped into this window from another one; without a target it fills an empty window. */
+export interface TransferRequest {
+  sessionId: string;
+  fromWindowId: string;
+  target: DropTarget | null;
+}
+
+/** Size of the tile when the drag started, so a torn-out window can match it. */
+export interface TileSize {
+  width: number;
+  height: number;
+}
+
 /** API exposed to renderers as `window.reframe`. */
 export interface ReframeApi {
   getView(): Promise<WindowView>;
@@ -59,6 +72,10 @@ export interface ReframeApi {
   onOpenNewSession(listener: () => void): () => void;
   /** Opens an http(s) link from a terminal in the default browser. */
   openExternal(url: string): void;
+  /** Moves a tile from another window into this one. */
+  transferTile(request: TransferRequest): void;
+  /** A tile drag ended without a drop target; if the pointer is outside every window, it becomes a new window. */
+  tearOut(sessionId: string, size: TileSize): void;
 }
 
 export const IPC = {
@@ -76,6 +93,8 @@ export const IPC = {
   focusTile: 'reframe:focus-tile',
   openNewSession: 'reframe:open-new-session',
   openExternal: 'reframe:open-external',
+  transferTile: 'reframe:transfer-tile',
+  tearOut: 'reframe:tear-out',
 } as const;
 
 /** window.postMessage payload carrying a terminal MessagePort from preload to the page. */

@@ -6,7 +6,9 @@ import { Tile } from './Tile';
 export function LayoutView({ node, windowId }: { node: LayoutNode; windowId: string }) {
   if (node.kind === 'tile') return <Tile sessionId={node.sessionId} windowId={windowId} />;
   if (node.kind === 'group') return <LayoutView node={node.child} windowId={windowId} />;
-  return <SplitView split={node} windowId={windowId} />;
+  // The panel library cannot change a group's set of panels and its layout in one step, so a split whose
+  // children change is rebuilt with a fresh default layout. Terminals survive this (see TerminalRegistry).
+  return <SplitView key={`${node.id}:${node.children.map(nodeKey).join('|')}`} split={node} windowId={windowId} />;
 }
 
 function SplitView({ split, windowId }: { split: SplitNode; windowId: string }) {
@@ -17,14 +19,15 @@ function SplitView({ split, windowId }: { split: SplitNode; windowId: string }) 
     [keys, split.sizes],
   );
 
-  // Sizes can change from outside (a tile added or restored); apply them unless they already match.
+  // Sizes of the same panels can still change from outside; apply them unless they already match.
   useEffect(() => {
     const group = groupRef.current;
     if (!group) return;
     const current = group.getLayout();
+    if (Object.keys(current).length !== keys.length) return;
     const differs = Object.entries(layout).some(([key, size]) => Math.abs((current[key] ?? -1) - size) > 0.5);
     if (differs) group.setLayout(layout);
-  }, [groupRef, layout]);
+  }, [groupRef, keys, layout]);
 
   return (
     <Group

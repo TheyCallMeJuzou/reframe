@@ -145,7 +145,7 @@ reframe/
 
 **Phase 1: Kern (Windows)** ✅ (manuell noch offen: Tray-Menü, Benachrichtigungen): Scaffold (electron-vite, React, TS, ESLint/Prettier, Vitest), PTY-Host, ein Fenster mit Splits und Drop-Zonen, Dialog "Neue Session", Kachel-Header, Dock-Leiste, StateStore mit Restore, Tray (X versteckt, Beenden resumed), Hooks mit Status und Notifications.
 
-**Phase 2: Mehrere Fenster**: Rausziehen in ein neues Fenster, Drag zwischen Fenstern, versteckte Fenster im Tray, Bounds und Monitor beim Restore.
+**Phase 2: Mehrere Fenster** ✅ (manuell noch offen: echtes Ziehen zwischen OS-Fenstern): Rausziehen in ein neues Fenster, Drag zwischen Fenstern, versteckte Fenster im Tray, Bounds und Monitor beim Restore. Entschieden: Ein Nebenfenster ohne Kacheln (auch ohne eingeklappte) schließt sich automatisch, das erste Fenster bleibt immer.
 
 **Phase 3: Gruppen**: Rahmen, Gruppieren und Auflösen, Gruppe verschieben, einklappen und rausziehen.
 
