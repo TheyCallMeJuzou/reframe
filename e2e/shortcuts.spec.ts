@@ -19,42 +19,42 @@ test('keyboard shortcuts and new windows', async () => {
     await newSession(page, project, 'gamma');
 
     // Ctrl+1…9 by position (alpha left, beta and gamma stacked right), Ctrl+Shift+arrows to the neighbor.
-    await page.keyboard.press('Control+1');
+    await page.keyboard.press('ControlOrMeta+1');
     await expect.poll(() => focused(page)).toBe('alpha');
     await expect(tileByLabel(page, 'alpha')).toHaveCSS('border-color', 'rgb(217, 119, 87)');
     await expect(tileByLabel(page, 'beta')).not.toHaveCSS('border-color', 'rgb(217, 119, 87)');
-    await page.keyboard.press('Control+2');
+    await page.keyboard.press('ControlOrMeta+2');
     await expect.poll(() => focused(page)).toBe('beta');
-    await page.keyboard.press('Control+Shift+ArrowDown');
+    await page.keyboard.press('ControlOrMeta+Shift+ArrowDown');
     await expect.poll(() => focused(page)).toBe('gamma');
-    await page.keyboard.press('Control+Shift+ArrowLeft');
+    await page.keyboard.press('ControlOrMeta+Shift+ArrowLeft');
     await expect.poll(() => focused(page)).toBe('alpha');
 
     // Ctrl+Shift+M collapses the focused tile; pressed again (no tile focused), it brings it back, focused.
-    await page.keyboard.press('Control+3');
+    await page.keyboard.press('ControlOrMeta+3');
     await expect.poll(() => focused(page)).toBe('gamma');
-    await page.keyboard.press('Control+Shift+M');
+    await page.keyboard.press('ControlOrMeta+Shift+M');
     await expect(page.locator('.dock-item', { hasText: 'gamma' })).toBeVisible();
     await expect(page.locator('.tile')).toHaveCount(2);
-    await page.keyboard.press('Control+Shift+M');
+    await page.keyboard.press('ControlOrMeta+Shift+M');
     await expect(page.locator('.tile')).toHaveCount(3);
     await expect.poll(() => focused(page)).toBe('gamma');
 
     // Ctrl+Shift+L: the session list, with the search box ready to type in.
-    await page.keyboard.press('Control+Shift+L');
+    await page.keyboard.press('ControlOrMeta+Shift+L');
     await expect(page.getByPlaceholder('Search sessions')).toBeFocused();
-    await page.keyboard.press('Control+Shift+L');
+    await page.keyboard.press('ControlOrMeta+Shift+L');
     await expect(page.locator('.sidebar')).toHaveCount(0);
 
     // Ctrl+Shift+T: the "New session" dialog.
-    await page.keyboard.press('Control+Shift+T');
+    await page.keyboard.press('ControlOrMeta+Shift+T');
     await expect(page.getByRole('dialog')).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(page.getByRole('dialog')).toHaveCount(0);
 
     // Ctrl+Shift+N: a new, empty window, which comes back after a restart.
     const opened = app.waitForEvent('window');
-    await page.keyboard.press('Control+Shift+N');
+    await page.keyboard.press('ControlOrMeta+Shift+N');
     const second = await opened;
     await expect(second.getByText('No sessions yet')).toBeVisible();
     await expect.poll(() => state().windows.length).toBe(2);

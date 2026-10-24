@@ -40,10 +40,10 @@ test('session list: select several, open them together, see new ones pop up', as
     await expect(row('Gamma task')).toBeVisible();
 
     // Ctrl+click and Shift+click select without opening anything.
-    await row('Alpha task').click({ modifiers: ['Control'] });
+    await row('Alpha task').click({ modifiers: ['ControlOrMeta'] });
     await row('Gamma task').click({ modifiers: ['Shift'] });
     await expect(page.locator('.sidebar-row.is-selected')).toHaveCount(3);
-    await row('Beta task').click({ modifiers: ['Control'] });
+    await row('Beta task').click({ modifiers: ['ControlOrMeta'] });
     await expect(page.locator('.sidebar-row.is-selected')).toHaveCount(2);
     await expect(page.locator('.tile')).toHaveCount(0);
 
@@ -54,8 +54,8 @@ test('session list: select several, open them together, see new ones pop up', as
     await expect.poll(() => [starts(alpha), starts(gamma)]).toEqual([1, 1]);
 
     // Beta, plus Alpha that is open already, "in a new group in a new window": Alpha moves, without a restart.
-    await row('Beta task').click({ modifiers: ['Control'] });
-    await page.locator(`.sidebar-row[data-session="${recordOf(alpha)}"]`).click({ modifiers: ['Control'] });
+    await row('Beta task').click({ modifiers: ['ControlOrMeta'] });
+    await page.locator(`.sidebar-row[data-session="${recordOf(alpha)}"]`).click({ modifiers: ['ControlOrMeta'] });
     await expect(page.locator('.sidebar-row.is-selected')).toHaveCount(2);
     const opened = app.waitForEvent('window');
     await row('Beta task').click({ button: 'right' });
