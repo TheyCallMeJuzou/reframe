@@ -13,7 +13,7 @@
 
 ## What it does
 
-- **All sessions in view.** Every session is a tile, and all tiles are visible at once: the first on the left, the next ones stacked on the right. Drag a tile's header onto another tile's edge to split next to it; the drop zone shows where it lands.
+- **All sessions in view.** Every session is a tile, and all tiles are visible at once, in two columns that fill in turn. Drag a tile's header onto another tile's edge to split next to it; the drop zone shows where it lands.
 - **Out of the way when you want.** The arrow in a tile's corner collapses it into the side bar; a click puts it back where it was.
 - **Groups.** Put tiles into a group (right-click a tile, or drag it onto a group): a colored frame with a name. A group collapses, moves and leaves the window as one; dissolve it or end all its sessions from its menu.
 - **Several windows.** Open a new, empty window (toolbar, tray or Ctrl+Shift+N), or drag a tile or a group out of the window and it gets a window of its own; drag it back, or into another window, whenever you like.

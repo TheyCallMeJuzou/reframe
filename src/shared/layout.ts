@@ -147,17 +147,23 @@ export function insertNode(
 
 /**
  * Adds a node where new tiles go when no place is given: the first fills the window, the second comes to its
- * right (half and half), and every further one at the bottom of the rightmost column. That rule also holds for
- * a layout the user built: a single tile on the right becomes a column; a group there gets the node below it,
- * not into it.
+ * right (half and half), and every further one at the bottom of the column with the fewest tiles (the right one
+ * when they are even), so two columns fill in turn: 3 below 2, 4 below 1, 5 below 3. That rule also holds for a
+ * layout the user built (with more columns, or a single one, which gets a second); a group in the chosen
+ * column gets the node below it, not into it.
  */
 export function appendNode(root: LayoutNode | null, node: LayoutNode): LayoutNode {
   if (!root) return node;
   if (root.kind === 'split' && root.dir === 'row') {
-    const last = root.children[root.children.length - 1]!;
-    return normalize({ ...root, children: [...root.children.slice(0, -1), stackBelow(last, node)] });
+    const count = (column: LayoutNode) =>
+      column.kind === 'split' && column.dir === 'col' ? column.children.length : 1;
+    let target = root.children.length - 1;
+    root.children.forEach((column, i) => {
+      if (count(column) < count(root.children[target]!)) target = i;
+    });
+    const children = root.children.map((column, i) => (i === target ? stackBelow(column, node) : column));
+    return normalize({ ...root, children });
   }
-  if (root.kind === 'split' && root.dir === 'col') return stackBelow(root, node);
   return normalize({ kind: 'split', id: newId(), dir: 'row', children: [root, node], sizes: [50, 50] });
 }
 

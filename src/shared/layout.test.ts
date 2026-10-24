@@ -46,22 +46,35 @@ describe('insertTile', () => {
     expect(shape(insertTile(null, 'a'))).toBe('a');
   });
 
-  it('without a target: the second goes right of the first, every further one below in the right column', () => {
+  it('without a target: two columns that fill in turn (3 below 2, 4 below 1, 5 below 3)', () => {
     let root = insertTile(null, 'a');
     root = insertTile(root, 'b');
     expect(shape(root)).toBe('row(a, b)');
     expect(sizesOf(root)).toEqual([50, 50]);
     root = insertTile(root, 'c');
+    expect(shape(root)).toBe('row(a, col(b, c))');
     root = insertTile(root, 'd');
-    expect(shape(root)).toBe('row(a, col(b, c, d))');
+    expect(shape(root)).toBe('row(col(a, d), col(b, c))');
+    root = insertTile(root, 'e');
+    root = insertTile(root, 'f');
+    expect(shape(root)).toBe('row(col(a, d, f), col(b, c, e))');
     expect(sizesOf(root)).toEqual([50, 50]);
     expect(sizesOf((root as SplitNode).children[1]!)).toEqual([33.3, 33.3, 33.3]);
   });
 
-  it('stacks in the rightmost column of a layout the user built, keeping its proportions', () => {
+  it('adds to the emptiest column of a layout the user built, keeping its proportions', () => {
     expect(shape(appendNode(split('row', [tile('a'), tile('b'), tile('c')]), tile('x')))).toBe('row(a, b, col(c, x))');
-    expect(shape(appendNode(split('col', [tile('a'), tile('b')]), tile('x')))).toBe('col(a, b, x)');
-    const resized = appendNode(split('row', [tile('a'), split('col', [tile('b'), tile('c')], [70, 30])]), tile('x'));
+    const threeColumns = split('row', [
+      split('col', [tile('a'), tile('b')]),
+      tile('c'),
+      split('col', [tile('d'), tile('e')]),
+    ]);
+    expect(shape(appendNode(threeColumns, tile('x')))).toBe('row(col(a, b), col(c, x), col(d, e))');
+    expect(shape(appendNode(split('col', [tile('a'), tile('b')]), tile('x')))).toBe('row(col(a, b), x)');
+    const resized = appendNode(
+      split('row', [split('col', [tile('a'), tile('d')]), split('col', [tile('b'), tile('c')], [70, 30])]),
+      tile('x'),
+    );
     expect(sizesOf((resized as SplitNode).children[1]!)).toEqual([46.7, 20, 33.3]);
   });
 
