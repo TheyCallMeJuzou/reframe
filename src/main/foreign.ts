@@ -4,7 +4,8 @@
 //
 // Dragging a tab out of Windows Terminal is no window move: the terminal only opens a new window for the tab
 // where it was released. A terminal window that appears over one of our windows, holding a claude that already
-// ran before the window existed, counts as such a drop too.
+// ran before the window existed, counts as such a drop too. While such a tab is dragged over one of our
+// windows, the window reports the pointer (a drag with no data types), so it can show drop zones as well.
 import { EventEmitter } from 'node:events';
 import { screen } from 'electron';
 import type { RegistryEntry } from './claude/registry';
@@ -59,12 +60,24 @@ const NEW_WINDOW_MS = 10_000;
 const POINTER_MS = 3_000;
 /** When to look into a new terminal window: the moved tab's console may name its window only after a moment. */
 const APPEARED_PROBES_MS = [0, 300, 800, 1500, 2500];
+/** Without a pointer report for this long, a drag over our windows is over. */
+const TAB_DRAG_IDLE_MS = 500;
+
+interface TabDrag {
+  windowId: string;
+  /** Whether the terminal window the tab comes from holds a claude; null while that is being looked up. */
+  holdsClaude: boolean | null;
+  idle: NodeJS.Timeout;
+}
 
 export class ForeignWindowWatcher extends EventEmitter<Events> {
   private drag: Drag | null = null;
   private created = new Map<string, number>();
   private hosts = new Map<number, string | null>();
   private pointer: { point: Point; at: number } | null = null;
+  private tabDrag: TabDrag | null = null;
+  /** Test hook: the window a simulated tab drag comes from (instead of the window in front). */
+  tabDragSource: string | null = null;
 
   constructor(private deps: ForeignWatcherDeps) {
     super();
@@ -88,9 +101,48 @@ export class ForeignWindowWatcher extends EventEmitter<Events> {
     });
   }
 
-  /** A window of ours reports the pointer during a drag it does not know (e.g. a terminal tab, screen coordinates). */
-  notePointer(point: Point): void {
+  /**
+   * A window of ours reports the pointer (screen coordinates) during a drag it does not know, or null when the
+   * drag left it. Windows Terminal's tab drags offer no data types; they come from the window in front.
+   */
+  notePointer(windowId: string, point: Point | null, types: string[]): void {
+    if (!point || types.length > 0) return this.endTabDrag();
     this.pointer = { point, at: Date.now() };
+    let drag = this.tabDrag;
+    if (drag && drag.windowId !== windowId) {
+      if (drag.holdsClaude) this.emit('hover', drag.windowId, null);
+      drag.windowId = windowId;
+    }
+    if (!drag) {
+      const created: TabDrag = {
+        windowId,
+        holdsClaude: null,
+        idle: setTimeout(() => this.endTabDrag(), TAB_DRAG_IDLE_MS),
+      };
+      drag = this.tabDrag = created;
+      const source = this.tabDragSource ?? this.deps.win32.foreground();
+      const host = source ? this.hostOf(source) : null;
+      if (!source || !isTerminalHost(host)) created.holdsClaude = false;
+      else {
+        void this.sessionsIn(source).then((sessions) => {
+          if (this.tabDrag !== created) return;
+          created.holdsClaude = sessions.length > 0;
+          if (created.holdsClaude && this.pointer) this.emit('hover', created.windowId, this.pointer.point);
+        });
+      }
+      this.deps.log('info', 'something from another app is dragged over reframe', { from: host ?? 'unknown' });
+    }
+    clearTimeout(drag.idle);
+    drag.idle = setTimeout(() => this.endTabDrag(), TAB_DRAG_IDLE_MS);
+    if (drag.holdsClaude) this.emit('hover', windowId, point);
+  }
+
+  private endTabDrag(): void {
+    const drag = this.tabDrag;
+    this.tabDrag = null;
+    if (!drag) return;
+    clearTimeout(drag.idle);
+    if (drag.holdsClaude) this.emit('hover', drag.windowId, null);
   }
 
   /**

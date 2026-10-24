@@ -83,16 +83,23 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
     };
     // Pointer events are suppressed during a drag, so any pointer movement means it is over.
     const pointer = () => setDragging((current) => (current ? null : current));
-    // Drags from other apps (a terminal tab torn out over us opens a new terminal window there): main uses the
-    // last position as the drop point.
+    // Drags from other apps (a terminal tab torn out over us opens a new terminal window there): main shows
+    // drop zones for them and uses the last position as the drop point.
     let reported = 0;
     const over = (event: DragEvent) => {
-      if (dragKind(event) || event.timeStamp - reported < 100) return;
+      if (dragKind(event) || event.timeStamp - reported < 50) return;
       reported = event.timeStamp;
       const types = Array.from(event.dataTransfer?.types ?? []);
       window.reframe.reportForeignPointer({ x: event.screenX, y: event.screenY, types });
     };
+    const out = (event: DragEvent) => {
+      if (!dragKind(event) && (event.type === 'drop' || event.relatedTarget === null)) {
+        window.reframe.reportForeignPointer(null);
+      }
+    };
     window.addEventListener('dragover', over, true);
+    window.addEventListener('dragleave', out, true);
+    window.addEventListener('drop', out, true);
     window.addEventListener('dragenter', enter, true);
     window.addEventListener('dragleave', leave, true);
     // Bubble phase on purpose: resetting during capture re-renders (in the microtask after this listener)
@@ -107,6 +114,8 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
       window.removeEventListener('dragend', reset, true);
       window.removeEventListener('pointermove', pointer, true);
       window.removeEventListener('dragover', over, true);
+      window.removeEventListener('dragleave', out, true);
+      window.removeEventListener('drop', out, true);
     };
   }, []);
 

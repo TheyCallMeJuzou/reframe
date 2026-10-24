@@ -5,7 +5,7 @@ import { MessageChannelMain, utilityProcess, type UtilityProcess, type WebConten
 import { IPC } from '@shared/ipc';
 import type { HostEvent, HostRequest } from '../ptyhost/protocol';
 
-type Events = { event: [HostEvent]; crashed: [] };
+type Events = { event: [HostEvent]; crashed: [code: number] };
 
 export class PtyHostClient extends EventEmitter<Events> {
   private child: UtilityProcess | null = null;
@@ -13,10 +13,10 @@ export class PtyHostClient extends EventEmitter<Events> {
   start(): void {
     this.child = utilityProcess.fork(path.join(__dirname, 'ptyhost.js'), [], { serviceName: 'reframe-pty-host' });
     this.child.on('message', (event: HostEvent) => this.emit('event', event));
-    this.child.on('exit', () => {
+    this.child.on('exit', (code) => {
       const wasRunning = this.child !== null;
       this.child = null;
-      if (wasRunning) this.emit('crashed');
+      if (wasRunning) this.emit('crashed', code);
     });
   }
 

@@ -787,8 +787,13 @@ export class ReframeApp {
   }
 
   /** Test hook (REFRAME_E2E): terminal window `hwnd` as if it had just appeared at a screen point (torn-out tab). */
-  terminalWindowAppeared(hwnd: string, point: { x: number; y: number }): void {
+  terminalWindowAppeared(hwnd: string, point?: { x: number; y: number }): void {
     this.foreign?.appeared(hwnd, point);
+  }
+
+  /** Test hook (REFRAME_E2E): the terminal window a simulated tab drag comes from. */
+  tabDragSource(hwnd: string | null): void {
+    if (this.foreign) this.foreign.tabDragSource = hwnd;
   }
 
   /** Test hook (REFRAME_E2E): what releasing terminal window `hwnd` at a screen point does. */
@@ -962,15 +967,12 @@ export class ReframeApp {
         this.log('error', 'opening a session from the list failed', { error: String(error) }),
       );
     });
-    let pointerLogged = 0;
-    ipcMain.on(IPC.foreignPointer, (_event, report: Partial<ForeignPointerReport> | null) => {
-      if (typeof report?.x !== 'number' || typeof report.y !== 'number') return;
-      this.foreign?.notePointer({ x: report.x, y: report.y });
-      if (Date.now() - pointerLogged > 2000) {
-        const types = Array.isArray(report.types) ? report.types.filter((t) => typeof t === 'string') : [];
-        this.log('info', 'something from another app is dragged over reframe', { types });
-      }
-      pointerLogged = Date.now();
+    ipcMain.on(IPC.foreignPointer, (event, report: Partial<ForeignPointerReport> | null) => {
+      const id = windowId(event);
+      if (!id) return;
+      if (typeof report?.x !== 'number' || typeof report.y !== 'number') return this.foreign?.notePointer(id, null, []);
+      const types = Array.isArray(report.types) ? report.types.filter((t) => typeof t === 'string') : [];
+      this.foreign?.notePointer(id, { x: report.x, y: report.y }, types);
     });
     ipcMain.on(IPC.foreignDropAnswer, (_event, requestId: unknown, answer: Partial<ForeignDropAnswer> | null) => {
       if (typeof requestId !== 'string') return;

@@ -159,7 +159,7 @@ reframe/
 - Vor der Übernahme kommt immer eine kurze Bestätigung in reframe. Bei mehreren Tabs gibt es eine Auswahl, vorausgewählt ist der Tab, dessen Titel zum Fenster passt.
 - Was danach im Terminal übrig bleibt: Läuft in einem übernommenen Tab nur noch eine Shell, tippt reframe dort `exit`. So schließt sich nur dieser Tab, und als letzter Tab nimmt er das Fenster mit. Andere Tabs werden nie angefasst. Bewusst kein `WM_CLOSE` an das ganze Fenster: Wer in Windows Terminal die Rückfrage für mehrere Tabs abgeschaltet hat, würde sonst alle Tabs verlieren.
 - Geprüft wird nur, wenn ein bekanntes Terminal-Programm gezogen wird und irgendwo ein externes Claude läuft.
-- Einen Tab aus Windows Terminal über reframe ziehen: Das ist kein Fenster-Verschieben, Windows Terminal öffnet erst nach dem Loslassen ein neues Fenster für den Tab. Erscheint ein neues Terminal-Fenster über reframe, in dem ein schon vorher laufendes Claude steckt, gilt das als Drop an dieser Stelle. Während des Ziehens gibt es (noch) keine Drop-Vorschau. Manuell noch zu bestätigen.
+- Einen Tab aus Windows Terminal über reframe ziehen: Das ist kein Fenster-Verschieben, Windows Terminal öffnet erst nach dem Loslassen ein neues Fenster für den Tab. Erscheint ein neues Terminal-Fenster über reframe, in dem ein schon vorher laufendes Claude steckt, gilt das als Drop an dieser Stelle. Während des Ziehens zeigt reframe die Drop-Vorschau, wenn das Terminal-Fenster, aus dem der Tab kommt, ein Claude enthält. Manuell bestätigt (2026-10-24), Vorschau noch offen.
 
 **Phase 6: Open-Source-Reife**: README, CONTRIBUTING, CI-Matrix (Win/macOS/Linux) über einen GitHub-Spiegel, electron-builder (NSIS/dmg/AppImage+deb), Hinweise zum Code-Signing, optional Auto-Update und Autostart.
 

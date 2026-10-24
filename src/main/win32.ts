@@ -9,6 +9,8 @@ export interface Win32 {
   onTopLevel(callback: (phase: 'created' | 'shown', hwnd: string) => void): void;
   /** Window rectangle in physical screen pixels. */
   rect(hwnd: string): { x: number; y: number; width: number; height: number } | null;
+  /** The window in front (the one the user works in), if any. */
+  foreground(): string | null;
   processId(hwnd: string): number;
   /** Executable file name of a process, e.g. "WindowsTerminal.exe". */
   imageName(pid: number): string | null;
@@ -39,6 +41,7 @@ function load(): Win32 {
   );
   const GetWindowTextW = user32.func('int __stdcall GetWindowTextW(void* hwnd, _Out_ uint16_t* text, int max)');
   const IsWindow = user32.func('bool __stdcall IsWindow(void* hwnd)');
+  const GetForegroundWindow = user32.func('void* __stdcall GetForegroundWindow()');
   const GetAncestor = user32.func('void* __stdcall GetAncestor(void* hwnd, uint32_t flags)');
   koffi.struct('RECT', { left: 'int32_t', top: 'int32_t', right: 'int32_t', bottom: 'int32_t' });
   const GetWindowRect = user32.func('bool __stdcall GetWindowRect(void* hwnd, _Out_ RECT* rect)');
@@ -95,6 +98,10 @@ function load(): Win32 {
       const rect = { left: 0, top: 0, right: 0, bottom: 0 };
       if (!GetWindowRect(toHandle(hwnd), rect)) return null;
       return { x: rect.left, y: rect.top, width: rect.right - rect.left, height: rect.bottom - rect.top };
+    },
+    foreground() {
+      const hwnd: unknown = GetForegroundWindow();
+      return hwnd ? String(hwnd) : null;
     },
     processId(hwnd) {
       const pid = [0];

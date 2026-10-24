@@ -68,6 +68,7 @@ export class SessionManager extends EventEmitter<Events> {
     super();
     this.log = deps.log ?? (() => {});
     deps.host.on('event', (event) => {
+      if (event.type === 'error') return this.log('warn', 'error in the pty host', { error: event.message });
       const runtime = this.runtimes.get(event.sessionId);
       // A process that is still going away while its session was started again: not this runtime's business.
       if (!runtime || runtime.instance !== event.instance) return;
@@ -75,7 +76,8 @@ export class SessionManager extends EventEmitter<Events> {
       if (event.type === 'spawn-failed') this.fail(event.sessionId, 'spawnFailed');
       if (event.type === 'exit') this.onExit(event.sessionId, event.exitCode);
     });
-    deps.host.on('crashed', () => {
+    deps.host.on('crashed', (code) => {
+      this.log('error', 'pty host stopped unexpectedly, all its sessions are gone', { code });
       for (const id of this.runtimes.keys()) this.onExit(id, -1);
     });
     deps.hooks.on('hook', (message) => this.onHook(message));
@@ -207,7 +209,8 @@ export class SessionManager extends EventEmitter<Events> {
       runtime?.markExited?.();
       return;
     }
-    const early = Date.now() - runtime.startedAt < EARLY_EXIT_MS && exitCode !== 0;
+    // Ended by reframe (e.g. quitting) while still starting up is no failure to start.
+    const early = !runtime.stopping && Date.now() - runtime.startedAt < EARLY_EXIT_MS && exitCode !== 0;
     runtime.status = early ? 'error' : 'ended';
     if (early) runtime.error = runtime.mode === 'resume' ? 'resumeFailed' : 'spawnFailed';
     runtime.markExited?.();

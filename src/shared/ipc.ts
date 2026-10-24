@@ -127,7 +127,7 @@ export interface ForeignDropRequest {
 export interface ForeignPointerReport {
   x: number;
   y: number;
-  /** Data types the drag offers (logged, to tell terminals apart). */
+  /** Data types the drag offers (a Windows Terminal tab offers none). */
   types: string[];
 }
 
@@ -187,8 +187,9 @@ export interface ReframeApi {
   onForeignDrop(listener: (request: ForeignDropRequest) => void): () => void;
   /** Answer to a foreign drop; null cancels. */
   answerForeignDrop(requestId: string, answer: ForeignDropAnswer | null): void;
-  /** Something unknown (not ours, e.g. a terminal tab) is dragged over this window: pointer in screen coordinates. */
-  reportForeignPointer(report: ForeignPointerReport): void;
+  /** Something unknown (not ours, e.g. a terminal tab) is dragged over this window: pointer in screen
+   * coordinates; null when it left the window. */
+  reportForeignPointer(report: ForeignPointerReport | null): void;
 }
 
 export const IPC = {

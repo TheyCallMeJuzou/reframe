@@ -64,7 +64,7 @@ async function outsideTerminal({ dir, project, env }: Setup, started: (shellPid:
   return { sessionId, pid, shellPid };
 }
 
-/** Runs `body`; on failure keeps screenshots and prints the app log; always ends the outside terminal. */
+/** Runs `run`; on failure keeps screenshots and prints the app log; always ends the outside terminal. */
 async function withOutsideTerminal(name: string, run: (s: Setup, started: (pid: number) => void) => Promise<void>) {
   const s = setup();
   let shellPid = 0;
@@ -72,8 +72,6 @@ async function withOutsideTerminal(name: string, run: (s: Setup, started: (pid: 
     await run(s, (pid) => (shellPid = pid));
   } catch (error) {
     await captureWindows(name);
-    const logFile = path.join(s.env.REFRAME_USER_DATA!, 'logs', 'main.log');
-    if (fs.existsSync(logFile)) console.log(`--- main.log\n${fs.readFileSync(logFile, 'utf8')}`);
     throw error;
   } finally {
     if (shellPid && alive(shellPid)) spawn('taskkill', ['/PID', String(shellPid), '/T', '/F'], { stdio: 'ignore' });
@@ -128,14 +126,35 @@ test('a terminal tab torn out over reframe (a new terminal window there) is take
     const { pid, shellPid } = await outsideTerminal(s, started);
     const { app, page } = await launch(s.env);
     await newSession(page, s.project, 'alpha');
-    // Released over the lower part of tile alpha.
+    // Dragged over the lower part of tile alpha and released there.
     const tile = (await tileByLabel(page, 'alpha').boundingBox())!;
     const bounds = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.getContentBounds());
-    const point = { x: bounds.x + tile.x + tile.width / 2, y: bounds.y + tile.y + tile.height * 0.9 };
+    const client = { x: tile.x + tile.width / 2, y: tile.y + tile.height * 0.9 };
+    const point = { x: bounds.x + client.x, y: bounds.y + client.y };
 
     const hwnd = await callMain<string | null>(app, 'terminalWindowOf', pid);
     expect(hwnd).toBeTruthy();
-    await callMain(app, 'terminalWindowAppeared', hwnd, point);
+    // While the tab is over reframe, the window sees a drag without data types and shows the drop zone.
+    await callMain(app, 'tabDragSource', hwnd);
+    const dragEvent = (type: string) =>
+      page.evaluate(
+        ({ type, client, point }) => {
+          const init = { bubbles: true, dataTransfer: new DataTransfer(), relatedTarget: null };
+          const at = { clientX: client.x, clientY: client.y, screenX: point.x, screenY: point.y };
+          const target = document.elementFromPoint(client.x, client.y) ?? document.body;
+          target.dispatchEvent(new DragEvent(type, { ...init, ...at }));
+        },
+        { type, client, point },
+      );
+    await dragEvent('dragover');
+    const preview = page.locator('.foreign-preview');
+    await expect(preview).toBeVisible();
+    const zone = (await preview.boundingBox())!;
+    expect(zone.y).toBeGreaterThan(tile.y + tile.height / 3); // the lower half of alpha
+    // Released: the drag leaves the window (nobody accepts it), and the terminal opens a window for the tab.
+    await dragEvent('dragleave');
+    await expect(preview).toBeHidden();
+    await callMain(app, 'terminalWindowAppeared', hwnd);
 
     const dialog = page.getByRole('dialog');
     await expect(dialog).toContainText('outside', { timeout: 10_000 });
@@ -148,7 +167,7 @@ test('a terminal tab torn out over reframe (a new terminal window there) is take
     const outside = (await tileByLabel(page, 'outside').boundingBox())!;
     expect(outside.y).toBeGreaterThan(alpha.y + alpha.height / 2);
     await expect.poll(() => alive(shellPid), { timeout: 15_000 }).toBe(false);
-    expect(readLog(s)).toContain('new terminal window appeared');
+    expect(readLog(s)).toContain('"pointFrom":"drag over reframe"');
 
     await quit(app);
   });

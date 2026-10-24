@@ -26,6 +26,10 @@ interface Session {
 const sessions = new Map<string, Session>();
 const parent = process.parentPort;
 
+process.on('uncaughtException', (error) => {
+  emit({ type: 'error', message: error.stack ?? String(error) });
+});
+
 function emit(event: HostEvent): void {
   parent.postMessage(event);
 }
@@ -51,6 +55,9 @@ function spawn(request: Extract<HostRequest, { type: 'spawn' }>): void {
       rows: request.rows,
       cwd: request.cwd,
       env: request.env,
+      // Windows: the ConPTY that comes with node-pty (as in Windows Terminal and VS Code). The one built into
+      // Windows crashed this process now and then when several sessions ended at once (access violation).
+      useConptyDll: true,
     });
   } catch (error) {
     mirror.dispose();

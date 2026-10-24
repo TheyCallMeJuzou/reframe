@@ -22,4 +22,6 @@ export type HostRequest =
 export type HostEvent =
   | { type: 'spawned'; sessionId: string; instance: number; pid: number }
   | { type: 'spawn-failed'; sessionId: string; instance: number; message: string }
-  | { type: 'exit'; sessionId: string; instance: number; pid: number; exitCode: number };
+  | { type: 'exit'; sessionId: string; instance: number; pid: number; exitCode: number }
+  /** An error nobody handled; the host keeps running (ending it would end every session). */
+  | { type: 'error'; message: string };

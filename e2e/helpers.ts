@@ -58,12 +58,15 @@ export function setup() {
           .split('\n')
           .map((l) => JSON.parse(l) as FakeLaunch)
       : [];
+  userData = env.REFRAME_USER_DATA!;
   const state = (): SavedState => JSON.parse(fs.readFileSync(path.join(env.REFRAME_USER_DATA!, 'state.json'), 'utf8'));
   const byName = (name: string): SavedSession => Object.values(state().sessions).find((s) => s.name === name)!;
   return { dir, project, env, launches, state, byName };
 }
 
 let running: ElectronApplication | null = null;
+/** User data folder of the latest setup(), for the app log of a failed test. */
+let userData: string | null = null;
 
 export async function launch(env: Record<string, string>): Promise<{ app: ElectronApplication; page: Page }> {
   const app = await electron.launch({ args: [root], env, cwd: root });
@@ -90,11 +93,15 @@ export async function quit(app: ElectronApplication): Promise<void> {
   running = null;
 }
 
-/** For `catch`: screenshots of every open window, to see what the app showed when a test failed. */
+/** For `catch`: screenshots of every open window and the app log, to see what happened when a test failed. */
 export async function captureWindows(name: string): Promise<void> {
   for (const [i, page] of (running?.windows() ?? []).entries()) {
     await page.screenshot({ path: `test-results/${name}-window-${i + 1}.png` }).catch(() => {});
   }
+  const log = userData && path.join(userData, 'logs', 'main.log');
+  if (log && fs.existsSync(log))
+    console.log(`--- main.log (${name})
+${fs.readFileSync(log, 'utf8')}`);
 }
 
 /** For `finally`: closes a still running app and removes the profile without masking test failures. */

@@ -93,6 +93,8 @@ test('groups: create, grow by drag, rename, recolor, collapse, restart, tear out
     await page.locator('.dock-group').click();
     await expect(frame().locator('.tile')).toHaveCount(2);
     await expect(frame()).toHaveCSS('border-color', 'rgb(91, 156, 240)');
+    // All four are up again (a claude ended while it is still starting cannot say goodbye in the launch log).
+    await expect(page.locator('.tile .status-idle')).toHaveCount(4, { timeout: 15_000 });
 
     // The whole group gets its own window, and comes back next to delta.
     const opened = app.waitForEvent('window');
