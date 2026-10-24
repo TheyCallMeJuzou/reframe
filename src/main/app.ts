@@ -120,6 +120,8 @@ export class ReframeApp {
     this.log('info', 'reframe starting', {
       version: app.getVersion(),
       platform: process.platform,
+      build: app.isPackaged ? 'installed' : 'development',
+      hidden,
       state: loaded.source,
       windows: this.state.windows.length,
       sessions: Object.keys(this.state.sessions).length,

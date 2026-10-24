@@ -3,13 +3,19 @@ import { resolveLocale } from '@shared/i18n';
 import icon from '../../resources/icon.png?asset';
 import trayIcon from '../../resources/tray.png?asset';
 import trayIcon2x from '../../resources/tray@2x.png?asset';
+import path from 'node:path';
 import { ReframeApp } from './app';
+import { createLogger } from './log';
 import { startedBySystem } from './autostart';
 
 // Tests and side-by-side dev runs use their own profile.
 if (process.env.REFRAME_USER_DATA) app.setPath('userData', process.env.REFRAME_USER_DATA);
 
 if (!app.requestSingleInstanceLock()) {
+  // One reframe per profile: the running one shows its windows (second-instance) and this one leaves.
+  createLogger(path.join(app.getPath('userData'), 'logs'))('info', 'reframe already runs, showing its windows', {
+    build: app.isPackaged ? 'installed' : 'development',
+  });
   app.quit();
 } else {
   // Windows shows toasts only for an app id with a Start menu shortcut. The installer creates one for
