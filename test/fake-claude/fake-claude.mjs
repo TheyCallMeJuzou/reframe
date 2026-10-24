@@ -58,9 +58,12 @@ process.stdout.write(`\x1b[1mFAKE CLAUDE\x1b[0m ${resumeId ? 'resumed' : 'new'} 
 
 let line = '';
 let lastInterrupt = 0;
+let images = 0;
 if (process.stdin.isTTY) process.stdin.setRawMode(true);
 process.stdin.setEncoding('utf8');
-process.stdin.on('data', async (chunk) => {
+process.stdin.on('data', async (input) => {
+  // Claude Code pastes the clipboard's image on Alt+V (Windows) or Ctrl+V and shows a chip for it.
+  const chunk = ['\x1bv', '\x16'].reduce((text, key) => text.replaceAll(key, () => `[Image #${++images}]`), input);
   for (const ch of chunk) {
     if (ch === '\x03') {
       if (Date.now() - lastInterrupt < 2000) exit(0);

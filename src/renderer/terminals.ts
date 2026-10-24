@@ -6,6 +6,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { TERMINAL_PORT_MESSAGE, type TerminalHostMessage, type TerminalViewMessage } from '@shared/ipc';
+import { formatPaths, imagePasteKey } from './paste';
 
 interface Entry {
   sessionId: string;
@@ -92,6 +93,14 @@ export class TerminalRegistry {
     this.entries.get(sessionId)?.term.focus();
   }
 
+  /** Types file paths into the session, as a paste (so Claude Code attaches images among them). */
+  pastePaths(sessionId: string, paths: string[]): void {
+    const entry = this.entries.get(sessionId);
+    if (!entry || paths.length === 0) return;
+    entry.term.paste(formatPaths(paths, window.reframe.platform));
+    entry.term.focus();
+  }
+
   private create(sessionId: string): Entry {
     const term = new Terminal({
       allowProposedApi: true,
@@ -107,7 +116,9 @@ export class TerminalRegistry {
     term.loadAddon(new Unicode11Addon());
     term.unicode.activeVersion = '11';
     term.loadAddon(new WebLinksAddon((_event, uri) => window.reframe.openExternal(uri)));
-    term.attachCustomKeyEventHandler((event) => handleClipboardKeys(term, event));
+    term.attachCustomKeyEventHandler((event) =>
+      handleClipboardKeys(term, event, (data) => this.send(entry, { type: 'input', data })),
+    );
 
     const element = document.createElement('div');
     element.className = 'terminal-host';
@@ -168,8 +179,12 @@ export class TerminalRegistry {
   }
 }
 
-/** Ctrl+C copies when text is selected (otherwise it interrupts claude); Ctrl+V pastes via the browser. */
-function handleClipboardKeys(term: Terminal, event: KeyboardEvent): boolean {
+/**
+ * Ctrl+C copies when text is selected (otherwise it interrupts claude). Ctrl+V pastes text; files copied in a
+ * file manager come in as their paths, and an image is left to Claude Code, which reads it from the clipboard on
+ * its own paste key.
+ */
+function handleClipboardKeys(term: Terminal, event: KeyboardEvent, input: (data: string) => void): boolean {
   if (event.type !== 'keydown' || !event.ctrlKey || event.altKey || event.metaKey) return true;
   const key = event.key.toLowerCase();
   if (key === 'c' && (event.shiftKey || term.hasSelection())) {
@@ -177,7 +192,15 @@ function handleClipboardKeys(term: Terminal, event: KeyboardEvent): boolean {
     term.clearSelection();
     return false;
   }
-  // Returning false stops xterm from sending ^V; the browser's paste event still reaches xterm.
-  if (key === 'v') return false;
+  // Everything pasted comes through here (not the browser's own paste), so text, files and images agree.
+  if (key === 'v') {
+    event.preventDefault();
+    void window.reframe.readClipboard().then((clipboard) => {
+      if (clipboard.text) term.paste(clipboard.text);
+      else if (clipboard.files.length > 0) term.paste(formatPaths(clipboard.files, window.reframe.platform));
+      else if (clipboard.image) input(imagePasteKey(window.reframe.platform));
+    });
+    return false;
+  }
   return true;
 }

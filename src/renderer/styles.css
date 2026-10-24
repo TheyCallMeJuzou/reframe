@@ -309,6 +309,22 @@ button {
   background: var(--surface-2);
 }
 
+/* Files dragged over a session: their paths go in on release. */
+.files-drop {
+  position: absolute;
+  inset: 6px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius);
+  background: rgb(217 119 87 / 12%);
+  color: var(--text);
+  font-size: 13px;
+  pointer-events: none;
+}
+
 .tile.is-dragging {
   opacity: 0.5;
 }

@@ -1,6 +1,6 @@
 // Exposes the typed `window.reframe` API. MessagePorts cannot cross the context bridge, so terminal
 // ports are forwarded to the page with window.postMessage.
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron';
 import { IPC, TERMINAL_PORT_MESSAGE, type ForeignDropRequest, type ReframeApi, type WindowView } from '@shared/ipc';
 
 ipcRenderer.on(IPC.terminalPort, (event, payload: { sessionId: string }) => {
@@ -30,6 +30,10 @@ const api: ReframeApi = {
   openExternal: (url) => ipcRenderer.send(IPC.openExternal, url),
   transferNode: (request) => ipcRenderer.send(IPC.transferNode, request),
   newWindow: () => ipcRenderer.send(IPC.newWindow),
+  platform: process.platform,
+  readClipboard: () => ipcRenderer.invoke(IPC.readClipboard),
+  pathForFile: (file) => webUtils.getPathForFile(file),
+  saveDroppedFile: (name, data) => ipcRenderer.invoke(IPC.saveDroppedFile, name, data),
   tearOut: (key, size) => ipcRenderer.send(IPC.tearOut, key, size),
   showTileMenu: (sessionId) => ipcRenderer.send(IPC.tileMenu, sessionId),
   showGroupMenu: (groupId) => ipcRenderer.send(IPC.groupMenu, groupId),

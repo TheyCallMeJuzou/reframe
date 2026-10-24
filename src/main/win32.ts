@@ -17,6 +17,8 @@ export interface Win32 {
   title(hwnd: string): string;
   /** Whether the window still exists. */
   isWindow(hwnd: string): boolean;
+  /** Files copied in Explorer (or another file manager) that are on the clipboard. */
+  clipboardFiles(): string[];
 }
 
 let instance: Win32 | null = null;
@@ -50,6 +52,14 @@ function load(): Win32 {
     'bool __stdcall QueryFullProcessImageNameW(void* process, uint32_t flags, _Out_ uint16_t* name, _Inout_ uint32_t* size)',
   );
   const CloseHandle = kernel32.func('bool __stdcall CloseHandle(void* handle)');
+  const shell32 = koffi.load('shell32.dll');
+  const IsClipboardFormatAvailable = user32.func('bool __stdcall IsClipboardFormatAvailable(uint32_t format)');
+  const OpenClipboard = user32.func('bool __stdcall OpenClipboard(void* owner)');
+  const CloseClipboard = user32.func('bool __stdcall CloseClipboard()');
+  const GetClipboardData = user32.func('void* __stdcall GetClipboardData(uint32_t format)');
+  const DragQueryFileW = shell32.func(
+    'uint32_t __stdcall DragQueryFileW(void* drop, uint32_t index, _Out_ uint16_t* file, uint32_t size)',
+  );
 
   const EVENT_SYSTEM_MOVESIZESTART = 0x000a;
   const EVENT_SYSTEM_MOVESIZEEND = 0x000b;
@@ -60,6 +70,7 @@ function load(): Win32 {
   const WINEVENT_SKIPOWNPROCESS = 0x0002;
   const OBJID_WINDOW = 0;
   const PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+  const CF_HDROP = 15;
 
   const toHandle = (hwnd: string) => BigInt(hwnd);
   const callbacks: unknown[] = []; // keeps registered callbacks alive
@@ -123,6 +134,24 @@ function load(): Win32 {
     },
     isWindow(hwnd) {
       return IsWindow(toHandle(hwnd));
+    },
+    clipboardFiles() {
+      if (!IsClipboardFormatAvailable(CF_HDROP) || !OpenClipboard(null)) return [];
+      try {
+        const drop: unknown = GetClipboardData(CF_HDROP);
+        if (!drop) return [];
+        const files: string[] = [];
+        const count = DragQueryFileW(drop, 0xffffffff, null, 0) as number;
+        for (let i = 0; i < count; i++) {
+          const length = DragQueryFileW(drop, i, null, 0) as number;
+          const buffer = new Uint16Array(length + 1);
+          DragQueryFileW(drop, i, buffer, buffer.length);
+          files.push(String.fromCharCode(...buffer.slice(0, length)));
+        }
+        return files;
+      } finally {
+        CloseClipboard();
+      }
     },
     title(hwnd) {
       const buffer = new Uint16Array(512);

@@ -13,6 +13,7 @@ export function Tile({ sessionId, group }: { sessionId: string; group: GroupNode
   const tileRef = useRef<HTMLElement>(null);
   const dragSize = useRef({ width: 0, height: 0 });
   const [dropSide, setDropSide] = useState<Side | null>(null);
+  const [filesOver, setFilesOver] = useState(false);
   const running = session && ['starting', 'idle', 'busy', 'waiting'].includes(session.status);
   const key = tileKey(sessionId);
   const isDragged = dragging?.key === key || (!!group && dragging?.key === group.id);
@@ -42,6 +43,33 @@ export function Tile({ sessionId, group }: { sessionId: string; group: GroupNode
     event.dataTransfer.dropEffect = 'move';
     setDropSide(sideAt(event.currentTarget.getBoundingClientRect(), event.clientX, event.clientY));
   };
+  // Files dropped onto a running session are typed in as their paths, like in a terminal.
+  const carriesFiles = (event: DragEvent) => !dragKind(event) && Array.from(event.dataTransfer.types).includes('Files');
+  const onFilesOver = (event: DragEvent) => {
+    if (!running || !carriesFiles(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+    setFilesOver(true);
+  };
+  const onFilesDrop = (event: DragEvent) => {
+    setFilesOver(false);
+    if (!running || !carriesFiles(event)) return;
+    event.preventDefault();
+    const files = Array.from(event.dataTransfer.files);
+    void Promise.all(
+      files.map(
+        async (file) =>
+          window.reframe.pathForFile(file) ||
+          (await window.reframe.saveDroppedFile(file.name, await file.arrayBuffer())),
+      ),
+    ).then((paths) =>
+      terminals.pastePaths(
+        sessionId,
+        paths.filter((p): p is string => !!p),
+      ),
+    );
+  };
+
   const onDrop = (event: DragEvent) => {
     // Taken from the drop itself: the state set by dragover may not have rendered yet on a quick drop.
     const side = sideAt(event.currentTarget.getBoundingClientRect(), event.clientX, event.clientY);
@@ -97,7 +125,16 @@ export function Tile({ sessionId, group }: { sessionId: string; group: GroupNode
           <CloseIcon />
         </button>
       </header>
-      <div className="tile-body" onMouseDown={() => terminals.focus(sessionId)}>
+      <div
+        className="tile-body"
+        onMouseDown={() => terminals.focus(sessionId)}
+        onDragOver={onFilesOver}
+        onDragLeave={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFilesOver(false);
+        }}
+        onDrop={onFilesDrop}
+      >
+        {filesOver && <div className="files-drop">{t('tile.dropFiles')}</div>}
         <div className="tile-terminal" ref={slot} />
         {!running && (
           <div className="tile-overlay">

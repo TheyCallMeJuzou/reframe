@@ -2,6 +2,7 @@
 // intents, main applies them, saves, and pushes the new view to the affected window.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import {
   app,
@@ -52,6 +53,7 @@ import {
   type ForeignCandidate,
   type ForeignDropAnswer,
   type ForeignPointerReport,
+  type ClipboardContents,
   type ListItemRef,
   type OpenSessionRequest,
   type RunningListItem,
@@ -78,6 +80,7 @@ import { StateStore } from './state/store';
 import { stopExternalClaude } from './takeover';
 import { colorMenu, groupMenu, tileMenu } from './menus';
 import { createTray } from './tray';
+import { readClipboard } from './clipboard';
 import { Updates } from './updates';
 import { autostartEnabled, setAutostart } from './autostart';
 import { win32 } from './win32';
@@ -822,6 +825,29 @@ export class ReframeApp {
     if (this.foreign) this.foreign.tabDragSource = hwnd;
   }
 
+  /** Test hook (REFRAME_E2E): what the clipboard holds as far as reframe asks (null: the real one). */
+  fakeClipboard(contents: ClipboardContents | null): void {
+    this.clipboardOverride = contents;
+  }
+  private clipboardOverride: ClipboardContents | null = null;
+
+  /**
+   * A file dropped onto a tile that exists only in memory (an image dragged from a browser, say) is written to a
+   * temporary folder, so the session can get a path for it like for any other file.
+   */
+  private saveDroppedFile(name: string, data: ArrayBuffer): string | null {
+    if (data.byteLength > 200 * 1024 * 1024) return null;
+    // A plain file name: no folders, nothing Windows refuses in names.
+    const cleaned = [...path.basename(name)].map((c) => (c < ' ' || '<>:"/\\|?*'.includes(c) ? '_' : c)).join('');
+    const safe = cleaned.slice(0, 120) || 'dropped';
+    const dir = path.join(os.tmpdir(), 'reframe-drops', crypto.randomUUID());
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, safe);
+    fs.writeFileSync(file, Buffer.from(data));
+    this.log('info', 'dropped file saved for a session', { bytes: data.byteLength });
+    return file;
+  }
+
   /** Test hook (REFRAME_E2E): what releasing terminal window `hwnd` at a screen point does. */
   async dropTerminalWindow(hwnd: string, point: { x: number; y: number }): Promise<boolean> {
     const windowId = this.windows.windowAt(point);
@@ -991,6 +1017,10 @@ export class ReframeApp {
       this.transferNode(id, { key: request.key, fromWindowId: request.fromWindowId, target: request.target });
     });
     ipcMain.on(IPC.newWindow, (event) => this.newWindow(windowId(event)));
+    ipcMain.handle(IPC.readClipboard, () => this.clipboardOverride ?? readClipboard());
+    ipcMain.handle(IPC.saveDroppedFile, (_event, name: unknown, data: unknown) =>
+      typeof name === 'string' && data instanceof ArrayBuffer ? this.saveDroppedFile(name, data) : null,
+    );
     ipcMain.on(IPC.tearOut, (event, key: unknown, size: Partial<TileSize> | null) => {
       const id = windowId(event);
       if (!id || typeof key !== 'string') return;

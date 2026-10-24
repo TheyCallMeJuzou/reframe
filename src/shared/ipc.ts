@@ -124,6 +124,14 @@ export interface ForeignDropRequest {
   candidates: ForeignCandidate[];
 }
 
+/** The clipboard as far as pasting into a session goes. */
+export interface ClipboardContents {
+  text: string;
+  image: boolean;
+  /** Files copied in a file manager. */
+  files: string[];
+}
+
 export interface ForeignPointerReport {
   x: number;
   y: number;
@@ -166,6 +174,13 @@ export interface ReframeApi {
   openExternal(url: string): void;
   /** Opens a new, empty window next to this one. */
   newWindow(): void;
+  /** `process.platform`, e.g. for how to quote paths. */
+  readonly platform: string;
+  readClipboard(): Promise<ClipboardContents>;
+  /** The path of a dropped file on disk; "" for one that only exists in memory (e.g. an image from a browser). */
+  pathForFile(file: File): string;
+  /** Saves a dropped file that has no path to a temporary file and returns its path. */
+  saveDroppedFile(name: string, data: ArrayBuffer): Promise<string | null>;
   /** Moves a tile or group from another window into this one. */
   transferNode(request: TransferRequest): void;
   /** A drag ended without a drop target; if the pointer is outside every window, the node gets a new window. */
@@ -212,6 +227,8 @@ export const IPC = {
   openExternal: 'reframe:open-external',
   transferNode: 'reframe:transfer-node',
   newWindow: 'reframe:new-window',
+  readClipboard: 'reframe:read-clipboard',
+  saveDroppedFile: 'reframe:save-dropped-file',
   tearOut: 'reframe:tear-out',
   tileMenu: 'reframe:tile-menu',
   groupMenu: 'reframe:group-menu',
