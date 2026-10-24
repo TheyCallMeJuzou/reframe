@@ -661,6 +661,7 @@ export class ReframeApp {
 
   private foreign: ForeignWindowWatcher | null = null;
   private foreignRequests = new Map<string, (answer: ForeignDropAnswer | null) => void>();
+  private takingOver = new Set<string>();
 
   private watchForeignWindows(): void {
     const api = win32();
@@ -693,6 +694,17 @@ export class ReframeApp {
 
   /** Asks (in the window it was dropped on) which sessions to take over; resumes them; closes the terminal. */
   private async takeOverWindow(drop: ForeignDrop): Promise<void> {
+    // Some terminals report the end of a window move twice; one question per window is enough.
+    if (this.takingOver.has(drop.hwnd)) return this.log('info', 'repeated drop of the same terminal window ignored');
+    this.takingOver.add(drop.hwnd);
+    try {
+      await this.takeOverWindowOnce(drop);
+    } finally {
+      setTimeout(() => this.takingOver.delete(drop.hwnd), 2000);
+    }
+  }
+
+  private async takeOverWindowOnce(drop: ForeignDrop): Promise<void> {
     this.log('info', 'terminal window dropped on reframe', { title: drop.title, sessions: drop.sessions.length });
     this.windows.show(drop.windowId);
     const active = activeByTitle(drop.title, drop.sessions);
@@ -711,6 +723,10 @@ export class ReframeApp {
     });
     const chosen = drop.sessions.filter((s) => answer?.pids.includes(s.pid));
     if (chosen.length === 0) return this.log('info', 'terminal window takeover cancelled');
+    this.log('info', 'terminal window takeover confirmed', {
+      sessions: chosen.length,
+      target: answer?.target ?? 'end of the window',
+    });
 
     let target = answer?.target ?? null;
     const shells: (number | undefined)[] = [];

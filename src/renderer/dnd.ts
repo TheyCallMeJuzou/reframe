@@ -108,6 +108,13 @@ export function dropTargetAt(
     const side = sideAt(rect, x, y);
     return { target: { key: tileKey(tile.dataset.session), side }, rect: half(rect, side) };
   }
+  // On a group's bar or frame (not on one of its tiles): into the group, after its last tile.
+  const group = element?.closest<HTMLElement>('.group[data-group]');
+  const last = group ? [...group.querySelectorAll<HTMLElement>('.tile[data-session]')].at(-1) : undefined;
+  if (group && last?.dataset.session) {
+    const body = group.querySelector('.group-body') ?? group;
+    return { target: { key: tileKey(last.dataset.session), side: 'right' }, rect: body.getBoundingClientRect() };
+  }
   const empty = element?.closest('.empty-area');
   return { target: null, rect: empty ? empty.getBoundingClientRect() : null };
 }

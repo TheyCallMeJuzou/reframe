@@ -7,7 +7,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
-import { callMain, captureWindows, cleanup, launch, quit, setup, tileByLabel } from './helpers';
+import { callMain, captureWindows, cleanup, launch, newSession, quit, setup, tileByLabel } from './helpers';
 
 test.skip(process.platform !== 'win32', 'terminal window takeover is Windows only for now');
 
@@ -21,7 +21,7 @@ const alive = (pid: number) => {
 };
 
 test('a terminal window dropped onto reframe hands its claude over and closes', async () => {
-  const { dir, project, env, launches } = setup();
+  const { dir, project, env, launches, byName } = setup();
   const sessionId = crypto.randomUUID();
   const noHooks = path.join(dir, 'no-hooks.json');
   fs.writeFileSync(noHooks, '{}');
@@ -61,20 +61,29 @@ test('a terminal window dropped onto reframe hands its claude over and closes', 
     expect(shellPid).toBeGreaterThan(0);
 
     const { app, page } = await launch(env);
+    // A group to drop into: released over its bar (not over a tile), the session must join it.
+    await newSession(page, project, 'alpha');
+    await callMain(app, 'createGroup', byName('alpha').id);
+    const header = (await page.locator('.group-header').boundingBox())!;
+    const bounds = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.getContentBounds());
+    const point = { x: bounds.x + header.x + header.width / 2, y: bounds.y + header.y + header.height / 2 };
+
     const hwnd = await callMain<string | null>(app, 'terminalWindowOf', pid);
     expect(hwnd).toBeTruthy();
-    const bounds = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.getContentBounds());
-    const point = { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
+    // Released twice in a row (some terminals report the end of a move twice): still one question.
+    expect(await callMain<boolean>(app, 'dropTerminalWindow', hwnd, point)).toBe(true);
     expect(await callMain<boolean>(app, 'dropTerminalWindow', hwnd, point)).toBe(true);
 
     const dialog = page.getByRole('dialog');
+    await expect(dialog).toHaveCount(1);
     await expect(dialog).toContainText('Take over from the terminal');
     await expect(dialog).toContainText('outside');
     await dialog.getByRole('button', { name: 'Take over' }).click();
 
-    // claude left the terminal and continues in reframe, under the name it had there.
+    // claude left the terminal and continues in reframe, in the group, under the name it had there.
     await expect.poll(() => alive(pid), { timeout: 15_000 }).toBe(false);
     await expect(tileByLabel(page, 'outside')).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('.group .tile')).toHaveCount(2);
     await expect
       .poll(() => launches().filter((l) => l.event === 'start' && l.args.join(' ').includes(sessionId)).length)
       .toBe(2);
@@ -83,6 +92,7 @@ test('a terminal window dropped onto reframe hands its claude over and closes', 
     await expect.poll(() => alive(shellPid), { timeout: 15_000 }).toBe(false);
     const log = fs.readFileSync(path.join(env.REFRAME_USER_DATA!, 'logs', 'main.log'), 'utf8');
     expect(log).toContain('typing exit');
+    expect(log).toContain('repeated drop of the same terminal window ignored');
 
     await quit(app);
   } catch (error) {

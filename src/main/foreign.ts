@@ -5,7 +5,7 @@ import { EventEmitter } from 'node:events';
 import { screen } from 'electron';
 import type { RegistryEntry } from './claude/registry';
 import { consoleHelper } from './console';
-import { isTerminalHost, pidsInWindow } from './foreign-match';
+import { isTerminalHost, pidsForDrop, pidsInWindow } from './foreign-match';
 import type { LogFn } from './log';
 import type { Win32 } from './win32';
 
@@ -39,13 +39,16 @@ type Events = {
 
 interface Drag {
   hwnd: string;
+  /** Sessions found in the window so far; null until the first lookup is done. */
   sessions: RegistryEntry[] | null;
-  probe: Promise<RegistryEntry[]>;
+  probing: Promise<RegistryEntry[]> | null;
+  lastProbe: number;
   timer: NodeJS.Timeout;
   hovered: string | null;
 }
 
 const TRACK_MS = 50;
+const REPROBE_MS = 700;
 
 export class ForeignWindowWatcher extends EventEmitter<Events> {
   private drag: Drag | null = null;
@@ -69,7 +72,11 @@ export class ForeignWindowWatcher extends EventEmitter<Events> {
       this.deps.log('warn', 'could not map consoles to terminal windows', { error: result.error });
       return [];
     }
-    const pids = pidsInWindow(hwnd, result.owners ?? []);
+    const owners = result.owners ?? [];
+    const pids = pidsForDrop(hwnd, owners, (window) => this.deps.win32.isWindow(window));
+    if (pids.length > 0 && pidsInWindow(hwnd, owners).length === 0) {
+      this.deps.log('info', 'matched a torn-out terminal tab by its vanished window', { pids });
+    }
     return external.filter((e) => pids.includes(e.pid));
   }
 
@@ -80,22 +87,39 @@ export class ForeignWindowWatcher extends EventEmitter<Events> {
     if (external.length === 0) return;
     const host = this.deps.win32.imageName(this.deps.win32.processId(hwnd));
     if (!isTerminalHost(host)) return;
-    const probe = this.sessionsIn(hwnd, external);
+    this.deps.log('info', 'terminal window drag started', { host, claudesElsewhere: external.length });
     const drag: Drag = {
       hwnd,
       sessions: null,
-      probe,
+      probing: null,
+      lastProbe: 0,
       hovered: null,
       timer: setInterval(() => this.track(drag), TRACK_MS),
     };
-    void probe.then((sessions) => (drag.sessions = sessions));
+    this.probe(drag);
     this.drag = drag;
   }
 
+  private probe(drag: Drag): Promise<RegistryEntry[]> {
+    if (!drag.probing) {
+      drag.lastProbe = Date.now();
+      drag.probing = this.sessionsIn(drag.hwnd).then((sessions) => {
+        drag.sessions = sessions;
+        drag.probing = null;
+        return sessions;
+      });
+    }
+    return drag.probing;
+  }
+
   private track(drag: Drag): void {
-    if (!drag.sessions?.length) return; // not (yet) known to hold a claude
     const point = screen.getCursorScreenPoint();
     const over = this.deps.windowAt(point) ?? null;
+    if (!drag.sessions?.length) {
+      // Windows Terminal may move a torn-out tab's console to its new window only after a moment: ask again.
+      if (over && drag.sessions && Date.now() - drag.lastProbe > REPROBE_MS) void this.probe(drag);
+      return;
+    }
     if (drag.hovered && drag.hovered !== over) this.emit('hover', drag.hovered, null);
     drag.hovered = over;
     if (over) this.emit('hover', over, point);
@@ -107,7 +131,10 @@ export class ForeignWindowWatcher extends EventEmitter<Events> {
     this.cancel();
     const point = screen.getCursorScreenPoint();
     const windowId = this.deps.windowAt(point);
-    const sessions = await drag.probe;
+    let sessions = drag.sessions ?? (await this.probe(drag));
+    // Dropped on us with nothing found yet: one more look, now that the window has settled.
+    if (windowId && sessions.length === 0) sessions = await this.sessionsIn(hwnd);
+    this.deps.log('info', 'terminal window drag ended', { overReframe: !!windowId, sessions: sessions.length });
     if (!windowId || sessions.length === 0) return;
     this.emit('drop', { hwnd, title: this.deps.win32.title(hwnd), windowId, point, sessions });
   }

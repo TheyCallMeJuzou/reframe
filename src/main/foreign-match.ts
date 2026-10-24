@@ -53,6 +53,22 @@ export function pidsInWindow(hwnd: string, owners: ConsoleOwner[]): number[] {
   return owners.filter((o) => o.consoleWindow === hwnd || o.owner === hwnd || o.rootOwner === hwnd).map((o) => o.pid);
 }
 
+/**
+ * Pids of the claudes in the dragged window `hwnd`. A tab torn out of a Windows Terminal window lands in a new
+ * window, while its console may still name the old window for a moment, which is gone if that was its last tab:
+ * a live claude whose window is gone has moved into the window being dragged.
+ */
+export function pidsForDrop(hwnd: string, owners: ConsoleOwner[], isWindow: (hwnd: string) => boolean): number[] {
+  const direct = pidsInWindow(hwnd, owners);
+  if (direct.length > 0) return direct;
+  return owners
+    .filter((o) => {
+      const window = o.owner ?? o.consoleWindow;
+      return !!window && !isWindow(window);
+    })
+    .map((o) => o.pid);
+}
+
 /** Whether nothing but shells runs in a console (an empty list means the console is already gone). */
 export function onlyShells(processes: AttachedProcess[]): boolean {
   return processes.every((p) => isShell(p.name));

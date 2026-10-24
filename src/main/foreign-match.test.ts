@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { activeByTitle, isTerminalHost, onlyShells, pidsInWindow } from './foreign-match';
+import { activeByTitle, isTerminalHost, onlyShells, pidsForDrop, pidsInWindow } from './foreign-match';
 
 describe('foreign terminal windows', () => {
   it('recognizes terminal hosts regardless of case', () => {
@@ -19,6 +19,17 @@ describe('foreign terminal windows', () => {
     expect(pidsInWindow('500', owners)).toEqual([1]);
     expect(pidsInWindow('700', owners)).toEqual([3]);
     expect(pidsInWindow('999', owners)).toEqual([]);
+  });
+
+  it('finds a torn-out tab by the window its console still names, which is gone', () => {
+    const owners = [
+      { pid: 1, consoleWindow: '100', owner: '500', rootOwner: '500' }, // tab in a window that still exists
+      { pid: 2, consoleWindow: '200', owner: '600', rootOwner: '600' }, // tab whose window just closed
+    ];
+    const exists = (hwnd: string) => hwnd !== '600';
+    expect(pidsForDrop('900', owners, exists)).toEqual([2]);
+    expect(pidsForDrop('500', owners, exists)).toEqual([1]); // a direct match wins
+    expect(pidsForDrop('900', owners, () => true)).toEqual([]);
   });
 
   it('closes only consoles with nothing but shells left', () => {

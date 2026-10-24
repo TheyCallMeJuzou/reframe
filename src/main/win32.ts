@@ -9,6 +9,8 @@ export interface Win32 {
   /** Executable file name of a process, e.g. "WindowsTerminal.exe". */
   imageName(pid: number): string | null;
   title(hwnd: string): string;
+  /** Whether the window still exists. */
+  isWindow(hwnd: string): boolean;
 }
 
 let instance: Win32 | null = null;
@@ -32,6 +34,7 @@ function load(): Win32 {
     'uint32_t __stdcall GetWindowThreadProcessId(void* hwnd, _Out_ uint32_t* pid)',
   );
   const GetWindowTextW = user32.func('int __stdcall GetWindowTextW(void* hwnd, _Out_ uint16_t* text, int max)');
+  const IsWindow = user32.func('bool __stdcall IsWindow(void* hwnd)');
   const OpenProcess = kernel32.func('void* __stdcall OpenProcess(uint32_t access, bool inherit, uint32_t pid)');
   const QueryFullProcessImageNameW = kernel32.func(
     'bool __stdcall QueryFullProcessImageNameW(void* process, uint32_t flags, _Out_ uint16_t* name, _Inout_ uint32_t* size)',
@@ -82,6 +85,9 @@ function load(): Win32 {
       } finally {
         CloseHandle(target);
       }
+    },
+    isWindow(hwnd) {
+      return IsWindow(toHandle(hwnd));
     },
     title(hwnd) {
       const buffer = new Uint16Array(512);
