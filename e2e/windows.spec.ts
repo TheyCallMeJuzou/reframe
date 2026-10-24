@@ -46,6 +46,13 @@ test('tiles move between windows, empty windows close, all windows come back', a
     await newSession(page, project, 'alpha');
     await newSession(page, project, 'beta');
     await newSession(page, project, 'gamma');
+    // Placed without a drop position: alpha on the left, beta and gamma stacked in the right column.
+    const box = async (name: string) => (await tileByLabel(page, name).boundingBox())!;
+    const [a, b, c] = [await box('alpha'), await box('beta'), await box('gamma')];
+    expect(b.x).toBeGreaterThan(a.x + a.width / 2);
+    expect(Math.abs(c.x - b.x)).toBeLessThan(2);
+    expect(c.y).toBeGreaterThan(b.y + b.height / 2);
+    expect(a.height).toBeGreaterThan(b.height * 1.5);
     const alpha = byName('alpha').id;
     const beta = byName('beta').id;
     const gamma = byName('gamma').id;

@@ -46,12 +46,30 @@ describe('insertTile', () => {
     expect(shape(insertTile(null, 'a'))).toBe('a');
   });
 
-  it('appends to the end of the top row without a target', () => {
+  it('without a target: the second goes right of the first, every further one below in the right column', () => {
     let root = insertTile(null, 'a');
     root = insertTile(root, 'b');
+    expect(shape(root)).toBe('row(a, b)');
+    expect(sizesOf(root)).toEqual([50, 50]);
     root = insertTile(root, 'c');
-    expect(shape(root)).toBe('row(a, b, c)');
-    expect(sizesOf(root)).toEqual([33.3, 33.3, 33.3]);
+    root = insertTile(root, 'd');
+    expect(shape(root)).toBe('row(a, col(b, c, d))');
+    expect(sizesOf(root)).toEqual([50, 50]);
+    expect(sizesOf((root as SplitNode).children[1]!)).toEqual([33.3, 33.3, 33.3]);
+  });
+
+  it('stacks in the rightmost column of a layout the user built, keeping its proportions', () => {
+    expect(shape(appendNode(split('row', [tile('a'), tile('b'), tile('c')]), tile('x')))).toBe('row(a, b, col(c, x))');
+    expect(shape(appendNode(split('col', [tile('a'), tile('b')]), tile('x')))).toBe('col(a, b, x)');
+    const resized = appendNode(split('row', [tile('a'), split('col', [tile('b'), tile('c')], [70, 30])]), tile('x'));
+    expect(sizesOf((resized as SplitNode).children[1]!)).toEqual([46.7, 20, 33.3]);
+  });
+
+  it('puts a new tile below a group on the right, not into it', () => {
+    const G = { id: 'g', name: 'G', color: '#f00' };
+    const root = groupTile(split('row', [tile('a'), tile('b')]), 'b', G);
+    expect(shape(appendNode(root, tile('x')))).toBe('row(a, col(group(b), x))');
+    expect(shape(appendNode(groupTile(tile('a'), 'a', G), tile('x')))).toBe('row(group(a), x)');
   });
 
   it('places a tile on each side of a target', () => {

@@ -145,15 +145,30 @@ export function insertNode(
   return appendNode(root, node);
 }
 
-/** Adds a node at the end of the top level, sharing space evenly with the existing columns. */
+/**
+ * Adds a node where new tiles go when no place is given: the first fills the window, the second comes to its
+ * right (half and half), and every further one at the bottom of the rightmost column. That rule also holds for
+ * a layout the user built: a single tile on the right becomes a column; a group there gets the node below it,
+ * not into it.
+ */
 export function appendNode(root: LayoutNode | null, node: LayoutNode): LayoutNode {
   if (!root) return node;
   if (root.kind === 'split' && root.dir === 'row') {
-    const n = root.children.length;
-    const sizes = [...scaleTo100(root.sizes).map((s) => (s * n) / (n + 1)), 100 / (n + 1)];
-    return normalize({ ...root, children: [...root.children, node], sizes });
+    const last = root.children[root.children.length - 1]!;
+    return normalize({ ...root, children: [...root.children.slice(0, -1), stackBelow(last, node)] });
   }
+  if (root.kind === 'split' && root.dir === 'col') return stackBelow(root, node);
   return normalize({ kind: 'split', id: newId(), dir: 'row', children: [root, node], sizes: [50, 50] });
+}
+
+/** `node` at the bottom of `column` (made one if needed); the heights there keep their proportions. */
+function stackBelow(column: LayoutNode, node: LayoutNode): LayoutNode {
+  if (column.kind === 'split' && column.dir === 'col') {
+    const n = column.children.length;
+    const sizes = [...scaleTo100(column.sizes).map((s) => (s * n) / (n + 1)), 100 / (n + 1)];
+    return normalize({ ...column, children: [...column.children, node], sizes });
+  }
+  return { kind: 'split', id: newId(), dir: 'col', children: [column, node], sizes: [50, 50] };
 }
 
 export function insertTile(root: LayoutNode | null, sessionId: string, target?: DropTarget): LayoutNode {
