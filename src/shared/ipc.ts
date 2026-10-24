@@ -164,6 +164,8 @@ export interface ReframeApi {
   onOpenNewSession(listener: () => void): () => void;
   /** Opens an http(s) link from a terminal in the default browser. */
   openExternal(url: string): void;
+  /** Opens a new, empty window next to this one. */
+  newWindow(): void;
   /** Moves a tile or group from another window into this one. */
   transferNode(request: TransferRequest): void;
   /** A drag ended without a drop target; if the pointer is outside every window, the node gets a new window. */
@@ -209,6 +211,7 @@ export const IPC = {
   openNewSession: 'reframe:open-new-session',
   openExternal: 'reframe:open-external',
   transferNode: 'reframe:transfer-node',
+  newWindow: 'reframe:new-window',
   tearOut: 'reframe:tear-out',
   tileMenu: 'reframe:tile-menu',
   groupMenu: 'reframe:group-menu',

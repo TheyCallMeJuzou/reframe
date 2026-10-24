@@ -16,13 +16,27 @@
 - **All sessions in view.** Every session is a tile, and all tiles are visible at once: the first on the left, the next ones stacked on the right. Drag a tile's header onto another tile's edge to split next to it; the drop zone shows where it lands.
 - **Out of the way when you want.** The arrow in a tile's corner collapses it into the side bar; a click puts it back where it was.
 - **Groups.** Put tiles into a group (right-click a tile, or drag it onto a group): a colored frame with a name. A group collapses, moves and leaves the window as one; dissolve it or end all its sessions from its menu.
-- **Several windows.** Drag a tile or a group out of the window and it gets a window of its own; drag it back, or into another window, whenever you like.
+- **Several windows.** Open a new, empty window (toolbar, tray or Ctrl+Shift+N), or drag a tile or a group out of the window and it gets a window of its own; drag it back, or into another window, whenever you like.
 - **Session list.** The side bar on the left lists the sessions in reframe, the ones running in other terminals and your recent Claude Code sessions, with search. Click or drag one to open it: ended sessions resume, and sessions running elsewhere are taken over (ended there, continued here, history and name included).
 - **Pull terminal windows in** (Windows). Drag a Windows Terminal or console window (or just a tab of it) with a running `claude` onto reframe: after a short confirmation the session continues in reframe, at the spot you dropped it, and the terminal tab closes if nothing else runs in it.
 - **Nothing gets lost.** Every change is saved right away. Quitting from the tray ends the sessions cleanly, and the next start resumes each one (`claude --resume`) in its folder, in its place.
 - **Runs in the background.** Closing a window only hides it: sessions keep working, and you get a notification when Claude is done or needs you, unless you are looking at it anyway.
 - **Starts with the system** if you like (tray menu), quietly in the tray, and **updates itself** from GitHub Releases.
 - English and German, following the system language.
+
+## Keyboard shortcuts
+
+On macOS, use Cmd instead of Ctrl. Everything else goes to Claude Code as usual.
+
+| Shortcut              | What it does                                                               |
+| --------------------- | -------------------------------------------------------------------------- |
+| Ctrl+1 … 9            | Focus the first … ninth tile in the window                                 |
+| Ctrl+Shift+Arrow keys | Focus the neighboring tile in that direction                               |
+| Ctrl+Shift+M          | Collapse the focused tile; without a focused tile, bring back the last one |
+| Ctrl+Shift+L          | Show or hide the session list (and search it)                              |
+| Ctrl+Shift+T          | New session                                                                |
+| Ctrl+Shift+N          | New window                                                                 |
+| Ctrl+C / Ctrl+V       | Copy the selection (otherwise Ctrl+C goes to Claude) / paste               |
 
 ## Install
 

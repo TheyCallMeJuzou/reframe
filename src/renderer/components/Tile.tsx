@@ -7,7 +7,7 @@ import { StatusDot } from './StatusDot';
 
 /** A session's tile; `group` is the group it sits in, if any. */
 export function Tile({ sessionId, group }: { sessionId: string; group: GroupNode | null }) {
-  const { t, windowId, sessions, terminals, dragging, setDragging } = useApp();
+  const { t, keys, windowId, sessions, terminals, dragging, setDragging } = useApp();
   const session = sessions[sessionId];
   const slot = useRef<HTMLDivElement>(null);
   const tileRef = useRef<HTMLElement>(null);
@@ -74,7 +74,7 @@ export function Tile({ sessionId, group }: { sessionId: string; group: GroupNode
       >
         <button
           className="icon-button"
-          title={t('tile.collapse')}
+          title={`${t('tile.collapse')} (${keys('M')})`}
           aria-label={t('tile.collapse')}
           onClick={() => window.reframe.dispatch({ type: 'tile/collapse', sessionId })}
         >

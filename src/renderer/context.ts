@@ -13,6 +13,8 @@ export interface DragState {
 }
 
 export interface AppContextValue {
+  /** "Ctrl+Shift+T" and the like, for hints. */
+  keys: (key: string, shift?: boolean) => string;
   t: Translate;
   locale: Locale;
   windowId: string;

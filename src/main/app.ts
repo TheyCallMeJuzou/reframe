@@ -262,6 +262,25 @@ export class ReframeApp {
     this.refreshTray();
   }
 
+  /**
+   * A new, empty window, a little offset from `nearId`'s window. It stays until something leaves it empty again
+   * (like a window a tile was torn out into) and comes back after a restart like any other.
+   */
+  newWindow(nearId?: string): string {
+    const near =
+      this.windows.get(nearId ?? '')?.getBounds() ?? this.windows.get(this.state.windows[0]!.id)?.getBounds();
+    const win: WindowState = {
+      ...emptyWindow(crypto.randomUUID()),
+      bounds: near ? { ...near, x: near.x + 40, y: near.y + 40 } : null,
+    };
+    this.state = { ...this.state, windows: [...this.state.windows, win] };
+    this.save();
+    this.log('info', 'new window', { window: win.id });
+    this.windows.open(win);
+    this.refreshTray();
+    return win.id;
+  }
+
   /** Gives a tile or group a window of its own at a screen point, unless the point is over one of our windows. */
   private tearOut(fromId: string, key: string, point: { x: number; y: number }, size?: TileSize): boolean {
     const from = this.findWindow(fromId);
@@ -875,6 +894,8 @@ export class ReframeApp {
         this.windows.show(id);
         this.windows.send(id, IPC.openNewSession, null);
       },
+      newWindowLabel: t('tray.newWindow'),
+      newWindow: () => this.newWindow(),
       autostartLabel: t('tray.autostart'),
       autostart: () => {
         try {
@@ -969,6 +990,7 @@ export class ReframeApp {
       if (request.target !== null && !isDropTarget(request.target)) return;
       this.transferNode(id, { key: request.key, fromWindowId: request.fromWindowId, target: request.target });
     });
+    ipcMain.on(IPC.newWindow, (event) => this.newWindow(windowId(event)));
     ipcMain.on(IPC.tearOut, (event, key: unknown, size: Partial<TileSize> | null) => {
       const id = windowId(event);
       if (!id || typeof key !== 'string') return;

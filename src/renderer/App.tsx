@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ForeignDropRequest, WindowView } from '@shared/ipc';
 import type { DropTarget } from '@shared/layout';
 import { AppContext, makeTranslate, type AppContextValue, type DragState } from './context';
@@ -7,9 +7,23 @@ import type { TerminalRegistry } from './terminals';
 import { DockStrip } from './components/DockStrip';
 import { NewSessionDialog } from './components/NewSessionDialog';
 import { LayoutView } from './components/SplitView';
-import { ListIcon, PlusIcon } from './components/icons';
+import { ListIcon, PlusIcon, WindowIcon } from './components/icons';
+import { neighbor, type Box } from './focus-nav';
+import { shortcutFor, shortcutLabel, type Shortcut } from './shortcuts';
 import { SessionSidebar } from './components/SessionSidebar';
 import { TakeoverDialog } from './components/TakeoverDialog';
+
+const MAC = navigator.userAgent.includes('Mac');
+
+const tileIds = () =>
+  [...document.querySelectorAll<HTMLElement>('.layout .tile[data-session]')].map((el) => el.dataset.session!);
+const activeTile = () => document.activeElement?.closest<HTMLElement>('.tile[data-session]')?.dataset.session ?? null;
+
+/** Runs `action` once `selector` is on the page (it may only appear with the next view), giving up after a while. */
+function whenShown(selector: string, action: () => void, frames = 60): void {
+  if (document.querySelector(selector)) return action();
+  if (frames > 0) requestAnimationFrame(() => whenShown(selector, action, frames - 1));
+}
 
 export function App({ terminals }: { terminals: TerminalRegistry }) {
   const [view, setView] = useState<WindowView | null>(null);
@@ -38,6 +52,79 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
   useEffect(() => {
     if (view) terminals.retain(new Set(Object.keys(view.sessions)));
   }, [view, terminals]);
+
+  // Keyboard shortcuts, caught before the terminal (or anything else) sees the key.
+  const viewRef = useRef(view);
+  useEffect(() => {
+    viewRef.current = view;
+  }, [view]);
+  const focusTile = useCallback(
+    (sessionId: string) =>
+      whenShown(`.tile[data-session="${CSS.escape(sessionId)}"]`, () => terminals.focus(sessionId)),
+    [terminals],
+  );
+  const runShortcut = useCallback(
+    (shortcut: Shortcut) => {
+      const current = viewRef.current;
+      if (!current) return;
+      const ids = tileIds();
+      switch (shortcut.kind) {
+        case 'focusTile': {
+          const id = ids[shortcut.index];
+          if (id) terminals.focus(id);
+          return;
+        }
+        case 'focusDirection': {
+          const from = activeTile();
+          if (!from) return void (ids[0] && terminals.focus(ids[0]));
+          const boxes: Box[] = ids.map((id) => {
+            const rect = document.querySelector(`.tile[data-session="${CSS.escape(id)}"]`)!.getBoundingClientRect();
+            return { id, x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+          });
+          const next = neighbor(boxes, from, shortcut.direction);
+          if (next) terminals.focus(next);
+          return;
+        }
+        case 'newSession':
+          return setDialogOpen(true);
+        case 'newWindow':
+          return window.reframe.newWindow();
+        case 'toggleCollapse': {
+          // In a tile: collapse it. Otherwise: bring back the one collapsed last.
+          const active = activeTile();
+          if (active) return window.reframe.dispatch({ type: 'tile/collapse', sessionId: active });
+          const last = current.dock[current.dock.length - 1];
+          if (last?.kind === 'tile') {
+            window.reframe.dispatch({ type: 'tile/expand', sessionId: last.sessionId });
+            focusTile(last.sessionId);
+          } else if (last?.kind === 'group') {
+            window.reframe.dispatch({ type: 'group/expand', groupId: last.node.id });
+          }
+          return;
+        }
+        case 'toggleSidebar': {
+          const open = !current.sidebarOpen;
+          window.reframe.dispatch({ type: 'window/sidebar', open });
+          if (open)
+            whenShown('.sidebar-search', () => document.querySelector<HTMLInputElement>('.sidebar-search')?.focus());
+          return;
+        }
+      }
+    },
+    [terminals, focusTile],
+  );
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (document.querySelector('.modal')) return; // dialogs keep their keys
+      const shortcut = shortcutFor(event, MAC);
+      if (!shortcut) return;
+      event.preventDefault();
+      event.stopPropagation();
+      runShortcut(shortcut);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [runShortcut]);
 
   useEffect(
     () =>
@@ -123,6 +210,10 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
     () =>
       view && {
         t: makeTranslate(view.locale),
+        keys: (key: string, shift = true) => {
+          const t = makeTranslate(view.locale);
+          return shortcutLabel(key, { ctrl: t('keys.ctrl'), shift: t('keys.shift') }, MAC, shift);
+        },
         locale: view.locale,
         windowId: view.windowId,
         sessions: view.sessions,
@@ -136,23 +227,36 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
   );
 
   if (!view || !context) return null;
-  const { t } = context;
+  const { t, keys } = context;
 
   return (
     <AppContext.Provider value={context}>
       <div className="app">
         <div className="toolbar">
-          <button className="button toolbar-button" onClick={() => setDialogOpen(true)}>
+          <button
+            className="button toolbar-button"
+            title={`${t('toolbar.newSession')} (${keys('T')})`}
+            onClick={() => setDialogOpen(true)}
+          >
             <PlusIcon />
             {t('toolbar.newSession')}
           </button>
           <button
             className={`button toolbar-button${view.sidebarOpen ? ' is-active' : ''}`}
             aria-pressed={view.sidebarOpen}
+            title={`${t('toolbar.sessions')} (${keys('L')})`}
             onClick={() => window.reframe.dispatch({ type: 'window/sidebar', open: !view.sidebarOpen })}
           >
             <ListIcon />
             {t('toolbar.sessions')}
+          </button>
+          <button
+            className="button toolbar-button"
+            title={`${t('toolbar.newWindow')} (${keys('N')})`}
+            onClick={() => window.reframe.newWindow()}
+          >
+            <WindowIcon />
+            {t('toolbar.newWindow')}
           </button>
         </div>
         <div className="workspace">

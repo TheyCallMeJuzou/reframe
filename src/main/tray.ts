@@ -16,6 +16,8 @@ export interface TrayActions {
   toggleWindow: (id: string, visible: boolean) => void;
   showPrimary: () => void;
   newSession: () => void;
+  newWindowLabel: string;
+  newWindow: () => void;
   autostartLabel: string;
   autostart: () => boolean;
   setAutostart: (enabled: boolean) => void;
@@ -42,6 +44,7 @@ export function createTray(icon: string, icon2x: string, actions: TrayActions): 
         })),
         { type: 'separator' },
         { label: actions.newSessionLabel, click: actions.newSession },
+        { label: actions.newWindowLabel, click: actions.newWindow },
         { type: 'separator' },
         {
           label: actions.autostartLabel,

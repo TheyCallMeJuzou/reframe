@@ -29,6 +29,7 @@ const api: ReframeApi = {
   onOpenNewSession: (listener) => subscribe<null>(IPC.openNewSession, () => listener()),
   openExternal: (url) => ipcRenderer.send(IPC.openExternal, url),
   transferNode: (request) => ipcRenderer.send(IPC.transferNode, request),
+  newWindow: () => ipcRenderer.send(IPC.newWindow),
   tearOut: (key, size) => ipcRenderer.send(IPC.tearOut, key, size),
   showTileMenu: (sessionId) => ipcRenderer.send(IPC.tileMenu, sessionId),
   showGroupMenu: (groupId) => ipcRenderer.send(IPC.groupMenu, groupId),

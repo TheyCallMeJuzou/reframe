@@ -13,6 +13,13 @@ export const CloseIcon = () => (
   </svg>
 );
 
+export const WindowIcon = () => (
+  <svg {...base} aria-hidden="true">
+    <rect x="2.5" y="3" width="11" height="10" rx="1.5" />
+    <path d="M2.5 6h11" />
+  </svg>
+);
+
 export const PlusIcon = () => (
   <svg {...base} aria-hidden="true">
     <path d="M8 3v10M3 8h10" strokeLinecap="round" />
