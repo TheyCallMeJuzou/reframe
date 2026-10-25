@@ -10,6 +10,11 @@
 </p>
 
 <p align="center">
+  <a href="https://theycallmejuzou.github.io/reframe/">Website</a> ·
+  <a href="https://theycallmejuzou.github.io/reframe/download.html">Download</a>
+</p>
+
+<p align="center">
   <img src="docs/screenshots/hero.png" alt="reframe with a workspace: a group of four sessions, two more tiles, and the session list with saved workspaces">
   <br>
   <sub>The pictures show made-up projects and sessions.</sub>
@@ -42,7 +47,7 @@
 - **Nothing gets lost.** Every change is saved right away. Quitting from the tray ends the sessions cleanly, and the next start resumes each one (`claude --resume`) in its folder, in its place.
 - **Runs in the background.** Closing a window only hides it: sessions keep working, and you get a notification when Claude is done or needs you, unless you are looking at it anyway.
 - **Starts with the system** if you like (tray menu), quietly in the tray, and **updates itself** from GitHub Releases.
-- **Settings** (the ⚙ in the toolbar, or Ctrl+,): the language (English or German, or the system's), the text size, and snapping to the grid.
+- **Settings** (the ⚙ in the toolbar, or Ctrl+,): the language (English or German, or the system's), the text size, snapping to the grid, and checking for updates.
 
 ## Keyboard shortcuts
 
@@ -63,7 +68,7 @@ On macOS, use Cmd instead of Ctrl. Everything else goes to Claude Code as usual.
 
 ## Install
 
-Download the installer for your system from [Releases](https://github.com/TheyCallMeJuzou/reframe/releases). You need [Claude Code](https://claude.com/claude-code) installed and logged in (`claude` on your `PATH`). On Windows, sessions in a WSL folder use the Claude Code installed in that distribution instead.
+Download the installer for your system from the [website](https://theycallmejuzou.github.io/reframe/download.html) or [Releases](https://github.com/TheyCallMeJuzou/reframe/releases). You need [Claude Code](https://claude.com/claude-code) installed and logged in (`claude` on your `PATH`). On Windows, sessions in a WSL folder use the Claude Code installed in that distribution instead.
 
 The builds are not code-signed yet, so the first start needs a confirmation:
 
@@ -78,6 +83,15 @@ The builds are not code-signed yet, so the first start needs a confirmation:
 | macOS    | Built in CI, not tested yet. Pulling terminal windows in is not available yet (use the session list to take sessions over).        |
 | Linux    | Built in CI, not tested yet. Pulling terminal windows in is not available yet (planned for X11; on Wayland only the session list). |
 
+### Uninstall
+
+If you let reframe start with the system, turn that off in the tray menu first (from version 0.6.0 on, the Windows uninstaller does it for you). reframe never changes Claude Code's own settings files, so there is nothing to undo there.
+
+- **Windows**: _Settings_ → _Apps_ → _Installed apps_ → reframe → _Uninstall_. Your sessions, windows and settings stay in `%APPDATA%\reframe`; delete that folder to remove them too.
+- **Windows, portable**: quit reframe and delete its folder (its data is inside).
+- **macOS**: quit reframe and move it from Applications to the Trash. Its data is in `~/Library/Application Support/reframe`.
+- **Linux**: delete the AppImage, or remove the package (`sudo apt remove reframe`). Its data is in `~/.config/reframe`.
+
 ## Code signing policy
 
 The Windows releases are going to be signed through the SignPath Foundation's free code signing for open source projects (being set up; until then they are unsigned, see [Install](#install)).
@@ -85,14 +99,16 @@ The Windows releases are going to be signed through the SignPath Foundation's fr
 Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
 
 - **What gets signed**: the Windows installer and `reframe.exe` in the portable ZIP, built by the [release workflow](.github/workflows/release.yml) on GitHub Actions from this repository's tagged source. Each release is signed only after an approver has approved it.
-- **Committers and reviewers**: [TheyCallMeJuzou](https://github.com/TheyCallMeJuzou)
+- **Committers and reviewers**: [TheyCallMeJuzou](https://github.com/TheyCallMeJuzou). Changes from anyone else come as pull requests and are merged only after a review.
 - **Approvers**: [TheyCallMeJuzou](https://github.com/TheyCallMeJuzou)
+
+The policy and the privacy policy below are also on the [website](https://theycallmejuzou.github.io/reframe/code-signing.html).
 
 ### Privacy
 
 reframe collects nothing about you and sends nothing about you or your sessions anywhere. Its own use of the network:
 
-- **Updates**: half a minute after starting and then every six hours, reframe asks [this repository's releases](https://github.com/TheyCallMeJuzou/reframe/releases) on GitHub whether there is a newer version. That is a plain web request, as when you open the page in a browser (GitHub sees your IP address, see [GitHub's privacy statement](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement)). The installed Windows app and the AppImage then download the new version from there.
+- **Updates**: half a minute after starting and then every six hours, reframe asks [this repository's releases](https://github.com/TheyCallMeJuzou/reframe/releases) on GitHub whether there is a newer version. That is a plain web request, as when you open the page in a browser (GitHub sees your IP address, see [GitHub's privacy statement](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement)). The installed Windows app and the AppImage then download the new version from there. You can turn this off in Settings (_Check for updates_, from version 0.6.0 on).
 - **Links** you click (for example in About) open in your browser.
 
 Claude Code, which reframe starts for you, talks to Anthropic the way you have set it up; for that, [Anthropic's privacy policy](https://www.anthropic.com/legal/privacy) applies.
@@ -148,3 +164,5 @@ Design notes and findings (German): [docs/PLAN.md](docs/PLAN.md), [docs/PHASE0-F
 ## License
 
 [MIT](LICENSE) © reframe Team
+
+reframe is an independent open source project, not affiliated with or endorsed by Anthropic. Claude and Claude Code are trademarks of Anthropic.

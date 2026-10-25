@@ -57,6 +57,7 @@ It builds reframe and starts it a few times with demo sessions in a throwaway pr
 | `e2e/`              | End-to-end tests                                                                              |
 | `screenshots/`      | The script that takes the README's pictures                                                   |
 | `docs/`             | Plan, findings, release notes for maintainers, logo, screenshots                              |
+| `site/`             | The website on GitHub Pages (built by `scripts/site.mjs`, see docs/RELEASING.md)              |
 
 [docs/PLAN.md](docs/PLAN.md) and [docs/PHASE0-FINDINGS.md](docs/PHASE0-FINDINGS.md) (German) explain the design and what was learned about Claude Code, ConPTY and Windows along the way.
 
