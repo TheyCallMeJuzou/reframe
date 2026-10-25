@@ -9,6 +9,8 @@ type Events = {
   bounds: [windowId: string, bounds: Bounds, maximized: boolean];
   visibility: [windowId: string, hidden: boolean];
   fullscreen: [windowId: string, fullscreen: boolean];
+  /** Windows is shutting down, restarting or logging off (it asks every window first, then tells them). */
+  systemEnding: [];
 };
 
 const DEFAULT_SIZE = { width: 1280, height: 800 };
@@ -77,6 +79,8 @@ export class WindowManager extends EventEmitter<Events> {
     win.on('enter-full-screen', () => this.emit('fullscreen', state.id, true));
     win.on('leave-full-screen', () => this.emit('fullscreen', state.id, false));
     win.on('closed', () => this.windows.delete(state.id));
+    win.on('query-session-end', () => this.emit('systemEnding'));
+    win.on('session-end', () => this.emit('systemEnding'));
 
     // Never navigate away from the app or open other windows from page content.
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));

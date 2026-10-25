@@ -9,6 +9,7 @@ import {
   dialog,
   ipcMain,
   Notification,
+  powerMonitor,
   screen,
   shell,
   type BrowserWindow,
@@ -111,6 +112,8 @@ export interface AppAssets {
 }
 
 const MAX_RECENT_FOLDERS = 8;
+/** How long after the system said it is going down sessions that end still count as ended by it. */
+const SYSTEM_ENDING_MS = 60_000;
 
 export class ReframeApp {
   private store = new StateStore(path.join(app.getPath('userData'), 'state.json'));
@@ -174,10 +177,14 @@ export class ReframeApp {
     this.sessions.on('changed', (id) => this.pushSession(id));
     this.sessions.on('identity', (id, patch) => this.updateIdentity(id, patch));
     this.sessions.on('notify', (id, kind) => this.notify(id, kind));
-    this.sessions.on('ended', (id) => this.updateSession(id, { lifecycle: 'ended' }));
+    this.sessions.on('ended', (id) => this.sessionEnded(id));
     await this.sessions.cleanupOrphans(Object.values(this.state.sessions));
 
     this.registerIpc();
+    // Told first when the system goes down, before it closes the claudes, which then must not count as ended.
+    win32()?.shutDownFirst();
+    this.windows.on('systemEnding', () => this.systemEnding());
+    if (process.platform !== 'win32') powerMonitor.on('shutdown', () => this.systemEnding());
     this.openWindows(hidden);
     this.watchForeignWindows();
     this.resumeSessions();
@@ -221,6 +228,36 @@ export class ReframeApp {
     this.hooks.stop();
     this.save();
     this.log('info', 'reframe stopped');
+  }
+
+  /**
+   * The system is shutting down, restarting or logging off. Sessions it ends now were not ended by the user: they
+   * stay open and resume on the next start. Should the system not go down after all (another program objected),
+   * the ones that ended meanwhile count as ended a minute later.
+   */
+  systemEnding(): void {
+    if (!this.systemEndingTimer) this.log('info', 'the system is going down, sessions it ends stay open');
+    clearTimeout(this.systemEndingTimer);
+    this.systemEndingTimer = setTimeout(() => {
+      this.systemEndingTimer = undefined;
+      for (const id of this.endedWhileSystemEnding) {
+        if (!this.sessions.isRunning(id)) this.updateSession(id, { lifecycle: 'ended' });
+      }
+      this.endedWhileSystemEnding.clear();
+    }, SYSTEM_ENDING_MS);
+    this.save();
+  }
+  private systemEndingTimer: NodeJS.Timeout | undefined;
+  private endedWhileSystemEnding = new Set<string>();
+
+  /** A session ended by itself (not by reframe): it stays in its tile as ended, unless the system ended it. */
+  private sessionEnded(sessionId: string): void {
+    if (this.systemEndingTimer) {
+      this.endedWhileSystemEnding.add(sessionId);
+      this.log('info', 'session ended while the system goes down, stays open', { session: sessionId });
+      return;
+    }
+    this.updateSession(sessionId, { lifecycle: 'ended' });
   }
 
   // ---------- windows and views ----------

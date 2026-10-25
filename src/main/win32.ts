@@ -19,6 +19,8 @@ export interface Win32 {
   isWindow(hwnd: string): boolean;
   /** Files copied in Explorer (or another file manager) that are on the clipboard. */
   clipboardFiles(): string[];
+  /** Has Windows close reframe before other programs (its claudes among them) when it shuts down or logs off. */
+  shutDownFirst(): void;
 }
 
 let instance: Win32 | null = null;
@@ -52,6 +54,9 @@ function load(): Win32 {
     'bool __stdcall QueryFullProcessImageNameW(void* process, uint32_t flags, _Out_ uint16_t* name, _Inout_ uint32_t* size)',
   );
   const CloseHandle = kernel32.func('bool __stdcall CloseHandle(void* handle)');
+  const SetProcessShutdownParameters = kernel32.func(
+    'bool __stdcall SetProcessShutdownParameters(uint32_t level, uint32_t flags)',
+  );
   const shell32 = koffi.load('shell32.dll');
   const IsClipboardFormatAvailable = user32.func('bool __stdcall IsClipboardFormatAvailable(uint32_t format)');
   const OpenClipboard = user32.func('bool __stdcall OpenClipboard(void* owner)');
@@ -71,6 +76,8 @@ function load(): Win32 {
   const OBJID_WINDOW = 0;
   const PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
   const CF_HDROP = 15;
+  // Programs start at 0x280; 0x300 to 0x3FF is the range of programs Windows closes first.
+  const SHUTDOWN_LEVEL_FIRST = 0x300;
 
   const toHandle = (hwnd: string) => BigInt(hwnd);
   const callbacks: unknown[] = []; // keeps registered callbacks alive
@@ -134,6 +141,9 @@ function load(): Win32 {
     },
     isWindow(hwnd) {
       return IsWindow(toHandle(hwnd));
+    },
+    shutDownFirst() {
+      SetProcessShutdownParameters(SHUTDOWN_LEVEL_FIRST, 0);
     },
     clipboardFiles() {
       if (!IsClipboardFormatAvailable(CF_HDROP) || !OpenClipboard(null)) return [];
