@@ -169,7 +169,12 @@ export function NewSessionDialog({ onClose }: { onClose: () => void }) {
           </label>
         </details>
 
-        {error && <p className="form-error">{t(`dialog.error.${error}`)}</p>}
+        {error && (
+          <p className="form-error">
+            {t(`dialog.error.${error}`)}
+            {error === 'claudeNotFound' && window.reframe.platform === 'win32' && ` ${t('error.claudeOnlyInWsl')}`}
+          </p>
+        )}
 
         <div className="button-row end">
           <button type="button" className="button" onClick={onClose}>

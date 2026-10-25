@@ -1,5 +1,5 @@
 // End to end: the "New session" dialog names the session after its folder unless the user types a
-// name, and remembers the checkbox across dialogs and restarts.
+// name, and remembers the checkbox across dialogs and restarts. Without Claude Code it says how to get it.
 import fs from 'node:fs';
 import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
@@ -59,6 +59,29 @@ test('the session name follows the folder and the choice is remembered', async (
     await quit(app);
   } catch (error) {
     await captureWindows('dialog');
+    throw error;
+  } finally {
+    await cleanup(dir);
+  }
+});
+
+test('without Claude Code, the dialog says how to get it', async () => {
+  const { dir, project, env } = setup();
+  // No claude anywhere: no stand-in, and a PATH (whatever its spelling) without one.
+  env.REFRAME_CLAUDE_BIN = '';
+  for (const key of Object.keys(env).filter((k) => k.toUpperCase() === 'PATH')) env[key] = dir;
+  try {
+    const { app, page } = await launch(env);
+    const d = await open(page);
+    await d.folder.fill(project);
+    await d.dialog.getByRole('button', { name: 'Start' }).click();
+    const error = d.dialog.locator('.form-error');
+    await expect(error).toContainText('Install it on this computer: claude.com/claude-code');
+    if (process.platform === 'win32') await expect(error).toContainText('installed only in WSL');
+    else await expect(error).not.toContainText('WSL');
+    await quit(app);
+  } catch (error) {
+    await captureWindows('dialog-no-claude');
     throw error;
   } finally {
     await cleanup(dir);

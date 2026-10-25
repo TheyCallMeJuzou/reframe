@@ -52,7 +52,8 @@ const en = {
   'tile.startFresh': 'Start a new session here',
   'tile.error.resumeFailed': 'This session could not be resumed.',
   'tile.error.transcriptMissing': "Claude Code no longer has this session's transcript.",
-  'tile.error.claudeNotFound': 'Claude Code was not found. Is `claude` on your PATH?',
+  'tile.error.claudeNotFound':
+    'Claude Code was not found: `claude` is not on your PATH. Install it on this computer: claude.com/claude-code',
   'tile.error.spawnFailed': 'Claude Code could not be started.',
   'tile.error.folderMissing': 'The session folder no longer exists.',
   'status.starting': 'Starting',
@@ -102,7 +103,9 @@ const en = {
   'dialog.start': 'Start',
   'dialog.cancel': 'Cancel',
   'dialog.error.folderMissing': 'This folder does not exist.',
-  'dialog.error.claudeNotFound': 'Claude Code was not found. Is `claude` on your PATH?',
+  'dialog.error.claudeNotFound':
+    'Claude Code was not found: `claude` is not on your PATH. Install it on this computer: claude.com/claude-code',
+  'error.claudeOnlyInWsl': 'A Claude Code installed only in WSL is not supported yet.',
   'tray.tooltip': 'reframe',
   'tray.window': 'Window {n}',
   'tray.newSession': 'New session',
@@ -212,7 +215,8 @@ const de: Record<MessageKey, string> = {
   'tile.startFresh': 'Neue Session hier starten',
   'tile.error.resumeFailed': 'Diese Session konnte nicht fortgesetzt werden.',
   'tile.error.transcriptMissing': 'Claude Code hat das Transcript dieser Session nicht mehr.',
-  'tile.error.claudeNotFound': 'Claude Code wurde nicht gefunden. Ist `claude` im PATH?',
+  'tile.error.claudeNotFound':
+    'Claude Code wurde nicht gefunden: `claude` ist nicht im PATH. Installiere es auf diesem Computer: claude.com/claude-code',
   'tile.error.spawnFailed': 'Claude Code konnte nicht gestartet werden.',
   'tile.error.folderMissing': 'Der Ordner der Session existiert nicht mehr.',
   'status.starting': 'Startet',
@@ -262,7 +266,9 @@ const de: Record<MessageKey, string> = {
   'dialog.start': 'Starten',
   'dialog.cancel': 'Abbrechen',
   'dialog.error.folderMissing': 'Diesen Ordner gibt es nicht.',
-  'dialog.error.claudeNotFound': 'Claude Code wurde nicht gefunden. Ist `claude` im PATH?',
+  'dialog.error.claudeNotFound':
+    'Claude Code wurde nicht gefunden: `claude` ist nicht im PATH. Installiere es auf diesem Computer: claude.com/claude-code',
+  'error.claudeOnlyInWsl': 'Ein nur in WSL installiertes Claude Code wird noch nicht unterstützt.',
   'tray.tooltip': 'reframe',
   'tray.window': 'Fenster {n}',
   'tray.newSession': 'Neue Session',

@@ -163,7 +163,12 @@ export function Tile({ sessionId, group }: { sessionId: string; group: GroupNode
         {!running && (
           <div className="tile-overlay">
             <div className="tile-overlay-card">
-              <p>{session.error ? t(`tile.error.${session.error}`) : t('tile.ended')}</p>
+              <p>
+                {session.error ? t(`tile.error.${session.error}`) : t('tile.ended')}
+                {session.error === 'claudeNotFound' &&
+                  window.reframe.platform === 'win32' &&
+                  ` ${t('error.claudeOnlyInWsl')}`}
+              </p>
               <div className="button-row">
                 {session.error === 'transcriptMissing' || session.error === 'folderMissing' ? null : (
                   <button className="button primary" onClick={() => window.reframe.restartSession(sessionId)}>
