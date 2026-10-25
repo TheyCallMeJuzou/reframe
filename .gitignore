@@ -5,3 +5,4 @@ dist/
 spikes/**/output/
 test-results/
 playwright-report/
+_site/

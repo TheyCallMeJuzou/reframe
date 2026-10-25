@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>reframe – Claude Code sessions side by side</title>
+    <meta
+      name="description"
+      content="reframe is a free, open source desktop app that keeps your Claude Code sessions side by side in one window: tile and group them, take over the ones running in other terminals, and get every session back after a restart."
+    />
+    <meta property="og:title" content="reframe – Claude Code sessions side by side" />
+    <meta
+      property="og:description"
+      content="Tile and group your Claude Code sessions in one window, take over the ones running in other terminals, and get every session back after a restart."
+    />
+    <meta property="og:image" content="https://theycallmejuzou.github.io/reframe/img/social-preview.png" />
+    <meta property="og:url" content="https://theycallmejuzou.github.io/reframe/" />
+    <link rel="icon" href="img/reframe-icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="wrap">
+        <a class="brand" href="./"><img src="img/reframe-icon.svg" width="32" height="32" alt="" />reframe</a>
+        <nav>
+          <a href="download.html">Download</a>
+          <a href="code-signing.html">Code signing policy</a>
+          <a href="https://github.com/TheyCallMeJuzou/reframe">GitHub</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="wrap">
+      <section class="hero">
+        <img src="img/reframe-icon.svg" width="88" height="88" alt="reframe logo" />
+        <h1>reframe</h1>
+        <p class="lead">
+          Keep your <a href="https://claude.com/claude-code">Claude Code</a> sessions side by side in one window: tile
+          and group them, take over the ones running in other terminals, and get every session back after a restart.
+        </p>
+        <div class="actions">
+          <a class="button primary" href="download.html">Download</a>
+          <a class="button" href="https://github.com/TheyCallMeJuzou/reframe">Source code on GitHub</a>
+        </div>
+        <p class="note">Free and open source (MIT) · Windows, macOS and Linux</p>
+        <figure class="shot">
+          <img
+            src="img/hero.png"
+            width="3392"
+            height="2256"
+            alt="reframe with a workspace: a group of four sessions, two more tiles, and the session list with saved workspaces"
+          />
+          <figcaption>The pictures show made-up projects and sessions.</figcaption>
+        </figure>
+      </section>
+
+      <h2>What it does</h2>
+      <div class="features">
+        <div class="feature wide">
+          <h3>All sessions in view</h3>
+          <p>
+            Every session is a tile, and all tiles are visible at once. Drag a tile's header onto another tile's edge to
+            split next to it; separators snap to a grid as you drag them, so tiles line up.
+          </p>
+          <img
+            src="img/drag-tile.gif"
+            width="1024"
+            height="676"
+            alt="A tile dragged by its header to below another tile"
+            loading="lazy"
+          />
+        </div>
+        <div class="feature">
+          <h3>Groups</h3>
+          <p>
+            Put tiles into a group: a colored frame with a name. A group collapses, moves and leaves the window as one.
+          </p>
+        </div>
+        <div class="feature">
+          <h3>Out of the way when you want</h3>
+          <p>Collapse a tile into the side bar with one click, and put it back where it was with another.</p>
+        </div>
+        <div class="feature wide">
+          <h3>Several windows and workspaces</h3>
+          <p>
+            Drag a tile or a group out of the window and it gets a window of its own. Save a window as a workspace and
+            open it again later, with its tiles, groups and sessions.
+          </p>
+          <img
+            src="img/windows.png"
+            width="3792"
+            height="2360"
+            alt="Two reframe windows, each saved as a workspace with its own group of sessions"
+            loading="lazy"
+          />
+        </div>
+        <div class="feature">
+          <h3>Session list</h3>
+          <p>
+            The sessions in reframe, the ones running in other terminals and your recent Claude Code sessions, with
+            search. Ended sessions resume; sessions running elsewhere are taken over, history and name included.
+          </p>
+        </div>
+        <div class="feature">
+          <h3>Pull terminal windows in</h3>
+          <p>
+            On Windows, drag a Windows Terminal or console window with a running <code>claude</code> onto reframe, and
+            the session continues there, right where you dropped it.
+          </p>
+        </div>
+        <div class="feature">
+          <h3>WSL</h3>
+          <p>
+            On Windows, sessions in a folder inside WSL run the Claude Code installed in that distribution, with status,
+            notifications and resume like any other.
+          </p>
+        </div>
+        <div class="feature">
+          <h3>Nothing gets lost</h3>
+          <p>
+            Every change is saved right away. Quit, and the next start resumes each session in its folder, in its place.
+          </p>
+        </div>
+        <div class="feature wide">
+          <h3>Files and screenshots</h3>
+          <p>
+            Drop files onto a session to type in their paths (Claude Code attaches images among them), or paste a
+            screenshot from the clipboard.
+          </p>
+          <img
+            src="img/files.gif"
+            width="1024"
+            height="676"
+            alt="A screenshot dropped onto a session turns into an image for Claude Code"
+            loading="lazy"
+          />
+        </div>
+        <div class="feature">
+          <h3>Runs in the background</h3>
+          <p>
+            Closing a window only hides it: sessions keep working, and you get a notification when Claude is done or
+            needs you.
+          </p>
+        </div>
+        <div class="feature">
+          <h3>Starts with the system, updates itself</h3>
+          <p>
+            If you like, reframe starts quietly in the tray. Installed copies update themselves from GitHub Releases.
+          </p>
+        </div>
+      </div>
+
+      <h2>What you need</h2>
+      <p>
+        <a href="https://claude.com/claude-code">Claude Code</a>, installed and logged in (<code>claude</code> on your
+        <code>PATH</code>). On Windows, sessions in a WSL folder use the Claude Code installed in that distribution.
+      </p>
+      <div class="table">
+        <table>
+          <thead>
+            <tr>
+              <th>System</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Windows</td>
+              <td>Everything above; this is where reframe is developed and tested.</td>
+            </tr>
+            <tr>
+              <td>macOS</td>
+              <td>
+                Built in CI, not tested yet. Pulling terminal windows in is not available yet (use the session list to
+                take sessions over).
+              </td>
+            </tr>
+            <tr>
+              <td>Linux</td>
+              <td>
+                Built in CI, not tested yet. Pulling terminal windows in is not available yet (planned for X11; on
+                Wayland only the session list).
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p><a class="button primary" href="download.html">Download reframe</a></p>
+
+      <h2>Code signing policy</h2>
+      <p>
+        The Windows releases are going to be signed through the SignPath Foundation's free code signing for open source
+        projects (being set up; until then they are unsigned). Free code signing provided by
+        <a href="https://about.signpath.io/">SignPath.io</a>, certificate by
+        <a href="https://signpath.org/">SignPath Foundation</a>. Read the
+        <a href="code-signing.html">code signing policy</a>.
+      </p>
+    </main>
+
+    <footer class="site-footer">
+      <div class="wrap">
+        <nav>
+          <a href="download.html">Download</a>
+          <a href="code-signing.html">Code signing policy</a>
+          <a href="code-signing.html#privacy">Privacy policy</a>
+          <a href="https://github.com/TheyCallMeJuzou/reframe">GitHub</a>
+          <a href="https://github.com/TheyCallMeJuzou/reframe/blob/main/LICENSE">MIT license</a>
+        </nav>
+        <p>
+          reframe is an independent open source project, not affiliated with or endorsed by Anthropic. Claude and Claude
+          Code are trademarks of Anthropic.
+        </p>
+      </div>
+    </footer>
+  </body>
+</html>

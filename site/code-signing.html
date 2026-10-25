@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>reframe – code signing policy and privacy policy</title>
+    <meta
+      name="description"
+      content="How reframe's Windows releases are signed through the SignPath Foundation, who approves them, and what reframe does with your data."
+    />
+    <link rel="icon" href="img/reframe-icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="wrap">
+        <a class="brand" href="./"><img src="img/reframe-icon.svg" width="32" height="32" alt="" />reframe</a>
+        <nav>
+          <a href="download.html">Download</a>
+          <a href="code-signing.html" aria-current="page">Code signing policy</a>
+          <a href="https://github.com/TheyCallMeJuzou/reframe">GitHub</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="wrap">
+      <h1>Code signing policy</h1>
+      <p>
+        The Windows releases are going to be signed through the SignPath Foundation's free code signing for open source
+        projects (being set up; until then they are unsigned, see <a href="download.html#install">the first start</a>).
+      </p>
+      <p>
+        Free code signing provided by <a href="https://about.signpath.io/">SignPath.io</a>, certificate by
+        <a href="https://signpath.org/">SignPath Foundation</a>.
+      </p>
+      <ul>
+        <li>
+          <strong>What gets signed</strong>: the Windows installer and <code>reframe.exe</code> in the portable ZIP,
+          built by the
+          <a href="https://github.com/TheyCallMeJuzou/reframe/blob/main/.github/workflows/release.yml"
+            >release workflow</a
+          >
+          on GitHub Actions from <a href="https://github.com/TheyCallMeJuzou/reframe">the repository</a>'s tagged
+          source. Each release is signed only after an approver has approved it.
+        </li>
+        <li>
+          <strong>Committers and reviewers</strong>: <a href="https://github.com/TheyCallMeJuzou">TheyCallMeJuzou</a>.
+          Changes from anyone else come as pull requests and are merged only after a review.
+        </li>
+        <li><strong>Approvers</strong>: <a href="https://github.com/TheyCallMeJuzou">TheyCallMeJuzou</a></li>
+      </ul>
+
+      <h2 id="privacy">Privacy policy</h2>
+      <p>
+        reframe collects nothing about you and sends nothing about you or your sessions anywhere. Its own use of the
+        network:
+      </p>
+      <ul>
+        <li>
+          <strong>Updates</strong>: half a minute after starting and then every six hours, reframe asks
+          <a href="https://github.com/TheyCallMeJuzou/reframe/releases">the repository's releases</a> on GitHub whether
+          there is a newer version. That is a plain web request, as when you open the page in a browser (GitHub sees
+          your IP address, see
+          <a href="https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement"
+            >GitHub's privacy statement</a
+          >). The installed Windows app and the AppImage then download the new version from there. You can turn this off
+          in Settings (<em>Check for updates</em>, from version 0.6.0 on).
+        </li>
+        <li><strong>Links</strong> you click (for example in About) open in your browser.</li>
+      </ul>
+      <p>
+        Claude Code, which reframe starts for you, talks to Anthropic the way you have set it up; for that,
+        <a href="https://www.anthropic.com/legal/privacy">Anthropic's privacy policy</a> applies.
+      </p>
+      <p>
+        <strong>This website</strong> is a set of plain pages on GitHub Pages: no cookies, no tracking, nothing loaded
+        from other sites. GitHub, which serves it, sees your IP address (see
+        <a href="https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement"
+          >GitHub's privacy statement</a
+        >).
+      </p>
+    </main>
+
+    <footer class="site-footer">
+      <div class="wrap">
+        <nav>
+          <a href="download.html">Download</a>
+          <a href="code-signing.html">Code signing policy</a>
+          <a href="code-signing.html#privacy">Privacy policy</a>
+          <a href="https://github.com/TheyCallMeJuzou/reframe">GitHub</a>
+          <a href="https://github.com/TheyCallMeJuzou/reframe/blob/main/LICENSE">MIT license</a>
+        </nav>
+        <p>
+          reframe is an independent open source project, not affiliated with or endorsed by Anthropic. Claude and Claude
+          Code are trademarks of Anthropic.
+        </p>
+      </div>
+    </footer>
+  </body>
+</html>

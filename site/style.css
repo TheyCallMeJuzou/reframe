@@ -1,0 +1,312 @@
+/* reframe's website: the app's colors (src/renderer/styles.css), dark like the app. */
+:root {
+  --bg: #1b1c20;
+  --surface: #22242a;
+  --surface-2: #2a2d34;
+  --border: #30333b;
+  --border-strong: #454a55;
+  --text: #d7dae0;
+  --muted: #8a8f98;
+  --accent: #d97757;
+  --accent-text: #1b1c20;
+  --radius: 8px;
+  color-scheme: dark;
+  font:
+    16px/1.6 system-ui,
+    -apple-system,
+    'Segoe UI',
+    sans-serif;
+  color: var(--text);
+  background: var(--bg);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+}
+
+a {
+  color: var(--accent);
+}
+
+img {
+  max-width: 100%;
+  height: auto;
+}
+
+code {
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 0.9em;
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  background: var(--surface-2);
+  overflow-wrap: anywhere;
+}
+
+h1,
+h2,
+h3 {
+  line-height: 1.25;
+  color: #f0f1f4;
+}
+
+h2 {
+  margin-top: 2.5em;
+}
+
+.wrap {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 0 16px;
+}
+
+/* Header and footer, the same on every page. */
+.site-header {
+  border-bottom: 1px solid var(--border);
+}
+
+.site-header .wrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 24px;
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+  font-size: 1.15rem;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.site-header nav,
+.site-footer nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+}
+
+.site-header nav a,
+.site-footer nav a {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.site-header nav a:hover,
+.site-footer nav a:hover,
+.site-header nav a[aria-current='page'] {
+  color: var(--accent);
+}
+
+.site-footer {
+  margin-top: 64px;
+  padding: 24px 0 40px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.site-footer p {
+  margin: 12px 0 0;
+}
+
+/* Home page. */
+.hero {
+  padding: 48px 0 8px;
+  text-align: center;
+}
+
+.hero h1 {
+  margin: 12px 0 8px;
+  font-size: 2.6rem;
+}
+
+.lead {
+  max-width: 680px;
+  margin: 0 auto;
+  font-size: 1.2rem;
+  color: var(--text);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+  margin: 28px 0 12px;
+}
+
+.note {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.shot {
+  margin: 32px 0 0;
+}
+
+.shot img,
+.feature img {
+  display: block;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.shot figcaption {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+/* Two columns: the small features come in pairs between the wide ones with a picture. */
+.features {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 24px;
+}
+
+.feature {
+  padding: 18px 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.feature.wide {
+  grid-column: 1 / -1;
+}
+
+.feature h3 {
+  margin: 0 0 6px;
+  font-size: 1.05rem;
+}
+
+.feature p {
+  margin: 0;
+}
+
+.feature img {
+  margin-top: 14px;
+}
+
+/* Buttons and download cards. */
+.button {
+  display: inline-block;
+  padding: 10px 18px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--text);
+  background: var(--surface-2);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.button:hover {
+  border-color: var(--accent);
+}
+
+.button.primary {
+  border-color: var(--accent);
+  color: var(--accent-text);
+  background: var(--accent);
+}
+
+.button.primary:hover {
+  filter: brightness(1.08);
+}
+
+.downloads {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  margin-top: 24px;
+}
+
+.platform {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.platform h3 {
+  margin: 0;
+}
+
+.platform .file {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.platform .file p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.box {
+  margin-top: 24px;
+  padding: 4px 20px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.box h2 {
+  margin-top: 0.8em;
+}
+
+/* Tables. */
+.table {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  color: #f0f1f4;
+}
+
+@media (max-width: 700px) {
+  .features {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 600px) {
+  .hero h1 {
+    font-size: 2.1rem;
+  }
+
+  .lead {
+    font-size: 1.05rem;
+  }
+}

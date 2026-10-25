@@ -6,3 +6,4 @@ package-lock.json
 docs/
 test-results/
 playwright-report/
+_site/

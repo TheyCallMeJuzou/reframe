@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Download reframe</title>
+    <meta
+      name="description"
+      content="Download reframe for Windows, macOS or Linux: a free, open source desktop app that keeps your Claude Code sessions side by side in one window."
+    />
+    <link rel="icon" href="img/reframe-icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="wrap">
+        <a class="brand" href="./"><img src="img/reframe-icon.svg" width="32" height="32" alt="" />reframe</a>
+        <nav>
+          <a href="download.html" aria-current="page">Download</a>
+          <a href="code-signing.html">Code signing policy</a>
+          <a href="https://github.com/TheyCallMeJuzou/reframe">GitHub</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="wrap">
+      <h1>Download reframe</h1>
+      <p>
+        reframe is a free, open source desktop app for <a href="https://claude.com/claude-code">Claude Code</a>. Every
+        session is a tile in one window, and all of them stay in view: split, group and collapse them, give a group a
+        window of its own, and save windows as workspaces. It takes over sessions running in other terminals, keeps
+        sessions working in the background with a notification when Claude is done or needs you, and resumes every
+        session after a restart. <a href="./">More about what it does</a>.
+      </p>
+      <p>
+        Latest version: <strong data-version>see the release page</strong> (<a
+          href="https://github.com/TheyCallMeJuzou/reframe/releases/latest"
+          data-release
+          >release notes</a
+        >). You need Claude Code installed and logged in (<code>claude</code> on your <code>PATH</code>).
+      </p>
+
+      <div class="downloads">
+        <section class="platform">
+          <h3>Windows</h3>
+          <div class="file">
+            <a
+              class="button primary"
+              href="https://github.com/TheyCallMeJuzou/reframe/releases/latest"
+              data-asset="reframe-Setup-{version}.exe"
+              >Installer (.exe)</a
+            >
+            <p>Installs for your user, without admin rights. Updates itself.</p>
+          </div>
+          <div class="file">
+            <a
+              class="button"
+              href="https://github.com/TheyCallMeJuzou/reframe/releases/latest"
+              data-asset="reframe-{version}-win-portable.zip"
+              >Portable (.zip)</a
+            >
+            <p>
+              Unpack anywhere and start <code>reframe.exe</code>. Keeps its data next to it and tells you about new
+              versions.
+            </p>
+          </div>
+        </section>
+        <section class="platform">
+          <h3>macOS</h3>
+          <div class="file">
+            <a
+              class="button primary"
+              href="https://github.com/TheyCallMeJuzou/reframe/releases/latest"
+              data-asset="reframe-{version}-arm64.dmg"
+              >Disk image (.dmg)</a
+            >
+            <p>For Apple silicon. Built in CI, not tested yet.</p>
+          </div>
+        </section>
+        <section class="platform">
+          <h3>Linux</h3>
+          <div class="file">
+            <a
+              class="button primary"
+              href="https://github.com/TheyCallMeJuzou/reframe/releases/latest"
+              data-asset="reframe-{version}-x86_64.AppImage"
+              >AppImage</a
+            >
+            <p>Make it executable, then run it. Updates itself.</p>
+          </div>
+          <div class="file">
+            <a
+              class="button"
+              href="https://github.com/TheyCallMeJuzou/reframe/releases/latest"
+              data-asset="reframe_{version}_amd64.deb"
+              >Debian package (.deb)</a
+            >
+            <p>Updated by installing the new one. Built in CI, not tested yet.</p>
+          </div>
+        </section>
+      </div>
+      <p class="note">
+        Older versions and every file of a release:
+        <a href="https://github.com/TheyCallMeJuzou/reframe/releases">GitHub Releases</a>. Source code:
+        <a href="https://github.com/TheyCallMeJuzou/reframe">GitHub</a>.
+      </p>
+
+      <h2 id="install">The first start</h2>
+      <p>The builds are not code-signed yet, so the first start needs a confirmation:</p>
+      <ul>
+        <li>
+          <strong>Windows installer</strong>: if SmartScreen warns, choose <em>More info</em> → <em>Run anyway</em>.
+        </li>
+        <li>
+          <strong>Windows, portable</strong>: before unpacking, right-click the ZIP → <em>Properties</em> → tick
+          <em>Unblock</em>. Otherwise Windows marks every unpacked file as downloaded, and SmartScreen asks on the first
+          start. The copy keeps its sessions, windows and settings in the folder <code>data</code> next to it and runs
+          apart from an installed reframe. If you let it start with the system and move the folder later, turn that on
+          again.
+        </li>
+        <li>
+          <strong>macOS</strong>: drag reframe into Applications, then right-click it → <em>Open</em> the first time (or
+          <code>xattr -dr com.apple.quarantine /Applications/reframe.app</code>). Updates on macOS need a signed build,
+          so for now update by downloading the new version.
+        </li>
+      </ul>
+
+      <h2 id="uninstall">Uninstall</h2>
+      <p>
+        If you let reframe start with the system, turn that off in the tray menu first (from version 0.6.0 on, the
+        Windows uninstaller does it for you). reframe never changes Claude Code's own settings files, so there is
+        nothing to undo there.
+      </p>
+      <ul>
+        <li>
+          <strong>Windows installer</strong>: <em>Settings</em> → <em>Apps</em> → <em>Installed apps</em> → reframe →
+          <em>Uninstall</em>. Your sessions, windows and settings stay in <code>%APPDATA%\reframe</code>; delete that
+          folder to remove them too.
+        </li>
+        <li><strong>Windows, portable</strong>: quit reframe and delete its folder (its data is inside).</li>
+        <li>
+          <strong>macOS</strong>: quit reframe and move it from Applications to the Trash. Its data is in
+          <code>~/Library/Application Support/reframe</code>.
+        </li>
+        <li>
+          <strong>Linux</strong>: delete the AppImage, or remove the package (<code>sudo apt remove reframe</code>). Its
+          data is in <code>~/.config/reframe</code>.
+        </li>
+      </ul>
+
+      <section class="box" id="code-signing">
+        <h2>Code signing policy</h2>
+        <p>
+          reframe uses the SignPath Foundation for code signing: the Windows releases are going to be signed through its
+          free code signing for open source projects (being set up; until then they are unsigned). Free code signing
+          provided by <a href="https://about.signpath.io/">SignPath.io</a>, certificate by
+          <a href="https://signpath.org/">SignPath Foundation</a>.
+        </p>
+        <p>
+          What gets signed, who approves it, and what reframe does with your data:
+          <a href="code-signing.html">code signing policy</a>.
+        </p>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="wrap">
+        <nav>
+          <a href="download.html">Download</a>
+          <a href="code-signing.html">Code signing policy</a>
+          <a href="code-signing.html#privacy">Privacy policy</a>
+          <a href="https://github.com/TheyCallMeJuzou/reframe">GitHub</a>
+          <a href="https://github.com/TheyCallMeJuzou/reframe/blob/main/LICENSE">MIT license</a>
+        </nav>
+        <p>
+          reframe is an independent open source project, not affiliated with or endorsed by Anthropic. Claude and Claude
+          Code are trademarks of Anthropic.
+        </p>
+      </div>
+    </footer>
+  </body>
+</html>
