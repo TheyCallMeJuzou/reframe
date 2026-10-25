@@ -412,6 +412,8 @@ button {
 .tile-terminal {
   position: absolute;
   inset: 4px 2px 2px 6px;
+  /* xterm's layers (its input field at the cursor, say) stay in here, under the card of an ended session. */
+  isolation: isolate;
 }
 
 .terminal-host {
