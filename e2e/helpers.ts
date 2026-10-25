@@ -27,7 +27,7 @@ export interface SavedWindow {
 export interface SavedState {
   sessions: Record<string, SavedSession>;
   windows: SavedWindow[];
-  preferences: { nameFromFolder: boolean; language: 'system' | 'en' | 'de' };
+  preferences: { nameFromFolder: boolean; language: 'system' | 'en' | 'de'; fontSize: number };
   workspaces: { id: string; name: string }[];
 }
 

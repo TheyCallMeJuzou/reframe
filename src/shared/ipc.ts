@@ -29,6 +29,8 @@ export interface WindowView {
   fullscreen: boolean;
   /** The language setting behind `locale`, and the system's language (for About). */
   language: Language;
+  /** The terminals' font size (a preference, the same in every window). */
+  fontSize: number;
   systemLocale: Locale;
   version: string;
   sidebarOpen: boolean;

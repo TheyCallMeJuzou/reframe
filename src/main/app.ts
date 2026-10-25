@@ -74,6 +74,7 @@ import {
 import { PERMISSION_MODES } from '@shared/launch';
 import {
   emptyWindow,
+  FONT_SIZE,
   LANGUAGES,
   type Language,
   type AppState,
@@ -295,6 +296,7 @@ export class ReframeApp {
       })(),
       fullscreen: !!win.fullscreen,
       language: this.state.preferences.language,
+      fontSize: this.state.preferences.fontSize,
       systemLocale: this.systemLocale,
       version: app.getVersion(),
       sidebarOpen: !!win.sidebarOpen,
@@ -1522,16 +1524,19 @@ export class ReframeApp {
       const next = { ...this.state.preferences };
       if (typeof patch.nameFromFolder === 'boolean') next.nameFromFolder = patch.nameFromFolder;
       if (LANGUAGES.includes(patch.language as Language)) next.language = patch.language as Language;
+      const size = patch.fontSize;
+      if (Number.isInteger(size) && size! >= FONT_SIZE.min && size! <= FONT_SIZE.max) next.fontSize = size!;
       const relabel = next.language !== this.state.preferences.language;
+      const resized = next.fontSize !== this.state.preferences.fontSize;
       this.state = { ...this.state, preferences: next };
       this.save();
       if (relabel) {
         // Every window, the tray and whatever comes next (menus, dialogs, notifications) speak it right away.
         this.applyLanguage();
         this.log('info', 'language changed', { language: next.language, locale: this.locale });
-        for (const w of this.state.windows) this.push(w.id);
         this.refreshTray();
       }
+      if (relabel || resized) for (const w of this.state.windows) this.push(w.id);
     });
     ipcMain.handle(IPC.folderExists, (_event, folder: unknown) => typeof folder === 'string' && isDirectory(folder));
     ipcMain.handle(IPC.sessionList, (_event, query: unknown, limit: unknown) =>

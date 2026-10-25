@@ -6,6 +6,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { TERMINAL_PORT_MESSAGE, type TerminalHostMessage, type TerminalViewMessage } from '@shared/ipc';
+import { FONT_SIZE } from '@shared/state';
 import { formatPaths, imagePasteKey } from './paste';
 
 interface Entry {
@@ -31,6 +32,7 @@ const THEME = {
 
 export class TerminalRegistry {
   private entries = new Map<string, Entry>();
+  private fontSize: number = FONT_SIZE.normal;
 
   constructor() {
     window.addEventListener('message', (event: MessageEvent) => {
@@ -89,6 +91,17 @@ export class TerminalRegistry {
     window.reframe.attachTerminal(sessionId);
   }
 
+  /** The font size of every terminal; they fit their tiles again, and the sessions get their new size. */
+  setFontSize(size: number): void {
+    if (size === this.fontSize) return;
+    this.fontSize = size;
+    for (const entry of this.entries.values()) {
+      entry.term.options.fontSize = size;
+      entry.element.dataset.fontSize = String(size);
+      this.scheduleFit(entry);
+    }
+  }
+
   focus(sessionId: string): void {
     this.entries.get(sessionId)?.term.focus();
   }
@@ -105,7 +118,7 @@ export class TerminalRegistry {
     const term = new Terminal({
       allowProposedApi: true,
       fontFamily: FONT,
-      fontSize: 13,
+      fontSize: this.fontSize,
       lineHeight: 1.1,
       cursorBlink: true,
       scrollback: 5000,
@@ -122,6 +135,8 @@ export class TerminalRegistry {
 
     const element = document.createElement('div');
     element.className = 'terminal-host';
+    // Readable from outside (e.g. by tests): xterm measures its characters on a canvas, not in the page.
+    element.dataset.fontSize = String(this.fontSize);
     const entry: Entry = {
       sessionId,
       term,

@@ -95,6 +95,9 @@ export const sessionRecordSchema = z.object({
 });
 
 export const LANGUAGES = ['system', 'en', 'de'] as const;
+
+/** The terminals' font size in pixels: what it starts at, and how far it goes. */
+export const FONT_SIZE = { normal: 13, min: 8, max: 32 } as const;
 export type Language = (typeof LANGUAGES)[number];
 
 export const preferencesSchema = z.object({
@@ -102,9 +105,15 @@ export const preferencesSchema = z.object({
   nameFromFolder: z.boolean(),
   /** The UI language: the system's, or one chosen in About. */
   language: z.enum(LANGUAGES).default('system'),
+  /** The terminals' font size, the same in every window. */
+  fontSize: z.number().int().min(FONT_SIZE.min).max(FONT_SIZE.max).default(FONT_SIZE.normal),
 });
 
-export const DEFAULT_PREFERENCES: z.infer<typeof preferencesSchema> = { nameFromFolder: true, language: 'system' };
+export const DEFAULT_PREFERENCES: z.infer<typeof preferencesSchema> = {
+  nameFromFolder: true,
+  language: 'system',
+  fontSize: FONT_SIZE.normal,
+};
 
 /** A window saved under a name, to be opened again later as a window of its own. */
 export const workspaceSchema = z.object({

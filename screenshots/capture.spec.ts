@@ -10,7 +10,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test';
 import type { GroupNode, LayoutNode } from '../src/shared/layout';
-import type { AppState, SessionRecord, WindowState, Workspace } from '../src/shared/state';
+import {
+  DEFAULT_PREFERENCES,
+  type AppState,
+  type SessionRecord,
+  type WindowState,
+  type Workspace,
+} from '../src/shared/state';
 import { callMain, cleanup, launch, pageOf, quit, root, tileByLabel } from '../e2e/helpers';
 import { Composer, encodeGif, windowSize, type Shot } from './compose';
 
@@ -103,7 +109,7 @@ class Demo {
       sessions: Object.fromEntries(this.inApp.map((record) => [record.id, record])),
       windows,
       recentFolders: [],
-      preferences: { nameFromFolder: true, language: 'en' },
+      preferences: { ...DEFAULT_PREFERENCES, language: 'en' },
       workspaces,
     };
     fs.mkdirSync(this.userData, { recursive: true });

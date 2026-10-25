@@ -12,7 +12,7 @@ import { SaveWorkspaceDialog } from './components/SaveWorkspaceDialog';
 import { AboutDialog } from './components/AboutDialog';
 import { neighbor, type Box } from './focus-nav';
 import { useSessionList } from './session-list';
-import { shortcutFor, shortcutLabel, type Shortcut } from './shortcuts';
+import { fontSizeAfter, shortcutFor, shortcutLabel, type Shortcut, type TextSizeChange } from './shortcuts';
 import { SessionSidebar } from './components/SessionSidebar';
 import { TakeoverDialog } from './components/TakeoverDialog';
 
@@ -68,6 +68,24 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
   useLayoutEffect(() => {
     viewRef.current = view;
   }, [view]);
+  // The font size of the terminals, a preference: applied here at once (so quick presses add up), then saved.
+  const fontSize = useRef(view?.fontSize);
+  useEffect(() => {
+    if (view?.fontSize === undefined) return;
+    fontSize.current = view.fontSize;
+    terminals.setFontSize(view.fontSize);
+  }, [view?.fontSize, terminals]);
+  const changeTextSize = useCallback(
+    (change: TextSizeChange) => {
+      if (fontSize.current === undefined) return;
+      const next = fontSizeAfter(fontSize.current, change);
+      fontSize.current = next;
+      terminals.setFontSize(next);
+      window.reframe.setPreferences({ fontSize: next });
+    },
+    [terminals],
+  );
+
   const focusTile = useCallback(
     (sessionId: string) =>
       whenShown(`.tile[data-session="${CSS.escape(sessionId)}"]`, () => terminals.focus(sessionId)),
@@ -114,6 +132,8 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
           }
           return;
         }
+        case 'textSize':
+          return changeTextSize(shortcut.change);
         case 'toggleSidebar': {
           const open = !current.sidebarOpen;
           window.reframe.dispatch({ type: 'window/sidebar', open });
@@ -123,7 +143,7 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
         }
       }
     },
-    [terminals, focusTile],
+    [terminals, focusTile, changeTextSize],
   );
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -137,6 +157,24 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
   }, [runShortcut]);
+
+  // Ctrl+mouse wheel over a tile (Cmd on macOS, where pinching a trackpad comes as Ctrl+wheel too) changes the
+  // text size instead of scrolling: a step per wheel notch, or per pinch of that much.
+  useEffect(() => {
+    let pending = 0;
+    const onWheel = (event: WheelEvent) => {
+      if (!(event.ctrlKey || (MAC && event.metaKey)) || !(event.target as Element).closest?.('.tile')) return;
+      event.preventDefault();
+      event.stopPropagation();
+      pending += event.deltaMode === WheelEvent.DOM_DELTA_PIXEL ? event.deltaY : Math.sign(event.deltaY) * 100;
+      while (Math.abs(pending) >= 100) {
+        changeTextSize(pending < 0 ? 'bigger' : 'smaller');
+        pending -= Math.sign(pending) * 100;
+      }
+    };
+    window.addEventListener('wheel', onWheel, { capture: true, passive: false });
+    return () => window.removeEventListener('wheel', onWheel, { capture: true });
+  }, [changeTextSize]);
 
   useEffect(
     () =>
