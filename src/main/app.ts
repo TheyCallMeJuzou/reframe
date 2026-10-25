@@ -171,6 +171,11 @@ export class ReframeApp {
     const loaded = this.store.load();
     this.state = loaded.state;
     if (this.state.windows.length === 0) this.state.windows.push(emptyWindow(crypto.randomUUID()));
+    // Closed empty windows that versions up to 0.6.1 kept (and showed again on a second launch) are of no use.
+    const leftovers = this.state.windows.filter((w, i) => i > 0 && w.hidden && isWindowEmpty(w));
+    if (leftovers.length > 0) {
+      this.state = { ...this.state, windows: this.state.windows.filter((w) => !leftovers.includes(w)) };
+    }
     this.applyLanguage();
     this.log('info', 'reframe starting', {
       version: app.getVersion(),
@@ -180,6 +185,7 @@ export class ReframeApp {
       hidden,
       state: loaded.source,
       windows: this.state.windows.length,
+      ...(leftovers.length > 0 ? { closedEmptyWindowsDropped: leftovers.length } : {}),
       sessions: Object.keys(this.state.sessions).length,
       claude: findClaude()?.source ?? 'not found',
       claudeHome: this.claudeHome,
@@ -223,9 +229,12 @@ export class ReframeApp {
     this.save();
   }
 
-  /** Shows the windows again, e.g. when reframe is launched a second time. */
+  /**
+   * Shows the windows again, e.g. when reframe is launched a second time: the same ones a start shows, so windows
+   * the user closed stay in the tray.
+   */
   revealWindows(): void {
-    for (const w of this.state.windows) this.windows.show(w.id);
+    for (const w of this.windowsToShow()) this.windows.show(w.id);
   }
 
   /** Another build of reframe (installed vs. development) was started and handed over to this one. */
@@ -293,9 +302,15 @@ export class ReframeApp {
 
   // ---------- windows and views ----------
 
+  /** The windows that were open (not closed into the tray); the first one if all were closed. */
+  private windowsToShow(): WindowState[] {
+    const open = this.state.windows.filter((w) => !w.hidden);
+    return open.length > 0 ? open : this.state.windows.slice(0, 1);
+  }
+
   private openWindows(hidden: boolean): void {
-    const anyVisible = this.state.windows.some((w) => !w.hidden);
-    this.state.windows.forEach((w, i) => this.windows.open(w, !hidden && (!w.hidden || (!anyVisible && i === 0))));
+    const shown = new Set(this.windowsToShow());
+    for (const w of this.state.windows) this.windows.open(w, !hidden && shown.has(w));
     this.windows.on('bounds', (id, bounds, maximized) => {
       this.mutateWindow(id, (w) => ({ ...w, bounds, maximized }), 'soon');
     });
@@ -305,6 +320,13 @@ export class ReframeApp {
     });
     this.windows.on('visibility', (id, hidden) => {
       this.mutateWindow(id, (w) => ({ ...w, hidden }), 'soon');
+      // A secondary window closed while empty is gone for good, as when its last tile leaves it (after the hide
+      // has run its course, not inside it).
+      if (hidden && !this.shuttingDown) {
+        setImmediate(() => {
+          if (!this.shuttingDown && this.findWindow(id)?.hidden) this.closeIfEmpty(id);
+        });
+      }
       this.refreshTray();
     });
   }
