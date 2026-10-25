@@ -24,6 +24,8 @@ interface Session {
 }
 
 const sessions = new Map<string, Session>();
+/** Views that came before their session's process (one in WSL starts once its distribution answered). */
+const early = new Map<string, MessagePortMain[]>();
 const parent = process.parentPort;
 
 process.on('uncaughtException', (error) => {
@@ -40,6 +42,8 @@ function post(port: MessagePortMain, message: TerminalHostMessage): void {
 
 function spawn(request: Extract<HostRequest, { type: 'spawn' }>): void {
   const { sessionId, instance } = request;
+  const waiting = early.get(sessionId) ?? [];
+  early.delete(sessionId);
   dispose(sessionId, null);
   const mirror = new Terminal({ cols: request.cols, rows: request.rows, scrollback: 5000, allowProposedApi: true });
   const serializer = new SerializeAddon();
@@ -61,6 +65,7 @@ function spawn(request: Extract<HostRequest, { type: 'spawn' }>): void {
     });
   } catch (error) {
     mirror.dispose();
+    for (const port of waiting) port.close();
     emit({ type: 'spawn-failed', sessionId, instance, message: String(error) });
     return;
   }
@@ -68,6 +73,7 @@ function spawn(request: Extract<HostRequest, { type: 'spawn' }>): void {
   const session: Session = { instance, proc, mirror, serializer, views: new Map(), exitCode: null };
   sessions.set(sessionId, session);
   emit({ type: 'spawned', sessionId, instance, pid: proc.pid });
+  for (const port of waiting) attach(sessionId, port);
 
   proc.onData((data) => {
     mirror.write(data);
@@ -86,7 +92,7 @@ function spawn(request: Extract<HostRequest, { type: 'spawn' }>): void {
 function attach(sessionId: string, port: MessagePortMain): void {
   const session = sessions.get(sessionId);
   if (!session) {
-    port.close();
+    early.set(sessionId, [...(early.get(sessionId) ?? []), port]);
     return;
   }
   const view: View = { live: false, pending: [] };
