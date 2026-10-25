@@ -128,7 +128,6 @@ const en = {
   'tray.newSession': 'New session',
   'tray.newWindow': 'New window',
   'tray.quit': 'Quit reframe',
-  'tray.autostart': 'Start with the system',
   'tray.about': 'About reframe',
   'fullscreen.hint': 'Press F11 to exit full screen',
   'fullscreen.exit': 'Exit full screen',
@@ -167,6 +166,9 @@ const en = {
     'Also {bigger} and {smaller} ({normal}: normal), or the mouse wheel with {ctrl} held over a tile.',
   'settings.snap': 'Snap separators to a grid',
   'settings.snapHint': 'While dragging, a separator lines up with the others. Hold Alt to place it freely.',
+  'settings.autostart': 'Start with the system',
+  'settings.autostartHint':
+    'When you log in, reframe starts in the tray with its windows hidden and resumes your sessions in the background.',
   'settings.updates': 'Check for updates',
   'settings.updatesHint':
     'Half a minute after starting and then every six hours, reframe asks GitHub whether there is a newer version. Nothing else is sent.',
@@ -359,7 +361,6 @@ const de: Record<MessageKey, string> = {
   'tray.newSession': 'Neue Session',
   'tray.newWindow': 'Neues Fenster',
   'tray.quit': 'reframe beenden',
-  'tray.autostart': 'Mit dem System starten',
   'tray.about': 'Über reframe',
   'fullscreen.hint': 'F11 beendet den Vollbildmodus',
   'fullscreen.exit': 'Vollbild beenden',
@@ -399,6 +400,9 @@ const de: Record<MessageKey, string> = {
   'settings.snap': 'Trennlinien an einem Raster einrasten',
   'settings.snapHint':
     'Beim Ziehen richtet sich eine Trennlinie an den anderen aus. Mit gedrückter Alt-Taste setzt du sie frei.',
+  'settings.autostart': 'Mit dem System starten',
+  'settings.autostartHint':
+    'Wenn du dich anmeldest, startet reframe im Tray mit verborgenen Fenstern und setzt deine Sessions im Hintergrund fort.',
   'settings.updates': 'Nach Updates suchen',
   'settings.updatesHint':
     'Eine halbe Minute nach dem Start und dann alle sechs Stunden fragt reframe bei GitHub nach, ob es eine neuere Version gibt. Sonst wird nichts gesendet.',

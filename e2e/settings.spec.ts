@@ -1,13 +1,13 @@
 // End to end: Settings (the gear in the toolbar, or Ctrl+,). The language applies at once, everywhere, and after a
 // restart; the text size has buttons too; update checks can be turned off where reframe checks; what closing a
-// window with sessions does can be chosen; and separators snap to a grid over the layout while dragged (12 steps),
-// unless Alt is held or snapping is turned off.
+// window with sessions does can be chosen; starting with the system is turned on and off here; and separators
+// snap to a grid over the layout while dragged (12 steps), unless Alt is held or snapping is turned off.
 import fs from 'node:fs';
 import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import { callMain, captureWindows, cleanup, launch, newSession, quit, setup, tileByLabel } from './helpers';
 
-test('Settings: language, text size, update checks, closing windows', async () => {
+test('Settings: language, text size, update checks, closing windows, starting with the system', async () => {
   const { dir, env, state } = setup();
   try {
     let { app, page } = await launch(env);
@@ -39,6 +39,19 @@ test('Settings: language, text size, update checks, closing windows', async () =
     await expect.poll(() => state().preferences.closeWindow).toBe('end');
     await closing.selectOption('ask');
     await expect.poll(() => state().preferences.closeWindow).toBe('ask');
+
+    // Starting with the system (the tests leave the system's own setting alone): on, and still on when Settings
+    // opens again.
+    const autostart = settings.getByRole('checkbox', { name: 'Start with the system' });
+    await expect(autostart).not.toBeChecked();
+    await autostart.check();
+    const log = () => fs.readFileSync(path.join(env.REFRAME_USER_DATA!, 'logs', 'main.log'), 'utf8');
+    await expect.poll(log).toContain('starts with the system now');
+    await settings.getByRole('button', { name: 'Close' }).click();
+    await page.keyboard.press('Control+Comma');
+    await expect(autostart).toBeChecked();
+    await autostart.uncheck();
+    await expect.poll(log).toContain('no longer starts with the system');
 
     // German, right away (also in the dialog itself) and after a restart.
     await settings.getByRole('combobox', { name: /^Language/ }).selectOption('de');

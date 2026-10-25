@@ -46,8 +46,8 @@
 
 - **Nothing gets lost.** Every change is saved right away. Quitting from the tray ends the sessions cleanly, and the next start resumes each one (`claude --resume`) in its folder, in its place.
 - **Runs in the background.** Closing a window with sessions asks whether to end them or keep them working in the tray (or does what you chose in Settings). In the tray they keep working, and you get a notification when Claude is done or needs you, unless you are looking at it anyway. A window's title says how many of its sessions need you (on Windows its taskbar button gets a badge, and flashes when one starts waiting unseen), the tray says how many in all, and Ctrl+Shift+Space takes you to the next one.
-- **Starts with the system** if you like (tray menu), quietly in the tray, and **updates itself** from GitHub Releases.
-- **Settings** (the ⚙ in the toolbar, or Ctrl+,): the language (English or German, or the system's), the text size, snapping to the grid, what closing a window with sessions does, which Claude Code runs (the one on the PATH, or one you choose: handy with more than one installed), the model and permission mode new sessions start with, and checking for updates.
+- **Starts with the system** if you like (Settings), quietly in the tray, and **updates itself** from GitHub Releases.
+- **Settings** (the ⚙ in the toolbar, or Ctrl+,): the language (English or German, or the system's), the text size, snapping to the grid, what closing a window with sessions does, starting with the system, which Claude Code runs (the one on the PATH, or one you choose: handy with more than one installed), the model and permission mode new sessions start with, and checking for updates.
 
 ## Keyboard shortcuts
 
@@ -89,7 +89,7 @@ The builds are not code-signed yet, so the first start needs a confirmation:
 
 ### Uninstall
 
-If you let reframe start with the system, turn that off in the tray menu first (from version 0.6.0 on, the Windows uninstaller does it for you). reframe never changes Claude Code's own settings files, so there is nothing to undo there.
+If you let reframe start with the system, turn that off first, in Settings (in older versions, in the tray menu). From version 0.6.0 on, the Windows uninstaller does it for you. reframe never changes Claude Code's own settings files, so there is nothing to undo there.
 
 - **Windows**: _Settings_ → _Apps_ → _Installed apps_ → reframe → _Uninstall_. Your sessions, windows and settings stay in `%APPDATA%\reframe`; delete that folder to remove them too.
 - **Windows, portable**: quit reframe and delete its folder (its data is inside).

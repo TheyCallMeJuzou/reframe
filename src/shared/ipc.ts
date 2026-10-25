@@ -50,6 +50,8 @@ export interface WindowView {
   claudeBin: string | null;
   defaultModel: string | null;
   defaultPermissionMode: PermissionMode | null;
+  /** The system starts reframe when the user logs in (the system's setting, not a preference). */
+  startWithSystem: boolean;
   systemLocale: Locale;
   version: string;
   sidebarOpen: boolean;
@@ -244,6 +246,8 @@ export interface ReframeApi {
   /** Recent folders and saved preferences for the "New session" dialog. */
   getDialogDefaults(): Promise<DialogDefaults>;
   setPreferences(patch: PreferencesPatch): void;
+  /** Lets the system start reframe when the user logs in, or not. */
+  setStartWithSystem(enabled: boolean): void;
   folderExists(path: string): Promise<boolean>;
   onFocusTile(listener: (sessionId: string) => void): () => void;
   /** The toolbar's Workspaces menu (native). */
@@ -330,6 +334,7 @@ export const IPC = {
   pickClaude: 'reframe:pick-claude',
   dialogDefaults: 'reframe:dialog-defaults',
   setPreferences: 'reframe:set-preferences',
+  setStartWithSystem: 'reframe:set-start-with-system',
   folderExists: 'reframe:folder-exists',
   focusTile: 'reframe:focus-tile',
   openNewSession: 'reframe:open-new-session',

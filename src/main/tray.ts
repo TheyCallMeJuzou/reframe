@@ -1,5 +1,4 @@
-// Tray icon: brings hidden windows back, starts sessions, starts reframe with the system, installs updates,
-// and is the only way to really quit.
+// Tray icon: brings hidden windows back, starts sessions, installs updates, and is the only way to really quit.
 import { Menu, Tray, nativeImage } from 'electron';
 
 export interface TrayWindowItem {
@@ -15,7 +14,6 @@ export interface TrayLabels {
   newWindow: string;
   workspaces: string;
   noWorkspaces: string;
-  autostart: string;
   about: string;
   quit: string;
 }
@@ -30,8 +28,6 @@ export interface TrayActions {
   /** Saved workspaces with their menu labels. */
   workspaces: () => { id: string; label: string }[];
   openWorkspace: (workspaceId: string) => void;
-  autostart: () => boolean;
-  setAutostart: (enabled: boolean) => void;
   /** "Restart to update" once an update is downloaded; in the portable copy "Download reframe X" (the release page). */
   update: () => { label: string; install: () => void } | null;
   about: () => void;
@@ -70,15 +66,6 @@ export function createTray(
         { label: labels.newWindow, click: actions.newWindow },
         { label: labels.workspaces, submenu: workspaceSubmenu() },
         { type: 'separator' },
-        {
-          label: labels.autostart,
-          type: 'checkbox',
-          checked: actions.autostart(),
-          click: (item) => {
-            actions.setAutostart(item.checked);
-            refresh();
-          },
-        },
         ...(update ? [{ label: update.label, click: update.install }] : []),
         { label: labels.about, click: actions.about },
         { label: labels.quit, click: actions.quit },

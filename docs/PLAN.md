@@ -163,7 +163,7 @@ reframe/
 
 **Phase 6: Open-Source-Reife**: README, CONTRIBUTING, CI-Matrix (Win/macOS/Linux) über einen GitHub-Spiegel, electron-builder (NSIS/dmg/AppImage+deb), Hinweise zum Code-Signing, optional Auto-Update und Autostart. **In Arbeit**: GitHub-Spiegel steht, CI auf allen drei Systemen grün (2026-10-24), auch die End-to-End-Tests gegen die gepackte App. Offen: manueller Test des Installers, erstes Release. Entschieden:
 - CI auf GitHub über den Push-Spiegel (`.github/workflows`). `.gitea/workflows` existiert nur, damit Gitea diese Workflows nicht selbst ausführt.
-- Autostart (Tray: "Mit dem System starten"): reframe startet dann versteckt im Tray, die Sessions laufen im Hintergrund weiter.
+- Autostart (Einstellungen: "Mit dem System starten", anfangs im Tray-Menü): reframe startet dann versteckt im Tray, die Sessions laufen im Hintergrund weiter.
 - Auto-Update über GitHub Releases (electron-updater): Windows-Installer und AppImage. macOS erst mit signiertem Build, deb über die Paketverwaltung. Installiert beim Beenden oder über "Neu starten und aktualisieren".
 - Doku für Mitwirkende auf Englisch (README, CONTRIBUTING, `docs/RELEASING.md`). Die Planungsdokumente bleiben auf Deutsch.
 - Windows-Installer ohne Rückfragen und ohne Adminrechte, pro Benutzer (NSIS one-click). Vorerst unsigniert, Hinweise dazu in `docs/RELEASING.md`.

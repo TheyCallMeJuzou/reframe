@@ -7,8 +7,8 @@ import { fontSizeAfter } from '../shortcuts';
 
 /**
  * Settings: the language, the terminals' text size, snapping separators to a grid, what closing a window with
- * sessions does, which claude runs and what new sessions start with, and update checks (where this copy checks at
- * all). Each applies at once.
+ * sessions does, starting with the system, which claude runs and what new sessions start with, and update checks
+ * (where this copy checks at all). Each applies at once.
  */
 export function SettingsDialog({
   language,
@@ -16,6 +16,7 @@ export function SettingsDialog({
   fontSize,
   snapToGrid,
   closeWindow,
+  startWithSystem,
   checkForUpdates,
   claudeBin,
   defaultModel,
@@ -27,6 +28,7 @@ export function SettingsDialog({
   fontSize: number;
   snapToGrid: boolean;
   closeWindow: CloseWindow;
+  startWithSystem: boolean;
   checkForUpdates: boolean | null;
   claudeBin: string | null;
   defaultModel: string | null;
@@ -132,6 +134,17 @@ export function SettingsDialog({
           </select>
         </label>
         <p className="setting-hint">{t('settings.closeWindowHint')}</p>
+
+        <label className="checkbox">
+          <input
+            key={String(startWithSystem)}
+            type="checkbox"
+            defaultChecked={startWithSystem}
+            onChange={(e) => window.reframe.setStartWithSystem(e.target.checked)}
+          />
+          {t('settings.autostart')}
+        </label>
+        <p className="setting-hint">{t('settings.autostartHint')}</p>
 
         <div className="setting">
           <span>{t('settings.claude')}</span>

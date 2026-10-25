@@ -493,6 +493,7 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
             fontSize={view.fontSize}
             snapToGrid={view.snapToGrid}
             closeWindow={view.closeWindow}
+            startWithSystem={view.startWithSystem}
             checkForUpdates={view.checkForUpdates}
             claudeBin={view.claudeBin}
             defaultModel={view.defaultModel}

@@ -176,6 +176,8 @@ export class ReframeApp {
   private windows: WindowManager;
   private refreshTray: () => void = () => {};
   private refreshTrayTooltip: () => void = () => {};
+  /** The system starts reframe when the user logs in: read at the start, changed in Settings. */
+  private startsWithSystem = false;
   private shuttingDown = false;
   private log = createLogger(path.join(app.getPath('userData'), 'logs'));
   private claudeHome = claudeHome();
@@ -266,6 +268,7 @@ export class ReframeApp {
     win32()?.shutDownFirst();
     this.windows.on('systemEnding', () => this.systemEnding());
     if (process.platform !== 'win32') powerMonitor.on('shutdown', () => this.systemEnding());
+    this.startsWithSystem = this.readStartWithSystem();
     this.openWindows(hidden);
     this.watchForeignWindows();
     this.resumeSessions();
@@ -487,6 +490,7 @@ export class ReframeApp {
       claudeBin: this.state.preferences.claudeBin ?? null,
       defaultModel: this.state.preferences.defaultModel ?? null,
       defaultPermissionMode: this.state.preferences.defaultPermissionMode ?? null,
+      startWithSystem: this.startsWithSystem,
       systemLocale: this.systemLocale,
       version: app.getVersion(),
       sidebarOpen: !!win.sidebarOpen,
@@ -1941,7 +1945,6 @@ export class ReframeApp {
         newWindow: t('tray.newWindow'),
         workspaces: t('tray.workspaces'),
         noWorkspaces: t('workspace.none'),
-        autostart: t('tray.autostart'),
         about: t('tray.about'),
         quit: t('tray.quit'),
       }),
@@ -1970,21 +1973,6 @@ export class ReframeApp {
         this.windows.show(id);
         this.windows.send(id, IPC.openAbout, null);
       },
-      autostart: () => {
-        try {
-          return autostartEnabled();
-        } catch {
-          return false;
-        }
-      },
-      setAutostart: (enabled) => {
-        try {
-          setAutostart(enabled);
-          this.log('info', enabled ? 'starts with the system now' : 'no longer starts with the system');
-        } catch (error) {
-          this.log('warn', 'could not change starting with the system', { error: String(error) });
-        }
-      },
       update: () => {
         if (this.updates.ready) {
           return {
@@ -2005,6 +1993,27 @@ export class ReframeApp {
     });
     this.refreshTray = refresh;
     this.refreshTrayTooltip = refreshTooltip;
+  }
+
+  /** Whether the system starts reframe (no if that cannot be read). The end-to-end tests leave the system alone. */
+  private readStartWithSystem(): boolean {
+    if (process.env.REFRAME_E2E) return false;
+    try {
+      return autostartEnabled();
+    } catch {
+      return false;
+    }
+  }
+
+  private setStartWithSystem(enabled: boolean): void {
+    try {
+      if (!process.env.REFRAME_E2E) setAutostart(enabled);
+      this.startsWithSystem = enabled;
+      this.log('info', enabled ? 'starts with the system now' : 'no longer starts with the system');
+    } catch (error) {
+      this.log('warn', 'could not change starting with the system', { error: String(error) });
+    }
+    for (const w of this.state.windows) this.push(w.id);
   }
 
   private watchUpdates(): void {
@@ -2214,6 +2223,9 @@ export class ReframeApp {
         this.refreshTray();
       }
       if (relabel || shown) for (const w of this.state.windows) this.push(w.id);
+    });
+    on(IPC.setStartWithSystem, (_id, _event, enabled: unknown) => {
+      if (typeof enabled === 'boolean') this.setStartWithSystem(enabled);
     });
     handle(IPC.folderExists, (_id, _event, folder: unknown) => typeof folder === 'string' && isFolder(folder));
     on(IPC.startWsl, (_id, _event, distro: unknown) => {

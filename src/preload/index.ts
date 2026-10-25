@@ -33,6 +33,7 @@ const api: ReframeApi = {
   pickClaude: () => ipcRenderer.invoke(IPC.pickClaude),
   getDialogDefaults: () => ipcRenderer.invoke(IPC.dialogDefaults),
   setPreferences: (patch) => ipcRenderer.send(IPC.setPreferences, patch),
+  setStartWithSystem: (enabled) => ipcRenderer.send(IPC.setStartWithSystem, enabled === true),
   folderExists: (path) => ipcRenderer.invoke(IPC.folderExists, path),
   onFocusTile: (listener) => subscribe<string>(IPC.focusTile, listener),
   onOpenNewSession: (listener) => subscribe<null>(IPC.openNewSession, () => listener()),
