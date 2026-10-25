@@ -1,6 +1,8 @@
 // Updates from GitHub Releases (electron-updater), for installed builds only. Checks a while after the start
 // and then every few hours, downloads in the background, and installs on the next quit, or right away on
 // "Restart to update" (sessions end the usual way first and resume after the restart).
+// An update never quits or restarts reframe by itself, however long it waits: that would end the sessions running
+// in it, maybe in the middle of a long task. Installing stays the user's call (quitting, or "Restart to update").
 import { EventEmitter } from 'node:events';
 import { app } from 'electron';
 import electronUpdater from 'electron-updater';
