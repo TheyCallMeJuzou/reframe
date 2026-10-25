@@ -27,6 +27,8 @@ describe('shortcutFor', () => {
     });
     expect(shortcutFor(press('Digit3', { ctrl: true }), false)).toEqual({ kind: 'focusTile', index: 2 });
     expect(shortcutFor(press('F11'), false)).toEqual({ kind: 'toggleFullscreen' });
+    expect(shortcutFor(press('Comma', { ctrl: true }, ','), false)).toEqual({ kind: 'openSettings' });
+    expect(shortcutFor(press('Comma', { meta: true }, ','), true)).toEqual({ kind: 'openSettings' });
     expect(shortcutFor(press('F11', { shift: true }), false)).toBeNull();
   });
 

@@ -791,14 +791,40 @@ select {
   color: var(--muted);
 }
 
-.about-language {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 14px 0 6px;
+.modal.settings {
+  width: min(460px, 100%);
 }
 
-.about-language select {
+.setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.setting-stepper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.setting-stepper .button {
+  min-width: 30px;
+}
+
+.setting-value {
+  min-width: 2ch;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.setting-hint {
+  margin: -6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.setting select {
   padding: 4px 6px;
   border: 1px solid var(--border-strong);
   border-radius: 4px;

@@ -322,6 +322,7 @@ export class ReframeApp {
       fullscreen: !!win.fullscreen,
       language: this.state.preferences.language,
       fontSize: this.state.preferences.fontSize,
+      snapToGrid: this.state.preferences.snapToGrid,
       systemLocale: this.systemLocale,
       version: app.getVersion(),
       sidebarOpen: !!win.sidebarOpen,
@@ -1638,8 +1639,10 @@ export class ReframeApp {
       if (LANGUAGES.includes(patch.language as Language)) next.language = patch.language as Language;
       const size = patch.fontSize;
       if (Number.isInteger(size) && size! >= FONT_SIZE.min && size! <= FONT_SIZE.max) next.fontSize = size!;
+      if (typeof patch.snapToGrid === 'boolean') next.snapToGrid = patch.snapToGrid;
       const relabel = next.language !== this.state.preferences.language;
-      const resized = next.fontSize !== this.state.preferences.fontSize;
+      const shown =
+        next.fontSize !== this.state.preferences.fontSize || next.snapToGrid !== this.state.preferences.snapToGrid;
       this.state = { ...this.state, preferences: next };
       this.save();
       if (relabel) {
@@ -1648,7 +1651,7 @@ export class ReframeApp {
         this.log('info', 'language changed', { language: next.language, locale: this.locale });
         this.refreshTray();
       }
-      if (relabel || resized) for (const w of this.state.windows) this.push(w.id);
+      if (relabel || shown) for (const w of this.state.windows) this.push(w.id);
     });
     ipcMain.handle(IPC.folderExists, (_event, folder: unknown) => typeof folder === 'string' && isFolder(folder));
     ipcMain.on(IPC.startWsl, (_event, distro: unknown) => {

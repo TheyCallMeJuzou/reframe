@@ -1,4 +1,4 @@
-// reframe's keyboard shortcuts. They use Ctrl+Shift (Cmd+Shift on macOS), plus Ctrl+1…9, F11 and the text size keys
+// reframe's keyboard shortcuts. They use Ctrl+Shift (Cmd+Shift on macOS), plus Ctrl+1…9, Ctrl+, (settings), F11 and the text size keys
 // (Ctrl with +, - and 0, as in Windows Terminal), because Claude Code itself takes many plain Ctrl keys; reframe
 // catches these before the terminal sees them.
 import { FONT_SIZE } from '@shared/state';
@@ -14,6 +14,7 @@ export type Shortcut =
   | { kind: 'toggleCollapse' }
   | { kind: 'toggleSidebar' }
   | { kind: 'toggleFullscreen' }
+  | { kind: 'openSettings' }
   | { kind: 'textSize'; change: TextSizeChange };
 
 interface Keys {
@@ -45,6 +46,7 @@ export function shortcutFor(keys: Keys, mac: boolean): Shortcut | null {
   // Shift only for + (Shift and = on US keyboards); Ctrl+Shift+- is Ctrl+_, Claude Code's undo.
   const change = TEXT_SIZE[keys.key];
   if (change && (!keys.shiftKey || keys.key === '+')) return { kind: 'textSize', change };
+  if (keys.code === 'Comma' && !keys.shiftKey) return { kind: 'openSettings' };
   const digit = /^Digit([1-9])$/.exec(keys.code);
   if (digit && !keys.shiftKey) return { kind: 'focusTile', index: Number(digit[1]) - 1 };
   if (!keys.shiftKey) return null;

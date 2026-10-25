@@ -1,8 +1,43 @@
-import { Fragment, useEffect, useMemo } from 'react';
+import { Fragment, useEffect, useMemo, useRef } from 'react';
 import { Group, Panel, Separator, useGroupRef, type Layout } from 'react-resizable-panels';
 import { nodeKey, type GroupNode, type LayoutNode, type SplitNode } from '@shared/layout';
+import { useApp } from '../context';
+import { GRID_STEPS, snapSizes } from '../snap';
 import { GroupFrame } from './GroupFrame';
 import { Tile } from './Tile';
+
+/**
+ * A separator being dragged with the pointer (snapping is for that, not for resizing with the keyboard), and
+ * whether Alt is held, which drags freely. Alt released after such a drag does not open the window's menu bar.
+ */
+const separatorDrag = { active: false, free: false, altUsed: false };
+window.addEventListener(
+  'pointerdown',
+  (event) => {
+    separatorDrag.active = !!(event.target as Element | null)?.closest?.('.separator');
+    separatorDrag.free = event.altKey;
+  },
+  true,
+);
+window.addEventListener(
+  'pointermove',
+  (event) => {
+    separatorDrag.free = event.altKey;
+    if (separatorDrag.active && event.altKey) separatorDrag.altUsed = true;
+  },
+  true,
+);
+// After the panel library had its say about the release (which ends the drag).
+window.addEventListener('pointerup', () => setTimeout(() => (separatorDrag.active = false)), true);
+window.addEventListener(
+  'keyup',
+  (event) => {
+    if (event.key !== 'Alt' || !separatorDrag.altUsed) return;
+    separatorDrag.altUsed = false;
+    event.preventDefault();
+  },
+  true,
+);
 
 /** Renders a layout node; `group` is the group the node sits in (groups do not nest). */
 export function LayoutView({ node, group = null }: { node: LayoutNode; group?: GroupNode | null }) {
@@ -20,8 +55,57 @@ export function LayoutView({ node, group = null }: { node: LayoutNode; group?: G
 }
 
 function SplitView({ split, group }: { split: SplitNode; group: GroupNode | null }) {
+  const { snapToGrid } = useApp();
   const groupRef = useGroupRef();
+  const elementRef = useRef<HTMLDivElement>(null);
   const keys = useMemo(() => split.children.map(nodeKey), [split.children]);
+
+  const sizesOf = (next: Layout) => keys.map((key) => next[key] ?? 0);
+  const snapping = () => snapToGrid && separatorDrag.active && !separatorDrag.free;
+
+  /** `sizes` with a separator that moved since the drag began on the grid over the whole layout. */
+  const onGrid = (sizes: number[]): number[] => {
+    const element = elementRef.current;
+    const area = element?.closest('.layout');
+    if (!element || !area) return sizes;
+    const across = split.dir === 'row';
+    const box = element.getBoundingClientRect();
+    const grid = area.getBoundingClientRect();
+    const separator = element.querySelector(':scope > .separator')?.getBoundingClientRect();
+    return snapSizes(
+      sizes,
+      split.sizes, // as they were before the drag
+      {
+        start: across ? box.left : box.top,
+        length: across ? box.width : box.height,
+        separator: separator ? (across ? separator.width : separator.height) : 0,
+      },
+      { start: across ? grid.left : grid.top, length: across ? grid.width : grid.height, steps: GRID_STEPS },
+    );
+  };
+
+  // A drag of one of this split's separators shows its sizes on the grid as it goes (the panel library works each
+  // one out from where the drag began), and saves the last of them on release: having been set here, the release
+  // no longer counts as the user's change for the library.
+  const dragged = useRef<number[] | null>(null);
+  const onLayoutChange = (next: Layout) => {
+    if (!separatorDrag.active) return;
+    const sizes = sizesOf(next);
+    const shown = snapping() ? onGrid(sizes) : sizes;
+    dragged.current = shown;
+    if (shown.some((size, i) => Math.abs(size - sizes[i]!) > 0.05)) {
+      groupRef.current?.setLayout(Object.fromEntries(keys.map((key, i) => [key, shown[i]!])));
+    }
+  };
+  useEffect(() => {
+    const release = () => {
+      const sizes = dragged.current;
+      dragged.current = null;
+      if (sizes) window.reframe.dispatch({ type: 'split/resize', splitId: split.id, sizes });
+    };
+    window.addEventListener('pointerup', release);
+    return () => window.removeEventListener('pointerup', release);
+  }, [split.id]);
   const layout = useMemo<Layout>(
     () => Object.fromEntries(keys.map((key, i) => [key, split.sizes[i] ?? 100 / keys.length])),
     [keys, split.sizes],
@@ -41,12 +125,16 @@ function SplitView({ split, group }: { split: SplitNode; group: GroupNode | null
     <Group
       id={split.id}
       groupRef={groupRef}
+      elementRef={elementRef}
       className="split"
       orientation={split.dir === 'row' ? 'horizontal' : 'vertical'}
       defaultLayout={layout}
+      // While dragging, the separator jumps from grid line to grid line.
+      onLayoutChange={onLayoutChange}
       onLayoutChanged={(next, meta) => {
-        if (!meta.isUserInteraction) return;
-        window.reframe.dispatch({ type: 'split/resize', splitId: split.id, sizes: keys.map((k) => next[k] ?? 0) });
+        // A pointer drag is saved on release (above); this is for resizing with the keyboard.
+        if (!meta.isUserInteraction || dragged.current) return;
+        window.reframe.dispatch({ type: 'split/resize', splitId: split.id, sizes: sizesOf(next) });
       }}
     >
       {split.children.map((child, i) => (

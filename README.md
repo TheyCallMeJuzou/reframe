@@ -19,7 +19,7 @@
 
 ## What it does
 
-- **All sessions in view.** Every session is a tile, and all tiles are visible at once, in two columns that fill in turn. Drag a tile's header onto another tile's edge to split next to it; the drop zone shows where it lands.
+- **All sessions in view.** Every session is a tile, and all tiles are visible at once, in two columns that fill in turn. Drag a tile's header onto another tile's edge to split next to it; the drop zone shows where it lands. Separators snap to a grid over the window as you drag them, so tiles line up (hold Alt to place one freely, or turn it off in Settings).
 
   <img src="docs/screenshots/drag-tile.gif" alt="A tile dragged by its header to below another tile">
 
@@ -42,7 +42,7 @@
 - **Nothing gets lost.** Every change is saved right away. Quitting from the tray ends the sessions cleanly, and the next start resumes each one (`claude --resume`) in its folder, in its place.
 - **Runs in the background.** Closing a window only hides it: sessions keep working, and you get a notification when Claude is done or needs you, unless you are looking at it anyway.
 - **Starts with the system** if you like (tray menu), quietly in the tray, and **updates itself** from GitHub Releases.
-- English and German: the system language, or the one you choose in About (the ⓘ in the toolbar).
+- **Settings** (the ⚙ in the toolbar, or Ctrl+,): the language (English or German, or the system's), the text size, and snapping to the grid.
 
 ## Keyboard shortcuts
 
@@ -57,6 +57,7 @@ On macOS, use Cmd instead of Ctrl. Everything else goes to Claude Code as usual.
 | Ctrl+Shift+T           | New session                                                                                        |
 | Ctrl+Shift+N           | New window                                                                                         |
 | F11                    | Full screen on and off                                                                             |
+| Ctrl+,                 | Settings                                                                                           |
 | Ctrl+= (or +) / Ctrl+- | Larger / smaller text in all terminals (also Ctrl+mouse wheel over a tile); Ctrl+0: back to normal |
 | Ctrl+C / Ctrl+V        | Copy the selection (otherwise Ctrl+C goes to Claude) / paste text, copied files or an image        |
 

@@ -33,6 +33,8 @@ export interface WindowView {
   language: Language;
   /** The terminals' font size (a preference, the same in every window). */
   fontSize: number;
+  /** Separators snap to a grid while dragged (a preference). */
+  snapToGrid: boolean;
   systemLocale: Locale;
   version: string;
   sidebarOpen: boolean;

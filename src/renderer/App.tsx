@@ -7,9 +7,10 @@ import type { TerminalRegistry } from './terminals';
 import { DockStrip } from './components/DockStrip';
 import { NewSessionDialog } from './components/NewSessionDialog';
 import { LayoutView } from './components/SplitView';
-import { ExitFullscreenIcon, InfoIcon, LayersIcon, ListIcon, PlusIcon, WindowIcon } from './components/icons';
+import { ExitFullscreenIcon, GearIcon, InfoIcon, LayersIcon, ListIcon, PlusIcon, WindowIcon } from './components/icons';
 import { SaveWorkspaceDialog } from './components/SaveWorkspaceDialog';
 import { AboutDialog } from './components/AboutDialog';
+import { SettingsDialog } from './components/SettingsDialog';
 import { neighbor, type Box } from './focus-nav';
 import { useSessionList } from './session-list';
 import { fontSizeAfter, shortcutFor, shortcutLabel, type Shortcut, type TextSizeChange } from './shortcuts';
@@ -32,6 +33,7 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
   const [view, setView] = useState<WindowView | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [namingWorkspace, setNamingWorkspace] = useState(false);
   const [dragging, setDragging] = useState<DragState | null>(null);
   const [emptyDropActive, setEmptyDropActive] = useState(false);
@@ -121,6 +123,8 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
           return window.reframe.newWindow();
         case 'toggleFullscreen':
           return window.reframe.toggleFullscreen();
+        case 'openSettings':
+          return setSettingsOpen(true);
         case 'toggleCollapse': {
           // In a tile: collapse it. Otherwise: bring back the one collapsed last.
           const active = activeTile();
@@ -272,6 +276,7 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
         locale: view.locale,
         windowId: view.windowId,
         sessions: view.sessions,
+        snapToGrid: view.snapToGrid,
         terminals,
         dragging,
         setDragging,
@@ -337,6 +342,14 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
           )}
           <button
             className="icon-button toolbar-icon"
+            title={`${t('settings.title')} (${keys(',', false)})`}
+            aria-label={t('settings.title')}
+            onClick={() => setSettingsOpen(true)}
+          >
+            <GearIcon />
+          </button>
+          <button
+            className="icon-button toolbar-icon"
             title={t('about.title')}
             aria-label={t('about.title')}
             onClick={() => setAboutOpen(true)}
@@ -395,12 +408,14 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
             onClose={() => setNamingWorkspace(false)}
           />
         )}
-        {aboutOpen && (
-          <AboutDialog
-            version={view.version}
+        {aboutOpen && <AboutDialog version={view.version} onClose={() => setAboutOpen(false)} />}
+        {settingsOpen && (
+          <SettingsDialog
             language={view.language}
             systemLocale={view.systemLocale}
-            onClose={() => setAboutOpen(false)}
+            fontSize={view.fontSize}
+            snapToGrid={view.snapToGrid}
+            onClose={() => setSettingsOpen(false)}
           />
         )}
         {foreignPreview && <div className="drop-preview foreign-preview" style={foreignPreview} />}

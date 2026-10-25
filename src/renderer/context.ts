@@ -19,6 +19,8 @@ export interface AppContextValue {
   locale: Locale;
   windowId: string;
   sessions: Record<string, SessionView>;
+  /** Separators snap to the layout's grid while dragged. */
+  snapToGrid: boolean;
   terminals: TerminalRegistry;
   dragging: DragState | null;
   setDragging: (drag: DragState | null) => void;

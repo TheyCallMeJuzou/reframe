@@ -107,12 +107,15 @@ export const preferencesSchema = z.object({
   language: z.enum(LANGUAGES).default('system'),
   /** The terminals' font size, the same in every window. */
   fontSize: z.number().int().min(FONT_SIZE.min).max(FONT_SIZE.max).default(FONT_SIZE.normal),
+  /** Separators snap to a grid over the layout while they are dragged (Alt drags freely). */
+  snapToGrid: z.boolean().default(true),
 });
 
 export const DEFAULT_PREFERENCES: z.infer<typeof preferencesSchema> = {
   nameFromFolder: true,
   language: 'system',
   fontSize: FONT_SIZE.normal,
+  snapToGrid: true,
 };
 
 /** A window saved under a name, to be opened again later as a window of its own. */

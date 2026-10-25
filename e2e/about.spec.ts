@@ -1,15 +1,15 @@
 // End to end: About shows the version, the license and where reframe comes from; its links open in the browser
-// (caught here), and the language chosen there applies at once, everywhere, and after a restart.
+// (caught here).
 import fs from 'node:fs';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import { captureWindows, cleanup, launch, quit, root, setup } from './helpers';
 
-test('About: version, license, links, and the language', async () => {
-  const { dir, env, state } = setup();
+test('About: version, license and links', async () => {
+  const { dir, env } = setup();
   const version = (JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')) as { version: string }).version;
   try {
-    let { app, page } = await launch(env);
+    const { app, page } = await launch(env);
     await app.evaluate(({ shell }) => {
       const opened: string[] = [];
       Object.assign(globalThis, { opened });
@@ -31,20 +31,7 @@ test('About: version, license, links, and the language', async () => {
       'https://github.com/TheyCallMeJuzou',
     ]);
 
-    // German, right away (also in the dialog itself) and after a restart.
-    await about.getByRole('combobox').selectOption('de');
-    await expect(page.getByRole('dialog', { name: 'Über reframe' })).toBeVisible();
-    await expect(page.locator('.toolbar').getByRole('button', { name: 'Neue Session' })).toBeVisible();
-    await expect.poll(() => state().preferences.language).toBe('de');
-    await quit(app);
-
-    ({ app, page } = await launch(env));
-    await expect(page.locator('.toolbar').getByRole('button', { name: 'Neue Session' })).toBeVisible();
-    // Back to the system's language (English in the tests).
-    await page.getByRole('button', { name: 'Über reframe' }).click();
-    await page.getByRole('dialog').getByRole('combobox').selectOption('system');
-    await expect(page.locator('.toolbar').getByRole('button', { name: 'New session' })).toBeVisible();
-    await page.getByRole('dialog').getByRole('button', { name: 'Close' }).click();
+    await about.getByRole('button', { name: 'Close' }).click();
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await quit(app);
   } catch (error) {

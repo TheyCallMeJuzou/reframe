@@ -27,6 +27,17 @@ export const InfoIcon = () => (
   </svg>
 );
 
+export const GearIcon = () => (
+  <svg {...base} aria-hidden="true">
+    <circle cx="8" cy="8" r="2.2" />
+    <path
+      d="M8 1.6v1.8M8 12.6v1.8M1.6 8h1.8M12.6 8h1.8M3.5 3.5l1.3 1.3M11.2 11.2l1.3 1.3M3.5 12.5l1.3-1.3M11.2 4.8l1.3-1.3"
+      strokeLinecap="round"
+    />
+    <circle cx="8" cy="8" r="4.4" />
+  </svg>
+);
+
 export const LayersIcon = () => (
   <svg {...base} aria-hidden="true">
     <path d="M8 2.5 14 5.5 8 8.5 2 5.5z" strokeLinejoin="round" />
