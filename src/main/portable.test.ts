@@ -23,7 +23,7 @@ describe('portableDataDir', () => {
     expect(portableDataDir(exe, 'win32')).toBeNull();
     fs.rmSync(path.join(app, 'data'));
     fs.mkdirSync(path.join(app, 'data'));
-    expect(portableDataDir(exe, 'win32')).toBe(path.win32.join(app, 'data'));
+    expect(portableDataDir(exe, 'win32')).toBe(path.join(app, 'data'));
   });
 
   it('is only a thing on Windows', () => {

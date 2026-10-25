@@ -7,7 +7,7 @@ import path from 'node:path';
 /** The data folder of a portable copy, or null when this is no portable copy. */
 export function portableDataDir(execPath: string, platform: NodeJS.Platform = process.platform): string | null {
   if (platform !== 'win32') return null;
-  const dir = path.win32.join(path.win32.dirname(execPath), 'data');
+  const dir = path.join(path.dirname(execPath), 'data');
   try {
     return fs.statSync(dir).isDirectory() ? dir : null;
   } catch {
