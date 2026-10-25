@@ -80,7 +80,13 @@ export function SettingsDialog({
         </p>
 
         <label className="checkbox">
-          <input type="checkbox" checked={snapToGrid} onChange={(e) => set({ snapToGrid: e.target.checked })} />
+          {/* Turns at once; the saved value comes back with the next view (and from other windows too). */}
+          <input
+            key={String(snapToGrid)}
+            type="checkbox"
+            defaultChecked={snapToGrid}
+            onChange={(e) => set({ snapToGrid: e.target.checked })}
+          />
           {t('settings.snap')}
         </label>
         <p className="setting-hint">{t('settings.snapHint')}</p>
