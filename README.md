@@ -47,20 +47,21 @@
 
 On macOS, use Cmd instead of Ctrl. Everything else goes to Claude Code as usual.
 
-| Shortcut              | What it does                                                                                |
-| --------------------- | ------------------------------------------------------------------------------------------- |
-| Ctrl+1 … 9            | Focus the first … ninth tile in the window                                                  |
-| Ctrl+Shift+Arrow keys | Focus the neighboring tile in that direction                                                |
-| Ctrl+Shift+M          | Collapse the focused tile; without a focused tile, bring back the last one                  |
-| Ctrl+Shift+L          | Show or hide the session list (and search it)                                               |
-| Ctrl+Shift+T          | New session                                                                                 |
-| Ctrl+Shift+N          | New window                                                                                  |
-| F11                   | Full screen on and off                                                                      |
-| Ctrl+C / Ctrl+V       | Copy the selection (otherwise Ctrl+C goes to Claude) / paste text, copied files or an image |
+| Shortcut               | What it does                                                                                       |
+| ---------------------- | -------------------------------------------------------------------------------------------------- |
+| Ctrl+1 … 9             | Focus the first … ninth tile in the window                                                         |
+| Ctrl+Shift+Arrow keys  | Focus the neighboring tile in that direction                                                       |
+| Ctrl+Shift+M           | Collapse the focused tile; without a focused tile, bring back the last one                         |
+| Ctrl+Shift+L           | Show or hide the session list (and search it)                                                      |
+| Ctrl+Shift+T           | New session                                                                                        |
+| Ctrl+Shift+N           | New window                                                                                         |
+| F11                    | Full screen on and off                                                                             |
+| Ctrl+= (or +) / Ctrl+- | Larger / smaller text in all terminals (also Ctrl+mouse wheel over a tile); Ctrl+0: back to normal |
+| Ctrl+C / Ctrl+V        | Copy the selection (otherwise Ctrl+C goes to Claude) / paste text, copied files or an image        |
 
 ## Install
 
-Download the installer for your system from [Releases](https://github.com/TheyCallMeJuzou/reframe/releases). You need [Claude Code](https://claude.com/claude-code) installed and logged in (`claude` on your `PATH`).
+Download the installer for your system from [Releases](https://github.com/TheyCallMeJuzou/reframe/releases). You need [Claude Code](https://claude.com/claude-code) installed and logged in (`claude` on your `PATH`). On Windows that means Claude Code installed on Windows itself; one installed only in WSL is not supported yet.
 
 The builds are not code-signed yet, so the first start needs a confirmation:
 
@@ -87,6 +88,8 @@ npm run typecheck && npm run lint
 npm run dist       # installers for this system, into dist/ (npm run dist:dir: just the unpacked app)
 npm run screenshots  # the pictures in this README, taken from the real app with demo sessions
 ```
+
+`npm install` does not download Electron itself: it fetches its program the first time it runs (`npm run dev` or the tests), so that start needs a network connection. `npx install-electron` fetches it ahead of time.
 
 A smoke test against the real CLI is opt-in (it starts real sessions; the hooks test sends one short prompt):
 
