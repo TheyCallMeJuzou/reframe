@@ -98,7 +98,7 @@ import { StateStore } from './state/store';
 import { stopExternalClaude } from './takeover';
 import { colorMenu, groupMenu, listMenu, tileMenu, workspaceItemMenu, workspaceLabel, workspaceMenu } from './menus';
 import { snapshotWindow, windowFromWorkspace } from '@shared/workspaces';
-import { parseWslPath, type WslPath } from '@shared/wsl';
+import { parseWslPath, wslWindowsPath, type WslPath } from '@shared/wsl';
 import { createTray } from './tray';
 import { clipboardImage, readClipboard } from './clipboard';
 import { homeRelative } from './paths';
@@ -112,6 +112,18 @@ export interface AppAssets {
   icon: string;
   trayIcon: string;
   trayIcon2x: string;
+}
+
+/** Where Claude Code keeps sessions and transcripts: Windows' own, or a WSL distribution's. */
+interface ClaudeSource {
+  distro?: string;
+  /** Claude Code's folder, as Windows reaches it. */
+  home: string;
+  transcripts: TranscriptIndex;
+  /** Whether a process of its (by the id in its registry) runs. */
+  alive: (pid: number) => boolean;
+  /** A folder it names, as Windows reaches it (WSL names Linux paths). */
+  windowsPath: (folder: string) => string;
 }
 
 const MAX_RECENT_FOLDERS = 8;
@@ -184,6 +196,13 @@ export class ReframeApp {
     this.sessions.on('identity', (id, patch) => this.updateIdentity(id, patch));
     this.sessions.on('notify', (id, kind) => this.notify(id, kind));
     this.sessions.on('ended', (id) => this.sessionEnded(id));
+    // Distributions with Claude Code are remembered, so the list can tell when one is not running.
+    this.wsl?.on('found', (distro) => {
+      const known = this.state.wslDistros ?? [];
+      if (known.some((d) => d.toLowerCase() === distro.toLowerCase())) return;
+      this.state = { ...this.state, wslDistros: [...known, distro] };
+      this.save();
+    });
     await this.sessions.cleanupOrphans(Object.values(this.state.sessions));
 
     this.registerIpc();
@@ -232,6 +251,7 @@ export class ReframeApp {
     this.sessions.dispose();
     this.host.stop();
     this.hooks.stop();
+    this.wsl?.release();
     this.save();
     this.log('info', 'reframe stopped');
   }
@@ -723,28 +743,40 @@ export class ReframeApp {
       // Sessions in a window first, then the rest; most recently used first within each.
       .sort((a, b) => Number(!a.windowId) - Number(!b.windowId) || b.lastActiveAt - a.lastActiveAt);
 
-    const ownIds = new Set(records.map((r) => r.claudeSessionId));
-    const running: RunningListItem[] = this.externalRunning()
-      .filter((entry) => matches(entry.name, entry.cwd))
-      .map((entry) => ({
-        kind: 'running',
-        pid: entry.pid,
-        claudeSessionId: entry.sessionId,
-        cwd: entry.cwd!,
-        name: entry.name,
-      }));
+    // Where Claude Code keeps its sessions: on Windows, and in each running WSL distribution that has it.
+    const { sources, stopped } = await this.claudeSources();
+    const running: RunningListItem[] = sources
+      .flatMap((source) =>
+        this.externalRunning(source).map((entry): RunningListItem => ({
+          kind: 'running',
+          pid: entry.pid,
+          claudeSessionId: entry.sessionId,
+          cwd: source.windowsPath(entry.cwd!),
+          name: entry.name,
+          ...(source.distro ? { distro: source.distro } : {}),
+        })),
+      )
+      .filter((item) => matches(item.name, item.cwd));
 
+    const ownIds = new Set(records.map((r) => r.claudeSessionId));
     const exclude = new Set([...ownIds, ...running.map((r) => r.claudeSessionId)]);
-    const past = await this.transcripts.list({ query, limit, exclude });
-    const found = past.items
-      .filter((info) => info.cwd)
-      .map((info) => ({
-        kind: 'found' as const,
-        claudeSessionId: info.sessionId,
-        cwd: info.cwd!,
-        title: info.title,
-        modifiedAt: info.modifiedAt,
-      }));
+    const pages = await Promise.all(
+      sources.map(async (source) => ({ source, page: await source.transcripts.list({ query, limit, exclude }) })),
+    );
+    const found = pages
+      .flatMap(({ source, page }) =>
+        page.items
+          .filter((info) => info.cwd)
+          .map((info) => ({
+            kind: 'found' as const,
+            claudeSessionId: info.sessionId,
+            cwd: source.windowsPath(info.cwd!),
+            title: info.title,
+            modifiedAt: info.modifiedAt,
+            ...(source.distro ? { distro: source.distro } : {}),
+          })),
+      )
+      .sort((a, b) => b.modifiedAt - a.modifiedAt);
     const workspaces = this.state.workspaces.map((w) => ({
       id: w.id,
       name: w.name,
@@ -752,15 +784,63 @@ export class ReframeApp {
       savedAt: w.savedAt,
       open: !!this.windowOfWorkspace(w.id),
     }));
-    return { workspaces, app, running, found, hasMore: past.hasMore };
+    const hasMore = found.length > limit || pages.some(({ page }) => page.hasMore);
+    return { workspaces, app, running, found: found.slice(0, limit), hasMore, wslStopped: stopped };
   }
 
+  /**
+   * Where Claude Code keeps sessions and transcripts: on Windows, and in each running WSL distribution that has it
+   * (a stopped one is not started for this; `stopped` names those Claude Code was found in before).
+   */
+  private async claudeSources(): Promise<{ sources: ClaudeSource[]; stopped: string[] }> {
+    const windows = this.ownSource();
+    const wsl = this.wsl;
+    if (!wsl) return { sources: [windows], stopped: [] };
+    const running = await wsl.running();
+    const inWsl = await Promise.all(running.map((distro) => this.wslSource(distro)));
+    const stopped = (this.state.wslDistros ?? []).filter(
+      (d) => !running.some((r) => r.toLowerCase() === d.toLowerCase()),
+    );
+    return { sources: [windows, ...inWsl.filter((s): s is ClaudeSource => !!s)], stopped };
+  }
+
+  /** Claude Code's sessions on this system itself (on Windows: not the ones in WSL). */
+  private ownSource(): ClaudeSource {
+    return { home: this.claudeHome, transcripts: this.transcripts, alive: isAlive, windowsPath: (folder) => folder };
+  }
+
+  /** Claude Code's sessions in a WSL distribution, if it has Claude Code (asking it starts it). */
+  private async wslSource(distro: string): Promise<ClaudeSource | null> {
+    const wsl = this.wsl!;
+    const info = await wsl.info(distro);
+    if (!info?.claude) return null;
+    const home = wslWindowsPath(distro, info.claudeHome, wsl.share);
+    let transcripts = this.wslTranscripts.get(home);
+    if (!transcripts) this.wslTranscripts.set(home, (transcripts = new TranscriptIndex(home)));
+    return {
+      distro,
+      home,
+      transcripts,
+      alive: (pid) => wsl.alive(distro, pid),
+      windowsPath: (folder) => wslWindowsPath(distro, folder, wsl.share),
+    };
+  }
+  private wslTranscripts = new Map<string, TranscriptIndex>();
+
   /** Claudes running outside reframe (with a known folder). */
-  private externalRunning(): RegistryEntry[] {
+  private externalRunning(source: ClaudeSource): RegistryEntry[] {
     const records = Object.values(this.state.sessions);
-    const ownPids = new Set(records.map((r) => this.sessions.status(r.id)?.pid).filter((p): p is number => !!p));
+    const ownPids = source.distro
+      ? new Set<number>()
+      : new Set(records.map((r) => this.sessions.status(r.id)?.pid).filter((p): p is number => !!p));
     const ownIds = new Set(records.map((r) => r.claudeSessionId));
-    return listRunning(this.claudeHome, { pids: ownPids, sessionIds: ownIds }).filter((entry) => entry.cwd);
+    return listRunning(source.home, { pids: ownPids, sessionIds: ownIds }, source.alive).filter((entry) => entry.cwd);
+  }
+
+  /** Where a list entry's Claude Code keeps its sessions: on Windows, or in its WSL distribution. */
+  private async sourceOf(item: { distro?: string }): Promise<ClaudeSource | null> {
+    if (!item.distro) return this.ownSource();
+    return this.wsl ? this.wslSource(item.distro) : null;
   }
 
   /**
@@ -775,21 +855,32 @@ export class ReframeApp {
     const known = Object.values(this.state.sessions).find((r) => r.claudeSessionId === item.claudeSessionId);
     if (known) return known;
 
+    const source = await this.sourceOf(item);
+    if (!source) return null;
     if (item.kind === 'found') {
-      const info = await this.transcripts.find(item.claudeSessionId);
-      if (info?.cwd) return this.adopted(item.claudeSessionId, info.cwd);
+      const info = await source.transcripts.find(item.claudeSessionId);
+      if (info?.cwd) return this.adopted(item.claudeSessionId, source.windowsPath(info.cwd), undefined, source.home);
       this.log('warn', 'found session has no folder', { claudeSession: item.claudeSessionId });
       return null;
     }
 
-    const entry = readRegistryEntry(this.claudeHome, item.pid);
-    if (!entry || entry.sessionId !== item.claudeSessionId || !entry.cwd || !isAlive(item.pid)) {
-      this.log('info', 'running session is gone, nothing to take over', { pid: item.pid });
+    const entry = readRegistryEntry(source.home, item.pid);
+    if (!entry || entry.sessionId !== item.claudeSessionId || !entry.cwd || !source.alive(item.pid)) {
+      this.log('info', 'running session is gone, nothing to take over', { pid: item.pid, wsl: source.distro });
       return null;
     }
-    if (!confirmed && !(await this.confirmTakeover(windowId, [entry.name ?? path.basename(entry.cwd)]))) return null;
-    this.log('info', 'taking over session from another terminal', { pid: item.pid, claudeSession: entry.sessionId });
-    const result = await stopExternalClaude(item.pid, this.log);
+    if (!confirmed && !(await this.confirmTakeover(windowId, [entry.name ?? path.basename(entry.cwd)]))) {
+      return null;
+    }
+    this.log('info', 'taking over session from another terminal', {
+      pid: item.pid,
+      claudeSession: entry.sessionId,
+      ...(source.distro ? { wsl: source.distro } : {}),
+    });
+    // One in WSL is a Linux process: it gets the interrupt as a signal, as from Ctrl+C in its terminal.
+    const result = source.distro
+      ? await this.wsl!.stopClaude(source.distro, item.pid)
+      : await stopExternalClaude(item.pid, this.log);
     this.log(result === 'failed' ? 'warn' : 'info', 'other terminal stopped', { pid: item.pid, result });
     if (result === 'failed') {
       await this.showError(windowId, this.t('takeover.failed'));
@@ -797,7 +888,7 @@ export class ReframeApp {
     }
     // A name the user gave it survives; one Claude made up is made up again.
     const name = entry.nameSource === 'user' ? entry.name : undefined;
-    return this.adopted(entry.sessionId, entry.cwd, name);
+    return this.adopted(entry.sessionId, source.windowsPath(entry.cwd), name, source.home);
   }
 
   /** Asks once before ending sessions that run in other terminals. */
@@ -846,10 +937,13 @@ export class ReframeApp {
     let wanted = items;
     const running = items.flatMap((i) => (i.kind === 'running' ? [i] : []));
     if (running.length > 0) {
-      const labels = running.map((i) => {
-        const entry = readRegistryEntry(this.claudeHome, i.pid);
-        return entry?.name ?? (entry?.cwd ? path.basename(entry.cwd) : String(i.pid));
-      });
+      const labels = await Promise.all(
+        running.map(async (i) => {
+          const source = await this.sourceOf(i);
+          const entry = source && readRegistryEntry(source.home, i.pid);
+          return entry?.name ?? (entry?.cwd ? path.basename(entry.cwd) : String(i.pid));
+        }),
+      );
       if (!(await this.confirmTakeover(windowId, labels))) wanted = items.filter((i) => i.kind !== 'running');
     }
     const records: SessionRecord[] = [];
@@ -919,7 +1013,8 @@ export class ReframeApp {
   }
 
   /** A new record for a Claude Code session started outside reframe. */
-  private adopted(claudeSessionId: string, cwd: string, name?: string): SessionRecord {
+  /** `claudeHome`: where its Claude Code keeps transcripts (in WSL, its distribution's). */
+  private adopted(claudeSessionId: string, cwd: string, name?: string, claudeHome = this.claudeHome): SessionRecord {
     // Without a transcript (no prompt yet) it starts fresh under the same id instead of failing to resume.
     const now = Date.now();
     return {
@@ -931,7 +1026,7 @@ export class ReframeApp {
       lifecycle: 'open',
       createdAt: now,
       lastActiveAt: now,
-      used: transcriptExists(this.claudeHome, claudeSessionId),
+      used: transcriptExists(claudeHome, claudeSessionId),
     };
   }
 
@@ -1140,7 +1235,7 @@ export class ReframeApp {
     this.foreign = new ForeignWindowWatcher({
       win32: api,
       windowAt: (point) => this.windows.windowAt(point),
-      externalSessions: () => this.externalRunning(),
+      externalSessions: () => this.externalRunning(this.ownSource()),
       log: this.log,
     });
     this.foreign.on('hover', (windowId, point) => {
@@ -1556,6 +1651,9 @@ export class ReframeApp {
       if (relabel || resized) for (const w of this.state.windows) this.push(w.id);
     });
     ipcMain.handle(IPC.folderExists, (_event, folder: unknown) => typeof folder === 'string' && isFolder(folder));
+    ipcMain.on(IPC.startWsl, (_event, distro: unknown) => {
+      if (typeof distro === 'string' && (this.state.wslDistros ?? []).includes(distro)) this.wsl?.keep(distro);
+    });
     ipcMain.handle(IPC.saveClipboardImage, async () => {
       const png = this.clipboardOverride ? (this.clipboardOverride.image ? TEST_PNG : null) : await clipboardImage();
       return png && this.saveDroppedFile('clipboard.png', png);
@@ -1617,6 +1715,7 @@ function isListItemRef(value: unknown): value is ListItemRef {
   if (!value || typeof value !== 'object') return false;
   const v = value as Record<string, unknown>;
   if (v.kind === 'app') return typeof v.sessionId === 'string';
+  if (v.distro !== undefined && typeof v.distro !== 'string') return false;
   if (v.kind === 'found') return typeof v.claudeSessionId === 'string';
   if (v.kind === 'running') return typeof v.pid === 'number' && typeof v.claudeSessionId === 'string';
   return false;

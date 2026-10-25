@@ -44,8 +44,12 @@ async function hook(event, extra = {}) {
   }).catch(() => {});
 }
 
+// In a WSL stand-in's distribution, the process shows in its /proc while it runs.
+const procFolder = process.env.REFRAME_FAKE_PROC && path.join(process.env.REFRAME_FAKE_PROC, String(process.pid));
+
 function exit(code) {
   fs.rmSync(registryFile, { force: true });
+  if (procFolder) fs.rmSync(procFolder, { recursive: true, force: true });
   record('exit');
   process.exit(code);
 }
@@ -56,6 +60,7 @@ if (resumeId && !fs.existsSync(transcript(resumeId))) {
   exit(1);
 }
 writeRegistry('idle');
+if (procFolder) fs.mkdirSync(procFolder, { recursive: true });
 process.stdout.write(`\x1b[1mFAKE CLAUDE\x1b[0m ${resumeId ? 'resumed' : 'new'} ${sessionId}\r\n> `);
 
 let line = '';

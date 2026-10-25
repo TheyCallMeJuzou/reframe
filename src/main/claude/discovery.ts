@@ -6,7 +6,12 @@ import path from 'node:path';
 import { isAlive } from '../process';
 import { parseRegistryEntry, type RegistryEntry } from './registry';
 
-export function listRunning(home: string, exclude: { pids: Set<number>; sessionIds: Set<string> }): RegistryEntry[] {
+/** Claudes that run (`alive`: whether a process id does; a Linux one in WSL is asked differently). */
+export function listRunning(
+  home: string,
+  exclude: { pids: Set<number>; sessionIds: Set<string> },
+  alive: (pid: number) => boolean = isAlive,
+): RegistryEntry[] {
   let files: string[];
   try {
     files = fs.readdirSync(path.join(home, 'sessions')).filter((f) => /^\d+\.json$/.test(f));
@@ -18,7 +23,7 @@ export function listRunning(home: string, exclude: { pids: Set<number>; sessionI
     try {
       const entry = parseRegistryEntry(JSON.parse(fs.readFileSync(path.join(home, 'sessions', file), 'utf8')));
       if (!entry || exclude.pids.has(entry.pid) || exclude.sessionIds.has(entry.sessionId)) continue;
-      if (isAlive(entry.pid)) running.push(entry);
+      if (alive(entry.pid)) running.push(entry);
     } catch {
       // a registry file being written or removed right now
     }
@@ -108,7 +113,7 @@ export class TranscriptIndex {
     items: TranscriptInfo[];
     hasMore: boolean;
   }> {
-    const files = this.files().filter((f) => !options.exclude.has(f.sessionId));
+    const files = (await this.files()).filter((f) => !options.exclude.has(f.sessionId));
     const query = options.query?.trim().toLowerCase();
     const items: TranscriptInfo[] = [];
     for (const file of files) {
@@ -123,30 +128,32 @@ export class TranscriptIndex {
 
   /** One past session by id, e.g. when it is opened from the list. */
   async find(sessionId: string): Promise<TranscriptInfo | null> {
-    const file = this.files().find((f) => f.sessionId === sessionId);
+    const file = (await this.files()).find((f) => f.sessionId === sessionId);
     return file ? this.info(file) : null;
   }
 
-  private files(): { file: string; sessionId: string; modifiedAt: number }[] {
+  /** The transcripts, newest first; read without blocking (in WSL they are behind a network share). */
+  private async files(): Promise<{ file: string; sessionId: string; modifiedAt: number }[]> {
     const projects = path.join(this.home, 'projects');
     const out: { file: string; sessionId: string; modifiedAt: number }[] = [];
     let dirs: string[];
     try {
-      dirs = fs.readdirSync(projects);
+      dirs = await fs.promises.readdir(projects);
     } catch {
       return out;
     }
     for (const dir of dirs) {
       let names: string[];
       try {
-        names = fs.readdirSync(path.join(projects, dir)).filter((n) => n.endsWith('.jsonl'));
+        names = (await fs.promises.readdir(path.join(projects, dir))).filter((n) => n.endsWith('.jsonl'));
       } catch {
         continue;
       }
       for (const name of names) {
         const file = path.join(projects, dir, name);
         try {
-          out.push({ file, sessionId: name.slice(0, -'.jsonl'.length), modifiedAt: fs.statSync(file).mtimeMs });
+          const modifiedAt = (await fs.promises.stat(file)).mtimeMs;
+          out.push({ file, sessionId: name.slice(0, -'.jsonl'.length), modifiedAt });
         } catch {
           // removed in the meantime
         }

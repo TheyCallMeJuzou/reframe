@@ -51,6 +51,7 @@ const api: ReframeApi = {
   pathForFile: (file) => webUtils.getPathForFile(file),
   saveDroppedFile: (name, data) => ipcRenderer.invoke(IPC.saveDroppedFile, name, data),
   saveClipboardImage: () => ipcRenderer.invoke(IPC.saveClipboardImage),
+  startWsl: (distro) => ipcRenderer.send(IPC.startWsl, distro),
   tearOut: (key, size) => ipcRenderer.send(IPC.tearOut, key, size),
   showTileMenu: (sessionId) => ipcRenderer.send(IPC.tileMenu, sessionId),
   showGroupMenu: (groupId) => ipcRenderer.send(IPC.groupMenu, groupId),

@@ -41,6 +41,9 @@ export function setup() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'reframe-e2e-'));
   const project = path.join(dir, 'project');
   fs.mkdirSync(project);
+  // A WSL of its own (the stand-in, with no distributions until a test makes folders for them), not the real one.
+  const wsl = path.join(dir, 'wsl');
+  fs.mkdirSync(wsl);
   const env = {
     ...process.env,
     REFRAME_E2E: '1',
@@ -52,6 +55,8 @@ export function setup() {
     REFRAME_FAKE_LOG: path.join(dir, 'fake.log'),
     REFRAME_LOCALE: 'en',
     REFRAME_DISABLE_NOTIFICATIONS: '1',
+    REFRAME_WSL_EXE: path.join(root, 'test', 'fake-wsl', 'fake-wsl.mjs'),
+    REFRAME_WSL_SHARE: wsl,
   } as Record<string, string>;
   const launches = (): FakeLaunch[] =>
     fs.existsSync(env.REFRAME_FAKE_LOG!)

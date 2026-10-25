@@ -139,6 +139,8 @@ export const appStateSchema = z.object({
   // Added after the first release of the format; older files get the defaults.
   preferences: preferencesSchema.default(DEFAULT_PREFERENCES),
   workspaces: z.array(workspaceSchema).default([]),
+  /** WSL distributions Claude Code was found in, so the session list can tell when one of them is not running. */
+  wslDistros: z.array(z.string()).optional(),
 });
 
 export type DockEntry = z.infer<typeof dockEntrySchema>;

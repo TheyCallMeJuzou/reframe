@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react';
-import type { ListItemRef } from '@shared/ipc';
+import type { FoundListItem, ListItemRef, RunningListItem } from '@shared/ipc';
 import { tileKey } from '@shared/layout';
+import { parseWslPath } from '@shared/wsl';
 import { useApp } from '../context';
 import { setListDrag, setNodeDrag } from '../dnd';
 import { PAGE, type SessionListState } from '../session-list';
@@ -9,6 +10,19 @@ import { NameInput } from './NameInput';
 import { StatusDot } from './StatusDot';
 
 const folderName = (cwd: string) => cwd.split(/[\\/]/).filter(Boolean).pop() ?? cwd;
+
+// What opening a list entry refers to; one in WSL carries its distribution along.
+const runningRef = (i: RunningListItem): ListItemRef => ({
+  kind: 'running',
+  pid: i.pid,
+  claudeSessionId: i.claudeSessionId,
+  ...(i.distro ? { distro: i.distro } : {}),
+});
+const foundRef = (i: FoundListItem): ListItemRef => ({
+  kind: 'found',
+  claudeSessionId: i.claudeSessionId,
+  ...(i.distro ? { distro: i.distro } : {}),
+});
 
 interface Row {
   key: string;
@@ -44,14 +58,8 @@ export function SessionSidebar({ sessionList }: { sessionList: SessionListState 
       list
         ? [
             ...list.app.map((i) => ({ key: `app:${i.id}`, ref: { kind: 'app' as const, sessionId: i.id } })),
-            ...list.running.map((i) => ({
-              key: `claude:${i.claudeSessionId}`,
-              ref: { kind: 'running' as const, pid: i.pid, claudeSessionId: i.claudeSessionId },
-            })),
-            ...list.found.map((i) => ({
-              key: `claude:${i.claudeSessionId}`,
-              ref: { kind: 'found' as const, claudeSessionId: i.claudeSessionId },
-            })),
+            ...list.running.map((i) => ({ key: `claude:${i.claudeSessionId}`, ref: runningRef(i) })),
+            ...list.found.map((i) => ({ key: `claude:${i.claudeSessionId}`, ref: foundRef(i) })),
           ]
         : [],
     [list],
@@ -202,7 +210,13 @@ export function SessionSidebar({ sessionList }: { sessionList: SessionListState 
                 }
                 mark={<StatusDot status={item.status} />}
                 label={item.label}
-                meta={`${folderName(item.cwd)} · ${item.windowNumber ? t('list.window', { n: item.windowNumber }) : t('list.ended')}`}
+                meta={[
+                  folderName(item.cwd),
+                  parseWslPath(item.cwd)?.distro,
+                  item.windowNumber ? t('list.window', { n: item.windowNumber }) : t('list.ended'),
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
               />
               {!item.windowId && (
                 <button
@@ -222,17 +236,28 @@ export function SessionSidebar({ sessionList }: { sessionList: SessionListState 
         })}
 
         <h3 className="sidebar-heading">{t('list.found')}</h3>
+        {list?.wslStopped.map((distro) => (
+          <div className="sidebar-note" key={distro}>
+            <span>{t('list.wslStopped', { distro })}</span>
+            <button
+              className="button"
+              onClick={() => {
+                window.reframe.startWsl(distro);
+                setTimeout(reload, 2000);
+              }}
+            >
+              {t('list.wslStart')}
+            </button>
+          </div>
+        ))}
         {list && list.running.length + list.found.length === 0 && (
           <p className="sidebar-empty">{t('list.emptyFound')}</p>
         )}
         {list?.running.map((item) => {
-          const row: Row = {
-            key: `claude:${item.claudeSessionId}`,
-            ref: { kind: 'running', pid: item.pid, claudeSessionId: item.claudeSessionId },
-          };
+          const row: Row = { key: `claude:${item.claudeSessionId}`, ref: runningRef(item) };
           return (
             <ListRow
-              key={item.pid}
+              key={item.claudeSessionId}
               {...rowProps(row)}
               isNew={fresh.has(item.claudeSessionId)}
               title={t('list.openHint')}
@@ -243,15 +268,12 @@ export function SessionSidebar({ sessionList }: { sessionList: SessionListState 
                 </span>
               }
               label={item.name ?? folderName(item.cwd)}
-              meta={`${folderName(item.cwd)} · ${t('list.running')}`}
+              meta={[folderName(item.cwd), item.distro, t('list.running')].filter(Boolean).join(' · ')}
             />
           );
         })}
         {list?.found.map((item) => {
-          const row: Row = {
-            key: `claude:${item.claudeSessionId}`,
-            ref: { kind: 'found', claudeSessionId: item.claudeSessionId },
-          };
+          const row: Row = { key: `claude:${item.claudeSessionId}`, ref: foundRef(item) };
           return (
             <ListRow
               key={item.claudeSessionId}
@@ -261,7 +283,7 @@ export function SessionSidebar({ sessionList }: { sessionList: SessionListState 
               onDragStart={(event) => onRowDrag(row, event, () => setListDrag(event, [row.ref]))}
               mark={<StatusDot status="ended" />}
               label={item.title ?? folderName(item.cwd)}
-              meta={`${folderName(item.cwd)} · ${ago(item.modifiedAt)}`}
+              meta={[folderName(item.cwd), item.distro, ago(item.modifiedAt)].filter(Boolean).join(' · ')}
             />
           );
         })}

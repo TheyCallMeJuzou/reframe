@@ -92,6 +92,8 @@ export interface RunningListItem {
   claudeSessionId: string;
   cwd: string;
   name?: string;
+  /** Runs in this WSL distribution (`pid` is a Linux one there). */
+  distro?: string;
 }
 
 /** A past session found in Claude Code's transcripts. */
@@ -101,6 +103,8 @@ export interface FoundListItem {
   cwd: string;
   title?: string;
   modifiedAt: number;
+  /** Was in this WSL distribution. */
+  distro?: string;
 }
 
 export interface WorkspaceListItem {
@@ -119,13 +123,15 @@ export interface SessionList {
   found: FoundListItem[];
   /** More past sessions exist beyond the requested limit. */
   hasMore: boolean;
+  /** WSL distributions with Claude Code that are not running, so their sessions are missing here. */
+  wslStopped: string[];
 }
 
 /** What a list entry stands for when it is opened (main looks the details up again itself). */
 export type ListItemRef =
   | { kind: 'app'; sessionId: string }
-  | { kind: 'running'; pid: number; claudeSessionId: string }
-  | { kind: 'found'; claudeSessionId: string };
+  | { kind: 'running'; pid: number; claudeSessionId: string; distro?: string }
+  | { kind: 'found'; claudeSessionId: string; distro?: string };
 
 export interface OpenSessionRequest {
   item: ListItemRef;
@@ -239,6 +245,8 @@ export interface ReframeApi {
   saveDroppedFile(name: string, data: ArrayBuffer): Promise<string | null>;
   /** Saves the clipboard's image as a PNG file, for a session that cannot read the clipboard itself (WSL). */
   saveClipboardImage(): Promise<string | null>;
+  /** Starts a WSL distribution and keeps it running while reframe does, so its sessions show in the list. */
+  startWsl(distro: string): void;
   /** Moves a tile or group from another window into this one. */
   transferNode(request: TransferRequest): void;
   /** A drag ended without a drop target; if the pointer is outside every window, the node gets a new window. */
@@ -304,6 +312,7 @@ export const IPC = {
   readClipboard: 'reframe:read-clipboard',
   saveDroppedFile: 'reframe:save-dropped-file',
   saveClipboardImage: 'reframe:save-clipboard-image',
+  startWsl: 'reframe:start-wsl',
   tearOut: 'reframe:tear-out',
   tileMenu: 'reframe:tile-menu',
   groupMenu: 'reframe:group-menu',

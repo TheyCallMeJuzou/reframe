@@ -1,23 +1,26 @@
 // End to end (Windows): a session in a WSL folder runs its claude in that distribution through wsl.exe (here a
 // stand-in, with folders for distributions). No hooks reach reframe from WSL, so its status comes from Claude Code's
 // registry there; the tile shows the folder as "Fake ~/proj"; dropped files and a pasted image come in as Linux
-// paths; and it resumes after a restart. A distribution without claude says so.
+// paths; and it resumes after a restart. A distribution without claude says so. The session list shows the
+// sessions of running distributions (and says which known one is not running, with a button to start it), and a
+// session running in a WSL terminal is taken over.
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { expect, test } from '@playwright/test';
-import { callMain, captureWindows, cleanup, launch, newSession, quit, root, setup, tileByLabel } from './helpers';
+import * as pty from 'node-pty';
+import { expect, test, type Page } from '@playwright/test';
+import { callMain, captureWindows, cleanup, launch, newSession, quit, setup, tileByLabel } from './helpers';
 
 test.skip(process.platform !== 'win32', 'WSL is Windows only');
 
+/** The stand-in WSL (from setup()) with two distributions: Fake, and NoClaude without claude. */
 function wslSetup() {
   const base = setup();
-  const share = path.join(base.dir, 'wsl');
+  const share = base.env.REFRAME_WSL_SHARE!;
   const folder = path.join(share, 'Fake', 'home', 'ann', 'proj');
   fs.mkdirSync(folder, { recursive: true });
   fs.mkdirSync(path.join(share, 'NoClaude', 'home', 'ann', 'proj'), { recursive: true });
   fs.writeFileSync(path.join(share, 'NoClaude', 'no-claude'), '');
-  base.env.REFRAME_WSL_EXE = path.join(root, 'test', 'fake-wsl', 'fake-wsl.mjs');
-  base.env.REFRAME_WSL_SHARE = share;
   return { ...base, share, folder };
 }
 
@@ -115,6 +118,102 @@ test('a WSL folder whose distribution has no claude says so', async () => {
     await captureWindows('wsl-no-claude');
     throw error;
   } finally {
+    await cleanup(dir);
+  }
+});
+
+const row = (page: Page, text: string) => page.locator('.sidebar-row', { hasText: text });
+
+test('the session list: WSL sessions, taking over one, starting a distribution', async () => {
+  const { dir, env, share, launches } = wslSetup();
+  let external: pty.IPty | null = null;
+  let externalExited = false;
+  try {
+    // Known from an earlier run to have Claude Code, but not running now.
+    fs.mkdirSync(path.join(share, 'Stopped', 'home', 'ann'), { recursive: true });
+    fs.writeFileSync(path.join(share, 'Stopped', 'stopped'), '');
+    fs.mkdirSync(env.REFRAME_USER_DATA!, { recursive: true });
+    fs.writeFileSync(
+      path.join(env.REFRAME_USER_DATA!, 'state.json'),
+      JSON.stringify({
+        version: 1,
+        sessions: {},
+        windows: [],
+        recentFolders: [],
+        preferences: { nameFromFolder: true, language: 'en', fontSize: 13 },
+        workspaces: [],
+        wslDistros: ['Stopped'],
+      }),
+    );
+    // In Fake: a past session, and one running in a terminal of its own.
+    const claudeHome = path.join(share, 'Fake', 'home', 'ann', '.claude');
+    const pastId = crypto.randomUUID();
+    fs.mkdirSync(path.join(share, 'Fake', 'home', 'ann', 'old'), { recursive: true });
+    fs.mkdirSync(path.join(claudeHome, 'projects', '-home-ann-old'), { recursive: true });
+    fs.writeFileSync(
+      path.join(claudeHome, 'projects', '-home-ann-old', `${pastId}.jsonl`),
+      [
+        { type: 'user', cwd: '/home/ann/old', message: { content: 'tidy up the logs' } },
+        { type: 'ai-title', aiTitle: 'Log cleanup' },
+      ]
+        .map((line) => `${JSON.stringify(line)}\n`)
+        .join(''),
+    );
+    const runningId = crypto.randomUUID();
+    fs.mkdirSync(path.join(share, 'Fake', 'home', 'ann', 'other'), { recursive: true });
+    external = pty.spawn(
+      process.execPath,
+      [
+        env.REFRAME_WSL_EXE!,
+        '-d',
+        'Fake',
+        '--cd',
+        '/home/ann/other',
+        '--exec',
+        'env',
+        'PATH=/usr/bin',
+        'claude',
+      ].concat(['--session-id', runningId, '--name', 'outside']),
+      { env, cols: 100, rows: 30 },
+    );
+    external.onExit(() => (externalExited = true));
+    const registry = path.join(claudeHome, 'sessions');
+    await expect.poll(() => (fs.existsSync(registry) ? fs.readdirSync(registry).length : 0)).toBe(1);
+
+    const { app, page } = await launch(env);
+    await page.getByRole('button', { name: 'Sessions' }).click();
+    await expect(row(page, 'outside')).toContainText('other · Fake · running elsewhere', { timeout: 15_000 });
+    await expect(row(page, 'Log cleanup')).toContainText('old · Fake');
+    const note = page.locator('.sidebar-note');
+    await expect(note).toContainText('Stopped (WSL) is not running');
+
+    // Started from the list, it runs (kept running by reframe) and its note goes.
+    await note.getByRole('button', { name: 'Start' }).click();
+    await expect(note).toHaveCount(0, { timeout: 15_000 });
+
+    // The past one resumes in its WSL folder.
+    await row(page, 'Log cleanup').click();
+    await expect
+      .poll(() => launches().find((l) => l.event === 'start' && l.args.join(' ').includes(`--resume ${pastId}`)))
+      .toBeTruthy();
+    await expect(page.locator('.tile')).toHaveCount(1);
+    await expect(page.locator('.tile-cwd')).toHaveText('Fake ~/old');
+
+    // The running one is taken over: it ends over there (on a signal) and continues here, under its name.
+    await app.evaluate(({ dialog }) => {
+      Object.assign(dialog, { showMessageBox: async () => ({ response: 0, checkboxChecked: false }) });
+    });
+    await row(page, 'outside').click();
+    await expect.poll(() => externalExited, { timeout: 15_000 }).toBe(true);
+    await expect(tileByLabel(page, 'outside').locator('.status-idle')).toBeVisible({ timeout: 15_000 });
+    await expect(tileByLabel(page, 'outside').locator('.tile-cwd')).toHaveText('Fake ~/other');
+    expect(launches().filter((l) => l.event === 'start' && l.args.includes(runningId))).toHaveLength(2);
+    await quit(app);
+  } catch (error) {
+    await captureWindows('wsl-list');
+    throw error;
+  } finally {
+    if (external && !externalExited) external.kill();
     await cleanup(dir);
   }
 });

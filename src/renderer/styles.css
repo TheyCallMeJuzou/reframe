@@ -907,6 +907,20 @@ select {
   font-size: 12px;
 }
 
+/* A WSL distribution that is not running, with a button to start it. */
+.sidebar-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 6px 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.sidebar-note .button {
+  flex: none;
+}
+
 .sidebar-row-wrap {
   position: relative;
 }
