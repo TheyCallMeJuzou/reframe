@@ -7,9 +7,12 @@ import path from 'node:path';
 import { ReframeApp } from './app';
 import { createLogger } from './log';
 import { startedBySystem } from './autostart';
+import { portableDataDir } from './portable';
 
-// Tests and side-by-side dev runs use their own profile.
-if (process.env.REFRAME_USER_DATA) app.setPath('userData', process.env.REFRAME_USER_DATA);
+// Tests and side-by-side dev runs use their own profile; the portable copy keeps it next to itself.
+const portable = app.isPackaged ? portableDataDir(process.execPath) : null;
+const profile = process.env.REFRAME_USER_DATA || portable;
+if (profile) app.setPath('userData', profile);
 
 const build = app.isPackaged ? 'installed' : 'development';
 
@@ -21,8 +24,10 @@ if (!app.requestSingleInstanceLock({ build })) {
   app.quit();
 } else {
   // Windows shows toasts only for an app id with a Start menu shortcut. The installer creates one for
-  // dev.reframe.app; unpackaged (npm run dev) Electron's own executable path is the id that works.
-  if (process.platform === 'win32') app.setAppUserModelId(app.isPackaged ? 'dev.reframe.app' : process.execPath);
+  // dev.reframe.app; unpackaged (npm run dev) and portable, the executable's path is the id that works.
+  if (process.platform === 'win32') {
+    app.setAppUserModelId(app.isPackaged && !portable ? 'dev.reframe.app' : process.execPath);
+  }
 
   let reframe: ReframeApp | null = null;
   let quitting = false;
@@ -50,7 +55,7 @@ if (!app.requestSingleInstanceLock({ build })) {
 
   void app.whenReady().then(async () => {
     const locale = resolveLocale(process.env.REFRAME_LOCALE || app.getLocale());
-    reframe = new ReframeApp(locale, { icon, trayIcon, trayIcon2x });
+    reframe = new ReframeApp(locale, { icon, trayIcon, trayIcon2x }, !!portable);
     await reframe.start({ hidden: startedBySystem() });
     // End-to-end tests drive things a real drag would do (e.g. tearing a tile out at a point).
     if (process.env.REFRAME_E2E) Object.assign(globalThis, { reframe });

@@ -32,7 +32,7 @@ export interface TrayActions {
   openWorkspace: (workspaceId: string) => void;
   autostart: () => boolean;
   setAutostart: (enabled: boolean) => void;
-  /** "Restart to update" once an update is downloaded. */
+  /** "Restart to update" once an update is downloaded; in the portable copy "Download reframe X" (the release page). */
   update: () => { label: string; install: () => void } | null;
   about: () => void;
   quit: () => void;

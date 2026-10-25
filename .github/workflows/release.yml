@@ -47,3 +47,10 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npx electron-builder --publish always
+      # The portable Windows copy, made from the unpacked app electron-builder leaves in dist/win-unpacked.
+      - name: Portable ZIP (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          node scripts/portable.mjs
+          gh release upload "$GITHUB_REF_NAME" dist/reframe-*-win-portable.zip --clobber

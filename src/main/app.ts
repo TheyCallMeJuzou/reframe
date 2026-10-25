@@ -72,6 +72,7 @@ import {
   type WindowView,
 } from '@shared/ipc';
 import { PERMISSION_MODES } from '@shared/launch';
+import { RELEASES_URL } from '@shared/links';
 import {
   emptyWindow,
   FONT_SIZE,
@@ -142,7 +143,7 @@ export class ReframeApp {
   private log = createLogger(path.join(app.getPath('userData'), 'logs'));
   private claudeHome = claudeHome();
   private transcripts = new TranscriptIndex(this.claudeHome);
-  private updates = new Updates(this.log);
+  private updates: Updates;
   /** Sessions in WSL folders (Windows only). */
   private wsl = process.platform === 'win32' ? new WslDistros(this.log) : null;
 
@@ -152,7 +153,10 @@ export class ReframeApp {
   constructor(
     private systemLocale: Locale,
     private assets: AppAssets,
+    /** The portable copy (data next to it): it does not update itself. */
+    private portable = false,
   ) {
+    this.updates = new Updates(this.log, portable);
     this.locale = systemLocale;
     this.windows = new WindowManager(assets.icon);
   }
@@ -172,6 +176,7 @@ export class ReframeApp {
       version: app.getVersion(),
       platform: process.platform,
       build: app.isPackaged ? 'installed' : 'development',
+      ...(this.portable ? { portable: app.getPath('userData') } : {}),
       hidden,
       state: loaded.source,
       windows: this.state.windows.length,
@@ -1487,10 +1492,22 @@ export class ReframeApp {
           this.log('warn', 'could not change starting with the system', { error: String(error) });
         }
       },
-      update: () =>
-        this.updates.ready
-          ? { label: t('tray.restartToUpdate', { version: this.updates.ready }), install: () => this.restartToUpdate() }
-          : null,
+      update: () => {
+        if (this.updates.ready) {
+          return {
+            label: t('tray.restartToUpdate', { version: this.updates.ready }),
+            install: () => this.restartToUpdate(),
+          };
+        }
+        // The portable copy: the new version is downloaded by hand.
+        if (this.updates.available) {
+          return {
+            label: t('tray.downloadUpdate', { version: this.updates.available }),
+            install: () => void shell.openExternal(RELEASES_URL),
+          };
+        }
+        return null;
+      },
       quit: () => app.quit(),
     });
     this.refreshTray = refresh;
@@ -1505,6 +1522,17 @@ export class ReframeApp {
         body: this.t('update.readyBody', { version }),
         icon: this.assets.icon,
       }).show();
+    });
+    this.updates.on('available', (version) => {
+      this.refreshTray();
+      if (!Notification.isSupported() || process.env.REFRAME_DISABLE_NOTIFICATIONS) return;
+      const notification = new Notification({
+        title: this.t('update.availableTitle', { version }),
+        body: this.t('update.availableBody'),
+        icon: this.assets.icon,
+      });
+      notification.on('click', () => void shell.openExternal(RELEASES_URL));
+      notification.show();
     });
     this.updates.start();
   }

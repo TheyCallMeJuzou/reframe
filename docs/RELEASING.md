@@ -13,7 +13,7 @@ Development happens on Gitea (`main` is always releasable; bigger work goes thro
 
 Publishing is what makes the update visible to installed apps: they check GitHub Releases half a minute after starting and then every six hours, download in the background, and install on the next quit (or right away with "Restart to update" in the tray menu). Draft and pre-releases are ignored.
 
-What updates itself: the Windows installer and the Linux AppImage. The `.deb` is updated by installing the new one; macOS needs a signed build first (see below).
+What updates itself: the Windows installer and the Linux AppImage. The `.deb` is updated by installing the new one; macOS needs a signed build first (see below). The portable Windows ZIP (made by `scripts/portable.mjs` from the unpacked app, `npm run dist:portable` locally) only tells about a new version and links to the release.
 
 ## Building locally
 

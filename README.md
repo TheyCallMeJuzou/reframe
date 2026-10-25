@@ -68,6 +68,7 @@ Download the installer for your system from [Releases](https://github.com/TheyCa
 The builds are not code-signed yet, so the first start needs a confirmation:
 
 - **Windows** (`reframe-Setup-<version>.exe`): installs for your user without admin rights. If SmartScreen warns, choose _More info_ → _Run anyway_.
+- **Windows, portable** (`reframe-<version>-win-portable.zip`): unpack it anywhere (a USB stick, say) and start `reframe.exe`. It keeps its sessions, windows and settings in the folder `data` next to it and runs apart from an installed reframe. It does not update itself: it tells you when there is a new version to download. If you let it start with the system and move the folder later, turn that on again.
 - **macOS** (`.dmg`, Apple silicon): drag reframe into Applications, then right-click it → _Open_ the first time (or `xattr -dr com.apple.quarantine /Applications/reframe.app`). Updates on macOS need a signed build, so for now update by downloading the new version.
 - **Linux**: the `.AppImage` (make it executable, then run it; it updates itself) or the `.deb`.
 

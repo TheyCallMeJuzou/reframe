@@ -35,6 +35,9 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: REFRAME_E2E_APP="$PWD/dist/win-unpacked/reframe.exe" npx playwright test
+      - name: Portable ZIP (Windows)
+        if: runner.os == 'Windows'
+        run: node scripts/portable.mjs
       - name: End-to-end tests (macOS, informational)
         if: runner.os == 'macOS'
         continue-on-error: true

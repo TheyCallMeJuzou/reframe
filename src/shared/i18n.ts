@@ -167,6 +167,9 @@ const en = {
   'otherBuild.installed': 'installed version',
   'otherBuild.development': 'development build (npm run dev)',
   'tray.restartToUpdate': 'Restart to update to {version}',
+  'tray.downloadUpdate': 'Download reframe {version}',
+  'update.availableTitle': 'reframe {version} is out',
+  'update.availableBody': 'This portable copy does not update itself. Click to download the new version.',
   'update.readyTitle': 'Update ready',
   'update.readyBody':
     'reframe {version} is installed when you quit it, or right away with "Restart to update" in the tray menu.',
@@ -347,6 +350,10 @@ const de: Record<MessageKey, string> = {
   'otherBuild.installed': 'installierte Version',
   'otherBuild.development': 'Entwicklerversion (npm run dev)',
   'tray.restartToUpdate': 'Neu starten und auf {version} aktualisieren',
+  'tray.downloadUpdate': 'reframe {version} herunterladen',
+  'update.availableTitle': 'reframe {version} ist da',
+  'update.availableBody':
+    'Diese portable Version aktualisiert sich nicht selbst. Klicke, um die neue Version herunterzuladen.',
   'update.readyTitle': 'Update bereit',
   'update.readyBody':
     'reframe {version} wird beim Beenden installiert, oder sofort mit "Neu starten und aktualisieren" im Tray-Menü.',
