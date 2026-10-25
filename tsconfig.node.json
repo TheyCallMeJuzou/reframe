@@ -7,6 +7,7 @@
   "include": [
     "electron.vite.config.ts",
     "vitest.config.ts",
+    "vitest.setup.ts",
     "playwright.config.ts",
     "playwright.screenshots.config.ts",
     "src/main/**/*",
