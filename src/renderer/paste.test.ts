@@ -14,6 +14,13 @@ describe('formatPaths', () => {
     );
   });
 
+  it('types Linux paths into a session in WSL', () => {
+    const wsl = { distro: 'Ubuntu', mountRoot: '/mnt/' };
+    expect(formatPaths(['C:\\My Pictures\\b.png', '\\\\wsl.localhost\\Ubuntu\\home\\me\\a.txt'], 'win32', wsl)).toBe(
+      "'/mnt/c/My Pictures/b.png' /home/me/a.txt ",
+    );
+  });
+
   it('types nothing for no files', () => {
     expect(formatPaths([], 'win32')).toBe('');
   });

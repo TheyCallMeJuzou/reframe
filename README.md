@@ -32,6 +32,7 @@
 
 - **Session list.** The side bar on the left lists the sessions in reframe, the ones running in other terminals and your recent Claude Code sessions, with search. Click or drag one to open it: ended sessions resume, and sessions running elsewhere are taken over (ended there, continued here, history and name included). Select several with Shift or Ctrl+click and open them together from the right-click menu, also as a new group, here or in a new window. Sessions that turn up while reframe runs light up, and the Sessions button gets a dot while the list is hidden.
 - **Pull terminal windows in** (Windows). Drag a Windows Terminal or console window (or just a tab of it) with a running `claude` onto reframe: after a short confirmation the session continues in reframe, at the spot you dropped it, and the terminal tab closes if nothing else runs in it.
+- **WSL** (Windows). Start a session in a folder inside WSL (_Browse…_ → Linux, or type `\\wsl.localhost\Ubuntu\home\…`) and it runs the Claude Code installed in that distribution, shown as `Ubuntu ~/project`, with its status, notifications and resume after a restart like any other. Dropped files and pasted screenshots come in as Linux paths.
 - **Files and screenshots.** Drop files onto a session to type in their paths (Claude Code attaches images among them); Ctrl+V pastes text, files you copied in Explorer or Finder, or a screenshot from the clipboard.
 
   <img src="docs/screenshots/files.gif" alt="A screenshot dropped onto a session turns into an image for Claude Code">
@@ -61,7 +62,7 @@ On macOS, use Cmd instead of Ctrl. Everything else goes to Claude Code as usual.
 
 ## Install
 
-Download the installer for your system from [Releases](https://github.com/TheyCallMeJuzou/reframe/releases). You need [Claude Code](https://claude.com/claude-code) installed and logged in (`claude` on your `PATH`). On Windows that means Claude Code installed on Windows itself; one installed only in WSL is not supported yet.
+Download the installer for your system from [Releases](https://github.com/TheyCallMeJuzou/reframe/releases). You need [Claude Code](https://claude.com/claude-code) installed and logged in (`claude` on your `PATH`). On Windows, sessions in a WSL folder use the Claude Code installed in that distribution instead.
 
 The builds are not code-signed yet, so the first start needs a confirmation:
 

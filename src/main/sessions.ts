@@ -1,21 +1,41 @@
 // Runs claude processes for sessions and tracks what they are doing. Status comes from two sources:
 // HTTP hooks (documented; prompt submitted, response finished, needs input) and Claude Code's
 // session registry file for the process (undocumented; immediate session id changes on /clear).
+// A session in a WSL folder runs its claude in that distribution, through wsl.exe; the hooks cannot reach reframe
+// from there, so its status (and what it announces) comes from the registry alone.
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
+import os from 'node:os';
 import type { SessionStatus, SessionView } from '@shared/ipc';
 import type { SessionRecord } from '@shared/state';
+import { parseWslPath, wslWindowsPath, type WslPath } from '@shared/wsl';
 import { claudeArgs, type LaunchMode } from './claude/args';
 import { claudeEnv } from './claude/env';
-import { readRegistryEntry, transcriptExists } from './claude/registry';
+import { findRegistryEntry, readRegistryEntry, transcriptExists, type RegistryEntry } from './claude/registry';
 import type { ClaudeBinary } from './claude/resolve';
 import { writeHookSettings } from './claude/settings';
 import type { HookMessage, HookServer } from './hooks/server';
 import type { LogFn } from './log';
 import { isAlive, killTree } from './process';
 import type { PtyHostClient } from './ptyhost-client';
+import type { WslCommand, WslInfo } from './wsl/distros';
 
 export type NotifyKind = 'done' | 'waiting';
+
+/** How sessions in WSL folders get run (see WslDistros). */
+export interface WslLauncher {
+  readonly share: string;
+  readonly command: WslCommand;
+  info(distro: string): Promise<WslInfo | null>;
+}
+
+/** A session running in WSL: its distribution, Claude's folder there, and its registry entry once found. */
+interface WslRuntime {
+  distro: string;
+  home: string;
+  claudeSessionId: string;
+  linuxPid?: number;
+}
 
 interface Runtime {
   /** Which start of the session this is; events of an older process carry an older number. */
@@ -30,6 +50,7 @@ interface Runtime {
   stopping?: Promise<void>;
   exited?: Promise<void>;
   markExited?: () => void;
+  wsl?: WslRuntime;
 }
 
 export interface SessionManagerDeps {
@@ -40,6 +61,8 @@ export interface SessionManagerDeps {
   resolveClaude: () => ClaudeBinary | null;
   env: NodeJS.ProcessEnv;
   log?: LogFn;
+  /** Windows only: runs sessions in WSL folders. */
+  wsl?: WslLauncher;
 }
 
 export type IdentityPatch = Partial<Pick<SessionRecord, 'claudeSessionId' | 'cwd' | 'pid' | 'used'>>;
@@ -105,10 +128,6 @@ export class SessionManager extends EventEmitter<Events> {
   }
 
   start(session: SessionRecord, requested: LaunchMode): void {
-    // Claude Code writes a transcript only from the first message on. Without one there is nothing to
-    // resume: an unused session starts fresh under the same id; a used one has lost its history.
-    const missing = requested === 'resume' && !transcriptExists(this.deps.claudeHome, session.claudeSessionId);
-    const mode: LaunchMode = missing ? 'new' : requested;
     const previous = this.runtimes.get(session.id);
     if (previous?.pid && previous.status !== 'ended' && previous.status !== 'error') {
       // Started again before the old process was gone (e.g. reopened right after ending it): it goes now, and
@@ -116,12 +135,21 @@ export class SessionManager extends EventEmitter<Events> {
       void killTree(previous.pid);
       previous.markExited?.();
     }
-    const runtime: Runtime = { instance: ++this.instances, status: 'starting', mode, startedAt: Date.now() };
+    const runtime: Runtime = { instance: ++this.instances, status: 'starting', mode: requested, startedAt: Date.now() };
     runtime.exited = new Promise((resolve) => (runtime.markExited = resolve));
     this.runtimes.set(session.id, runtime);
 
+    const where = this.deps.wsl && parseWslPath(session.cwd, this.deps.wsl.share);
+    if (where) {
+      void this.startInWsl(session, requested, runtime, where);
+      this.emit('changed', session.id);
+      return;
+    }
+
     if (!fs.existsSync(session.cwd)) return this.fail(session.id, 'folderMissing');
-    if (missing && session.used) return this.fail(session.id, 'transcriptMissing');
+    const mode = launchMode(session, requested, this.deps.claudeHome);
+    if (mode === 'lost') return this.fail(session.id, 'transcriptMissing');
+    runtime.mode = mode;
     const claude = this.deps.resolveClaude();
     if (!claude) return this.fail(session.id, 'claudeNotFound');
 
@@ -130,7 +158,7 @@ export class SessionManager extends EventEmitter<Events> {
       session: session.id,
       claudeSession: session.claudeSessionId,
       mode,
-      ...(missing ? { note: 'no transcript yet, starting fresh under the same id' } : {}),
+      ...(mode !== requested ? { note: 'no transcript yet, starting fresh under the same id' } : {}),
       cwd: session.cwd,
       claude: claude.source,
     });
@@ -141,6 +169,52 @@ export class SessionManager extends EventEmitter<Events> {
       args: [...claude.prefixArgs, ...claudeArgs(session, mode, settings)],
       cwd: session.cwd,
       env: claudeEnv(this.deps.env, { ...claude.env, REFRAME_SESSION: session.id }),
+      cols: 120,
+      rows: 32,
+    });
+    this.emit('changed', session.id);
+  }
+
+  /**
+   * Runs claude in the distribution of the session's WSL folder. Asking the distribution how (which starts it)
+   * takes a moment; the session shows as starting meanwhile, and is not started at all if it was ended by then.
+   */
+  private async startInWsl(session: SessionRecord, requested: LaunchMode, runtime: Runtime, where: WslPath) {
+    const wsl = this.deps.wsl!;
+    const info = await wsl.info(where.distro);
+    const folder = !!info?.claude && (await isFolder(session.cwd));
+    if (this.runtimes.get(session.id) !== runtime || runtime.stopping) return runtime.markExited?.();
+    if (!info?.claude) return this.fail(session.id, 'claudeNotFound');
+    if (!folder) return this.fail(session.id, 'folderMissing');
+    const home = wslWindowsPath(where.distro, info.claudeHome, wsl.share);
+    const mode = launchMode(session, requested, home);
+    if (mode === 'lost') return this.fail(session.id, 'transcriptMissing');
+    runtime.mode = mode;
+    runtime.startedAt = Date.now();
+    runtime.wsl = { distro: where.distro, home, claudeSessionId: session.claudeSessionId };
+
+    this.log('info', 'session start', {
+      session: session.id,
+      claudeSession: session.claudeSessionId,
+      mode,
+      ...(mode !== requested ? { note: 'no transcript yet, starting fresh under the same id' } : {}),
+      cwd: session.cwd,
+      wsl: where.distro,
+      claude: info.claude,
+    });
+    const { file, prefixArgs, env } = wsl.command;
+    this.deps.host.spawn({
+      sessionId: session.id,
+      instance: runtime.instance,
+      file,
+      // Without a shell (so nothing the user's startup files print gets in), with the PATH their login shell has.
+      args: [
+        ...prefixArgs,
+        ...['-d', where.distro, '--cd', where.path, '--exec', 'env', `PATH=${info.path}`, info.claude],
+        ...claudeArgs(session, mode),
+      ],
+      cwd: os.homedir(),
+      env: claudeEnv(this.deps.env, env),
       cols: 120,
       rows: 32,
     });
@@ -273,11 +347,16 @@ export class SessionManager extends EventEmitter<Events> {
   private pollRegistry(): void {
     for (const [sessionId, runtime] of this.runtimes) {
       if (!runtime.pid || !this.isRunning(sessionId)) continue;
-      const entry = readRegistryEntry(this.deps.claudeHome, runtime.pid);
+      const entry = runtime.wsl
+        ? this.wslRegistryEntry(runtime.wsl)
+        : readRegistryEntry(this.deps.claudeHome, runtime.pid);
       if (!entry) continue;
+      // In WSL the folder is a Linux path; reframe keeps it as Windows reaches it.
+      const cwd =
+        entry.cwd && runtime.wsl ? wslWindowsPath(runtime.wsl.distro, entry.cwd, this.deps.wsl!.share) : entry.cwd;
       this.emit('identity', sessionId, {
         claudeSessionId: entry.sessionId,
-        ...(entry.cwd ? { cwd: entry.cwd } : {}),
+        ...(cwd ? { cwd } : {}),
         ...(entry.status === 'busy' ? { used: true } : {}),
       });
       if (entry.name !== runtime.registryName) {
@@ -286,12 +365,28 @@ export class SessionManager extends EventEmitter<Events> {
       }
       // Follow the registry only when it changes, so it does not undo a fresher hook-based status.
       if (entry.status && entry.status !== runtime.registryStatus) {
+        const before = runtime.registryStatus;
         runtime.registryStatus = entry.status;
         this.setStatus(sessionId, runtime, entry.status);
+        // Without hooks (WSL), the registry is also what tells that Claude is done or needs the user.
+        if (runtime.wsl && entry.status === 'waiting') this.emit('notify', sessionId, 'waiting');
+        if (runtime.wsl && entry.status === 'idle' && before === 'busy') this.emit('notify', sessionId, 'done');
       } else if (runtime.status === 'starting') {
         this.setStatus(sessionId, runtime, entry.status ?? 'idle');
       }
     }
+  }
+
+  /**
+   * A WSL session's registry entry. It is named after the Linux process id, which only the entry itself tells, so
+   * it is found by the session id first (and again should that file go away).
+   */
+  private wslRegistryEntry(wsl: WslRuntime): RegistryEntry | null {
+    const known = wsl.linuxPid ? readRegistryEntry(wsl.home, wsl.linuxPid) : null;
+    if (known) return known;
+    const found = findRegistryEntry(wsl.home, wsl.claudeSessionId);
+    wsl.linuxPid = found?.pid;
+    return found;
   }
 
   private setStatus(sessionId: string, runtime: Runtime, status: SessionStatus): void {
@@ -299,6 +394,24 @@ export class SessionManager extends EventEmitter<Events> {
     runtime.status = status;
     this.emit('changed', sessionId);
   }
+}
+
+/**
+ * How to start a session that should resume. Claude Code writes a transcript only from the first message on;
+ * without one there is nothing to resume: an unused session starts fresh under the same id, a used one has lost
+ * its history.
+ */
+function launchMode(session: SessionRecord, requested: LaunchMode, claudeHome: string): LaunchMode | 'lost' {
+  if (requested !== 'resume' || transcriptExists(claudeHome, session.claudeSessionId)) return requested;
+  return session.used ? 'lost' : 'new';
+}
+
+/** Whether a folder is there, without holding up everything else (a WSL folder may wait for its distribution). */
+function isFolder(folder: string): Promise<boolean> {
+  return fs.promises.stat(folder).then(
+    (stats) => stats.isDirectory(),
+    () => false,
+  );
 }
 
 function settle(promise: Promise<void>, ms: number): Promise<boolean> {

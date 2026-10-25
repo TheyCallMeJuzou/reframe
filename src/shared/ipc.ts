@@ -13,12 +13,14 @@ export interface SessionView {
   /** What the tile shows: the user's name, else Claude's name for the session, else the folder. */
   label: string;
   cwd: string;
-  /** `cwd` as shown: under the home folder from "~". */
+  /** `cwd` as shown: under the home folder from "~", a WSL folder as "Ubuntu ~/shop". */
   cwdLabel: string;
   status: SessionStatus;
   lifecycle: SessionRecord['lifecycle'];
   /** Translation key of the error shown in the tile, if any. */
   error?: 'resumeFailed' | 'transcriptMissing' | 'claudeNotFound' | 'spawnFailed' | 'folderMissing';
+  /** Runs in this WSL distribution, which reaches Windows drives under `mountRoot` (e.g. /mnt/). */
+  wsl?: { distro: string; mountRoot: string };
 }
 
 export interface WindowView {
@@ -49,7 +51,10 @@ export interface NewSessionRequest {
   target?: DropTarget;
 }
 
-export type NewSessionResult = { ok: true } | { ok: false; error: 'folderMissing' | 'claudeNotFound' };
+export type NewSessionResult =
+  | { ok: true }
+  /** `distro`: the WSL distribution (of the folder) that has no claude. */
+  | { ok: false; error: 'folderMissing' | 'claudeNotFound'; distro?: string };
 
 export interface DialogDefaults {
   recentFolders: string[];
@@ -232,6 +237,8 @@ export interface ReframeApi {
   pathForFile(file: File): string;
   /** Saves a dropped file that has no path to a temporary file and returns its path. */
   saveDroppedFile(name: string, data: ArrayBuffer): Promise<string | null>;
+  /** Saves the clipboard's image as a PNG file, for a session that cannot read the clipboard itself (WSL). */
+  saveClipboardImage(): Promise<string | null>;
   /** Moves a tile or group from another window into this one. */
   transferNode(request: TransferRequest): void;
   /** A drag ended without a drop target; if the pointer is outside every window, the node gets a new window. */
@@ -296,6 +303,7 @@ export const IPC = {
   toggleFullscreen: 'reframe:toggle-fullscreen',
   readClipboard: 'reframe:read-clipboard',
   saveDroppedFile: 'reframe:save-dropped-file',
+  saveClipboardImage: 'reframe:save-clipboard-image',
   tearOut: 'reframe:tear-out',
   tileMenu: 'reframe:tile-menu',
   groupMenu: 'reframe:group-menu',

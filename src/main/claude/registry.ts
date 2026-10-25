@@ -44,6 +44,24 @@ export function readRegistryEntry(home: string, pid: number): RegistryEntry | nu
   }
 }
 
+/**
+ * The entry of a running claude by its session id, for one whose process id reframe does not know (in WSL, the
+ * entry is named after the Linux process id).
+ */
+export function findRegistryEntry(home: string, sessionId: string): RegistryEntry | null {
+  let files: string[];
+  try {
+    files = fs.readdirSync(path.join(home, 'sessions')).filter((f) => /^\d+\.json$/.test(f));
+  } catch {
+    return null;
+  }
+  for (const file of files) {
+    const entry = readRegistryEntry(home, Number(file.slice(0, -'.json'.length)));
+    if (entry?.sessionId === sessionId) return entry;
+  }
+  return null;
+}
+
 /** Whether Claude Code still has the transcript needed to resume a session. */
 export function transcriptExists(home: string, sessionId: string): boolean {
   const projects = path.join(home, 'projects');

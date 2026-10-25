@@ -1,7 +1,15 @@
 // What reframe types into a session for files and images, the way a terminal would.
+import { linuxPathOf } from '@shared/wsl';
 
-/** File paths as one would type them: quoted where needed, separated by spaces, with a space after. */
-export function formatPaths(paths: string[], platform: string): string {
+/**
+ * File paths as one would type them: quoted where needed, separated by spaces, with a space after. For a session
+ * in WSL they are its Linux paths (C:\x → /mnt/c/x), quoted for its shell.
+ */
+export function formatPaths(paths: string[], platform: string, wsl?: { distro: string; mountRoot: string }): string {
+  if (wsl) {
+    const linux = paths.map((p) => linuxPathOf(p, wsl.distro, wsl.mountRoot) ?? p);
+    return formatPaths(linux, 'linux');
+  }
   const quote =
     platform === 'win32'
       ? (p: string) => (/[\s&()^'"`,;=!%]/.test(p) ? `"${p}"` : p)

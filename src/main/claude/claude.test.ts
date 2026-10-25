@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { SessionRecord } from '@shared/state';
 import { claudeArgs } from './args';
 import { claudeEnv } from './env';
-import { parseRegistryEntry, readRegistryEntry, transcriptExists } from './registry';
+import { findRegistryEntry, parseRegistryEntry, readRegistryEntry, transcriptExists } from './registry';
 import { resolveClaude } from './resolve';
 import { hookSettings } from './settings';
 
@@ -84,6 +84,11 @@ describe('claudeArgs', () => {
   it('resumes without creating another worktree', () => {
     const s = session({ launch: { worktree: true } });
     expect(claudeArgs(s, 'resume', 'S.json')).toEqual(['--resume', s.claudeSessionId, '--settings', 'S.json']);
+  });
+
+  it('passes no settings when there are no hooks (WSL)', () => {
+    const s = session();
+    expect(claudeArgs(s, 'resume')).toEqual(['--resume', s.claudeSessionId]);
   });
 });
 
@@ -165,6 +170,17 @@ describe('registry', () => {
     fs.writeFileSync(path.join(home, 'projects', 'C--work', 's-1.jsonl'), '');
     expect(transcriptExists(home, 's-1')).toBe(true);
     expect(transcriptExists(home, 's-2')).toBe(false);
+  });
+
+  it('finds an entry by its session id when the process id is not known', () => {
+    const home = tempDir();
+    fs.mkdirSync(path.join(home, 'sessions'));
+    fs.writeFileSync(path.join(home, 'sessions', '5740.json'), JSON.stringify({ pid: 5740, sessionId: 's-1' }));
+    fs.writeFileSync(path.join(home, 'sessions', '5741.json'), JSON.stringify({ pid: 5741, sessionId: 's-2' }));
+    fs.writeFileSync(path.join(home, 'sessions', 'notes.txt'), 's-2');
+    expect(findRegistryEntry(home, 's-2')?.pid).toBe(5741);
+    expect(findRegistryEntry(home, 's-3')).toBeNull();
+    expect(findRegistryEntry(path.join(home, 'missing'), 's-1')).toBeNull();
   });
 });
 

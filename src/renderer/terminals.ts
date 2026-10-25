@@ -5,7 +5,12 @@ import { FitAddon } from '@xterm/addon-fit';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { WebLinksAddon } from '@xterm/addon-web-links';
-import { TERMINAL_PORT_MESSAGE, type TerminalHostMessage, type TerminalViewMessage } from '@shared/ipc';
+import {
+  TERMINAL_PORT_MESSAGE,
+  type SessionView,
+  type TerminalHostMessage,
+  type TerminalViewMessage,
+} from '@shared/ipc';
 import { FONT_SIZE } from '@shared/state';
 import { formatPaths, imagePasteKey } from './paste';
 
@@ -33,6 +38,8 @@ const THEME = {
 export class TerminalRegistry {
   private entries = new Map<string, Entry>();
   private fontSize: number = FONT_SIZE.normal;
+  /** Sessions that run in WSL, which get Linux paths. */
+  private wsl = new Map<string, NonNullable<SessionView['wsl']>>();
 
   constructor() {
     window.addEventListener('message', (event: MessageEvent) => {
@@ -102,6 +109,12 @@ export class TerminalRegistry {
     }
   }
 
+  /** Whether (and where) a session runs in WSL. */
+  setWsl(sessionId: string, wsl: SessionView['wsl']): void {
+    if (wsl) this.wsl.set(sessionId, wsl);
+    else this.wsl.delete(sessionId);
+  }
+
   focus(sessionId: string): void {
     this.entries.get(sessionId)?.term.focus();
   }
@@ -110,7 +123,7 @@ export class TerminalRegistry {
   pastePaths(sessionId: string, paths: string[]): void {
     const entry = this.entries.get(sessionId);
     if (!entry || paths.length === 0) return;
-    entry.term.paste(formatPaths(paths, window.reframe.platform));
+    entry.term.paste(formatPaths(paths, window.reframe.platform, this.wsl.get(sessionId)));
     entry.term.focus();
   }
 
@@ -130,7 +143,12 @@ export class TerminalRegistry {
     term.unicode.activeVersion = '11';
     term.loadAddon(new WebLinksAddon((_event, uri) => window.reframe.openExternal(uri)));
     term.attachCustomKeyEventHandler((event) =>
-      handleClipboardKeys(term, event, (data) => this.send(entry, { type: 'input', data })),
+      handleClipboardKeys(
+        term,
+        event,
+        (data) => this.send(entry, { type: 'input', data }),
+        () => this.wsl.get(sessionId),
+      ),
     );
 
     const element = document.createElement('div');
@@ -197,9 +215,14 @@ export class TerminalRegistry {
 /**
  * Ctrl+C copies when text is selected (otherwise it interrupts claude). Ctrl+V pastes text; files copied in a
  * file manager come in as their paths, and an image is left to Claude Code, which reads it from the clipboard on
- * its own paste key.
+ * its own paste key. Claude Code in WSL cannot reach the clipboard: it gets the image as a file instead.
  */
-function handleClipboardKeys(term: Terminal, event: KeyboardEvent, input: (data: string) => void): boolean {
+function handleClipboardKeys(
+  term: Terminal,
+  event: KeyboardEvent,
+  input: (data: string) => void,
+  wslOf: () => SessionView['wsl'],
+): boolean {
   if (event.type !== 'keydown' || !event.ctrlKey || event.altKey || event.metaKey) return true;
   const key = event.key.toLowerCase();
   if (key === 'c' && (event.shiftKey || term.hasSelection())) {
@@ -210,10 +233,15 @@ function handleClipboardKeys(term: Terminal, event: KeyboardEvent, input: (data:
   // Everything pasted comes through here (not the browser's own paste), so text, files and images agree.
   if (key === 'v') {
     event.preventDefault();
+    const wsl = wslOf();
     void window.reframe.readClipboard().then((clipboard) => {
       if (clipboard.text) term.paste(clipboard.text);
-      else if (clipboard.files.length > 0) term.paste(formatPaths(clipboard.files, window.reframe.platform));
-      else if (clipboard.image) input(imagePasteKey(window.reframe.platform));
+      else if (clipboard.files.length > 0) term.paste(formatPaths(clipboard.files, window.reframe.platform, wsl));
+      else if (clipboard.image && wsl) {
+        void window.reframe.saveClipboardImage().then((file) => {
+          if (file) term.paste(formatPaths([file], window.reframe.platform, wsl));
+        });
+      } else if (clipboard.image) input(imagePasteKey(window.reframe.platform));
     });
     return false;
   }

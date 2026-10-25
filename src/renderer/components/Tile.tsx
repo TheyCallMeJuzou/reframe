@@ -164,8 +164,13 @@ export function Tile({ sessionId, group }: { sessionId: string; group: GroupNode
           <div className="tile-overlay">
             <div className="tile-overlay-card">
               <p>
-                {session.error ? t(`tile.error.${session.error}`) : t('tile.ended')}
+                {session.error === 'claudeNotFound' && session.wsl
+                  ? t('error.claudeNotFoundInWsl', { distro: session.wsl.distro })
+                  : session.error
+                    ? t(`tile.error.${session.error}`)
+                    : t('tile.ended')}
                 {session.error === 'claudeNotFound' &&
+                  !session.wsl &&
                   window.reframe.platform === 'win32' &&
                   ` ${t('error.claudeOnlyInWsl')}`}
               </p>

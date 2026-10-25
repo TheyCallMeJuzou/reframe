@@ -98,13 +98,15 @@ import { StateStore } from './state/store';
 import { stopExternalClaude } from './takeover';
 import { colorMenu, groupMenu, listMenu, tileMenu, workspaceItemMenu, workspaceLabel, workspaceMenu } from './menus';
 import { snapshotWindow, windowFromWorkspace } from '@shared/workspaces';
+import { parseWslPath, type WslPath } from '@shared/wsl';
 import { createTray } from './tray';
-import { readClipboard } from './clipboard';
+import { clipboardImage, readClipboard } from './clipboard';
 import { homeRelative } from './paths';
 import { Updates } from './updates';
 import { autostartEnabled, setAutostart } from './autostart';
 import { win32 } from './win32';
 import { WindowManager } from './windows';
+import { WslDistros } from './wsl/distros';
 
 export interface AppAssets {
   icon: string;
@@ -129,6 +131,8 @@ export class ReframeApp {
   private claudeHome = claudeHome();
   private transcripts = new TranscriptIndex(this.claudeHome);
   private updates = new Updates(this.log);
+  /** Sessions in WSL folders (Windows only). */
+  private wsl = process.platform === 'win32' ? new WslDistros(this.log) : null;
 
   /** The UI language in use: the one chosen in About, else the system's. */
   private locale: Locale;
@@ -174,6 +178,7 @@ export class ReframeApp {
       env: process.env,
       resolveClaude: findClaude,
       log: this.log,
+      wsl: this.wsl ?? undefined,
     });
     this.sessions.on('changed', (id) => this.pushSession(id));
     this.sessions.on('identity', (id, patch) => this.updateIdentity(id, patch));
@@ -309,15 +314,26 @@ export class ReframeApp {
   private sessionView(record: SessionRecord): SessionView {
     const runtime = this.sessions.status(record.id);
     const status = runtime?.status ?? (record.lifecycle === 'ended' ? 'ended' : 'starting');
+    const where = this.wslPath(record.cwd);
+    const info = where && this.wsl!.cached(where.distro);
     return {
       id: record.id,
       label: record.name || this.sessions.registryName(record.id) || path.basename(record.cwd) || record.cwd,
       cwd: record.cwd,
-      cwdLabel: homeRelative(record.cwd, os.homedir(), process.platform === 'win32'),
+      // A WSL folder as "Ubuntu ~/shop" (its home is known once the distribution was asked).
+      cwdLabel: where
+        ? `${where.distro} ${info ? homeRelative(where.path, info.home, false) : where.path}`
+        : homeRelative(record.cwd, os.homedir(), process.platform === 'win32'),
       status,
       lifecycle: record.lifecycle,
       error: runtime?.error,
+      ...(where ? { wsl: { distro: where.distro, mountRoot: info?.mountRoot ?? '/mnt/' } } : {}),
     };
+  }
+
+  /** Where a folder is in WSL, if it is in one. */
+  private wslPath(folder: string): WslPath | null {
+    return this.wsl ? parseWslPath(folder, this.wsl.share) : null;
   }
 
   private push(windowId: string): void {
@@ -485,11 +501,12 @@ export class ReframeApp {
     if (changed) this.updateSession(sessionId, { ...next, lastActiveAt: Date.now() });
   }
 
-  private createSession(windowId: string, request: NewSessionRequest): NewSessionResult {
+  private async createSession(windowId: string, request: NewSessionRequest): Promise<NewSessionResult> {
     const cwd = request.cwd.trim();
-    if (!isDirectory(cwd)) return { ok: false, error: 'folderMissing' };
-    if (!findClaude()) {
-      return { ok: false, error: 'claudeNotFound' };
+    if (!(await isFolder(cwd))) return { ok: false, error: 'folderMissing' };
+    const where = this.wslPath(cwd);
+    if (where ? !(await this.wsl!.info(where.distro))?.claude : !findClaude()) {
+      return { ok: false, error: 'claudeNotFound', ...(where ? { distro: where.distro } : {}) };
     }
     const now = Date.now();
     const record: SessionRecord = {
@@ -1259,7 +1276,7 @@ export class ReframeApp {
    * A file dropped onto a tile that exists only in memory (an image dragged from a browser, say) is written to a
    * temporary folder, so the session can get a path for it like for any other file.
    */
-  private saveDroppedFile(name: string, data: ArrayBuffer): string | null {
+  private saveDroppedFile(name: string, data: ArrayBuffer | Uint8Array): string | null {
     if (data.byteLength > 200 * 1024 * 1024) return null;
     // A plain file name: no folders, nothing Windows refuses in names.
     const cleaned = [...path.basename(name)].map((c) => (c < ' ' || '<>:"/\\|?*'.includes(c) ? '_' : c)).join('');
@@ -1267,7 +1284,7 @@ export class ReframeApp {
     const dir = path.join(os.tmpdir(), 'reframe-drops', crypto.randomUUID());
     fs.mkdirSync(dir, { recursive: true });
     const file = path.join(dir, safe);
-    fs.writeFileSync(file, Buffer.from(data));
+    fs.writeFileSync(file, data instanceof Uint8Array ? data : Buffer.from(data));
     this.log('info', 'dropped file saved for a session', { bytes: data.byteLength });
     return file;
   }
@@ -1516,7 +1533,7 @@ export class ReframeApp {
       if (typeof url === 'string' && /^https?:\/\//i.test(url)) void shell.openExternal(url);
     });
     ipcMain.handle(IPC.dialogDefaults, () => ({
-      recentFolders: this.state.recentFolders.filter(isDirectory),
+      recentFolders: this.state.recentFolders.filter((folder) => !!this.wslPath(folder) || isDirectory(folder)),
       preferences: this.state.preferences,
     }));
     ipcMain.on(IPC.setPreferences, (_event, patch: Partial<Preferences> | null) => {
@@ -1538,7 +1555,11 @@ export class ReframeApp {
       }
       if (relabel || resized) for (const w of this.state.windows) this.push(w.id);
     });
-    ipcMain.handle(IPC.folderExists, (_event, folder: unknown) => typeof folder === 'string' && isDirectory(folder));
+    ipcMain.handle(IPC.folderExists, (_event, folder: unknown) => typeof folder === 'string' && isFolder(folder));
+    ipcMain.handle(IPC.saveClipboardImage, async () => {
+      const png = this.clipboardOverride ? (this.clipboardOverride.image ? TEST_PNG : null) : await clipboardImage();
+      return png && this.saveDroppedFile('clipboard.png', png);
+    });
     ipcMain.handle(IPC.sessionList, (_event, query: unknown, limit: unknown) =>
       this.sessionList(typeof query === 'string' ? query : '', typeof limit === 'number' ? Math.min(limit, 500) : 20),
     );
@@ -1600,6 +1621,20 @@ function isListItemRef(value: unknown): value is ListItemRef {
   if (v.kind === 'running') return typeof v.pid === 'number' && typeof v.claudeSessionId === 'string';
   return false;
 }
+
+/** Whether a folder is there, without holding up the app (a WSL folder may wait for its distribution to start). */
+function isFolder(folder: string): Promise<boolean> {
+  return fs.promises.stat(folder).then(
+    (stats) => stats.isDirectory(),
+    () => false,
+  );
+}
+
+/** A 1×1 PNG, for the clipboard image the tests fake. */
+const TEST_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+  'base64',
+);
 
 function isDirectory(folder: string): boolean {
   try {

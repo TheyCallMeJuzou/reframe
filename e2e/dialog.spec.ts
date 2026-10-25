@@ -77,7 +77,8 @@ test('without Claude Code, the dialog says how to get it', async () => {
     await d.dialog.getByRole('button', { name: 'Start' }).click();
     const error = d.dialog.locator('.form-error');
     await expect(error).toContainText('Install it on this computer: claude.com/claude-code');
-    if (process.platform === 'win32') await expect(error).toContainText('installed only in WSL');
+    if (process.platform === 'win32')
+      await expect(error).toContainText('Installed it only in WSL? Choose a folder in WSL');
     else await expect(error).not.toContainText('WSL');
     await quit(app);
   } catch (error) {

@@ -14,6 +14,17 @@ export async function readClipboard(): Promise<ClipboardContents> {
   return { text, image, files };
 }
 
+/** The clipboard's image as PNG, or null when it holds none (for sessions that cannot read the clipboard: WSL). */
+export async function clipboardImage(): Promise<Buffer | null> {
+  if (!(await clipboard.has('image/png').catch(() => false))) return null;
+  for (const item of await clipboard.read()) {
+    if (item.types.includes('image/png')) {
+      return Buffer.from(await ((await item.getType('image/png')) as Blob).arrayBuffer());
+    }
+  }
+  return null;
+}
+
 async function copiedFiles(): Promise<string[]> {
   try {
     if (process.platform === 'win32') return win32()?.clipboardFiles() ?? [];

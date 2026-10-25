@@ -105,7 +105,9 @@ const en = {
   'dialog.error.folderMissing': 'This folder does not exist.',
   'dialog.error.claudeNotFound':
     'Claude Code was not found: `claude` is not on your PATH. Install it on this computer: claude.com/claude-code',
-  'error.claudeOnlyInWsl': 'A Claude Code installed only in WSL is not supported yet.',
+  'error.claudeOnlyInWsl':
+    'Installed it only in WSL? Choose a folder in WSL (\\\\wsl.localhost\\…), and it runs there.',
+  'error.claudeNotFoundInWsl': 'Claude Code was not found in {distro} (WSL). Install it there: claude.com/claude-code',
   'tray.tooltip': 'reframe',
   'tray.window': 'Window {n}',
   'tray.newSession': 'New session',
@@ -268,7 +270,10 @@ const de: Record<MessageKey, string> = {
   'dialog.error.folderMissing': 'Diesen Ordner gibt es nicht.',
   'dialog.error.claudeNotFound':
     'Claude Code wurde nicht gefunden: `claude` ist nicht im PATH. Installiere es auf diesem Computer: claude.com/claude-code',
-  'error.claudeOnlyInWsl': 'Ein nur in WSL installiertes Claude Code wird noch nicht unterstützt.',
+  'error.claudeOnlyInWsl':
+    'Nur in WSL installiert? Wähle einen Ordner in WSL (\\\\wsl.localhost\\…), dann läuft es dort.',
+  'error.claudeNotFoundInWsl':
+    'Claude Code wurde in {distro} (WSL) nicht gefunden. Installiere es dort: claude.com/claude-code',
   'tray.tooltip': 'reframe',
   'tray.window': 'Fenster {n}',
   'tray.newSession': 'Neue Session',

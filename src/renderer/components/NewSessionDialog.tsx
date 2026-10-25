@@ -18,7 +18,7 @@ export function NewSessionDialog({ onClose }: { onClose: () => void }) {
   const [model, setModel] = useState('');
   const [permissionMode, setPermissionMode] = useState<PermissionMode | ''>('');
   const [recent, setRecent] = useState<string[]>([]);
-  const [error, setError] = useState<Extract<NewSessionResult, { ok: false }>['error'] | null>(null);
+  const [error, setError] = useState<Extract<NewSessionResult, { ok: false }> | null>(null);
   const [busy, setBusy] = useState(false);
   const folderInput = useRef<HTMLInputElement>(null);
 
@@ -55,7 +55,7 @@ export function NewSessionDialog({ onClose }: { onClose: () => void }) {
     });
     setBusy(false);
     if (result.ok) onClose();
-    else setError(result.error);
+    else setError(result);
   };
 
   const browse = async () => {
@@ -171,8 +171,11 @@ export function NewSessionDialog({ onClose }: { onClose: () => void }) {
 
         {error && (
           <p className="form-error">
-            {t(`dialog.error.${error}`)}
-            {error === 'claudeNotFound' && window.reframe.platform === 'win32' && ` ${t('error.claudeOnlyInWsl')}`}
+            {error.distro ? t('error.claudeNotFoundInWsl', { distro: error.distro }) : t(`dialog.error.${error.error}`)}
+            {error.error === 'claudeNotFound' &&
+              !error.distro &&
+              window.reframe.platform === 'win32' &&
+              ` ${t('error.claudeOnlyInWsl')}`}
           </p>
         )}
 

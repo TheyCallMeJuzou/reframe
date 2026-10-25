@@ -56,7 +56,9 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
   }, []);
 
   useEffect(() => {
-    if (view) terminals.retain(new Set(Object.keys(view.sessions)));
+    if (!view) return;
+    terminals.retain(new Set(Object.keys(view.sessions)));
+    for (const session of Object.values(view.sessions)) terminals.setWsl(session.id, session.wsl);
   }, [view, terminals]);
 
   const sessionList = useSessionList(!!view?.sidebarOpen);

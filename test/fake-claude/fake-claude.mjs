@@ -1,7 +1,8 @@
 // Stand-in for the claude CLI in end-to-end tests. Behaves like the parts reframe relies on:
 // --session-id / --resume, HTTP hooks from --settings, the session registry file, transcripts that
 // only exist from the first prompt on, /clear (new session id, no hook) and Ctrl+C twice to exit.
-// Every launch is appended to REFRAME_FAKE_LOG.
+// Every launch is appended to REFRAME_FAKE_LOG. Started by the WSL stand-in, it has no hooks (no --settings) and
+// registers the Linux folder it was given (REFRAME_FAKE_CWD).
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -16,7 +17,7 @@ const log = process.env.REFRAME_FAKE_LOG;
 const resumeId = option('--resume');
 let sessionId = resumeId ?? option('--session-id') ?? crypto.randomUUID();
 const name = option('--name') ?? `fake-${process.pid}`;
-const settings = JSON.parse(fs.readFileSync(option('--settings'), 'utf8'));
+const settings = option('--settings') ? JSON.parse(fs.readFileSync(option('--settings'), 'utf8')) : {};
 
 const transcript = (id) => path.join(home, 'projects', 'fake-project', `${id}.jsonl`);
 const registryFile = path.join(home, 'sessions', `${process.pid}.json`);
@@ -28,7 +29,8 @@ function record(event) {
 function writeRegistry(status) {
   fs.mkdirSync(path.dirname(registryFile), { recursive: true });
   const nameSource = option('--name') ? 'user' : 'auto';
-  const entry = { pid: process.pid, sessionId, cwd: process.cwd(), name, nameSource, status };
+  const cwd = process.env.REFRAME_FAKE_CWD ?? process.cwd();
+  const entry = { pid: process.pid, sessionId, cwd, name, nameSource, status };
   fs.writeFileSync(registryFile, JSON.stringify(entry));
 }
 
@@ -86,6 +88,8 @@ process.stdin.on('data', async (input) => {
       fs.mkdirSync(path.dirname(transcript(sessionId)), { recursive: true });
       fs.appendFileSync(transcript(sessionId), JSON.stringify({ type: 'user', prompt }) + '\n');
       process.stdout.write(`echo: ${prompt}\r\n`);
+      // Without hooks (WSL) only the registry tells: busy for a moment, as a real answer takes, so polling sees it.
+      if (!option('--settings')) await new Promise((resolve) => setTimeout(resolve, 1500));
       writeRegistry('idle');
       await hook('Stop');
       process.stdout.write('> ');

@@ -3,7 +3,8 @@ import type { SessionRecord } from '@shared/state';
 
 export type LaunchMode = 'new' | 'resume';
 
-export function claudeArgs(session: SessionRecord, mode: LaunchMode, settingsFile: string): string[] {
+/** `settingsFile` brings reframe's hooks; without one (WSL, out of the hooks' reach) the status comes from the registry. */
+export function claudeArgs(session: SessionRecord, mode: LaunchMode, settingsFile?: string): string[] {
   const args = mode === 'new' ? ['--session-id', session.claudeSessionId] : ['--resume', session.claudeSessionId];
   const name = session.claudeName === undefined ? session.name : session.claudeName;
   if (name) args.push('--name', name);
@@ -14,6 +15,6 @@ export function claudeArgs(session: SessionRecord, mode: LaunchMode, settingsFil
     args.push('--worktree');
     if (session.launch.worktreeName) args.push(session.launch.worktreeName);
   }
-  args.push('--settings', settingsFile);
+  if (settingsFile) args.push('--settings', settingsFile);
   return args;
 }
