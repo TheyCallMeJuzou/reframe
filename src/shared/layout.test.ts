@@ -196,6 +196,24 @@ describe('groups', () => {
     expect(groupTile(root, 'a', H)).toBe(root); // already grouped
   });
 
+  it('grows around a neighboring tile instead of moving it', () => {
+    let root: LayoutNode | null = groupTile(split('col', [tile('a'), tile('b')], [30, 70]), 'b', G);
+    root = addToGroup(root, 'a', 'g');
+    expect(shape(root)).toBe('group(col(a, b))');
+    expect(root?.kind === 'group' ? sizesOf(root.child) : []).toEqual([30, 70]);
+
+    root = groupTile(split('row', [tile('c'), split('col', [tile('a'), tile('b'), tile('d')], [20, 30, 50])]), 'a', G);
+    root = groupTile(root, 'b', H);
+    root = addToGroup(root, 'b', 'g');
+    expect(shape(root)).toBe('row(c, col(group(col(a, b)), d))');
+    const column = root?.kind === 'split' ? root.children[1]! : null;
+    expect(sizesOf(column)).toEqual([50, 50]);
+    // Inside the frame, a and b keep their heights (20 : 30 of the column).
+    const grown = column?.kind === 'split' ? column.children[0]! : null;
+    expect(grown?.kind === 'group' ? sizesOf(grown.child) : []).toEqual([40, 60]);
+    expect(groups(root).map((g) => g.id)).toEqual(['g']);
+  });
+
   it('takes a tile out next to its group, and an empty group disappears', () => {
     let root = groupTile(split('row', [tile('a'), tile('b')]), 'a', G);
     root = addToGroup(root, 'b', 'g');

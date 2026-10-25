@@ -352,14 +352,53 @@ export function updateGroup(
   return replaceNode(root, groupId, (node) => (node.kind === 'group' ? { ...node, ...patch } : node));
 }
 
-/** Moves a tile into a group, after the group's last tile. */
+/**
+ * Moves a tile into a group. A tile right next to the group keeps its place and the frame grows around it;
+ * any other tile goes after the group's last tile.
+ */
 export function addToGroup(root: LayoutNode | null, sessionId: string, groupId: string): LayoutNode | null {
   const target = findNode(root, groupId);
-  if (!target || target.kind !== 'group' || groupOf(root, tileKey(sessionId))?.id === groupId) return root;
+  if (!root || !target || target.kind !== 'group' || groupOf(root, tileKey(sessionId))?.id === groupId) return root;
+  const grown = growAround(root, sessionId, groupId);
+  if (grown) return grown;
   const { root: without, removed } = removeTile(root, sessionId);
   const group = findNode(without, groupId);
   if (!removed || !group) return root;
   return insertNode(without, removed, tileKey(leaves(group).at(-1)!), 'right');
+}
+
+/**
+ * Widens the group's frame over the tile when both sit side by side in the same split (the tile alone or
+ * in a group of its own, which disappears), so nothing moves; null when they are not neighbors.
+ */
+function growAround(root: LayoutNode, sessionId: string, groupId: string): LayoutNode | null {
+  const parent = findParentSplit(root, groupId);
+  if (!parent) return null;
+  const index = parent.children.findIndex((c) => nodeKey(c) === groupId);
+  const isTile = (n: LayoutNode | undefined) =>
+    !!n && (nodeKey(n) === tileKey(sessionId) || (n.kind === 'group' && nodeKey(n.child) === tileKey(sessionId)));
+  const other = [index - 1, index + 1].find((i) => isTile(parent.children[i]));
+  const group = parent.children[index];
+  if (other === undefined || group?.kind !== 'group') return null;
+  const before = other < index;
+  const own = parent.sizes[index] ?? 0;
+  const theirs = parent.sizes[other] ?? 0;
+  const grown: GroupNode = {
+    ...group,
+    child: {
+      kind: 'split',
+      id: newId(),
+      dir: parent.dir,
+      children: before ? [tile(sessionId), group.child] : [group.child, tile(sessionId)],
+      sizes: before ? [theirs, own] : [own, theirs],
+    },
+  };
+  const first = Math.min(index, other);
+  const children = [...parent.children];
+  children.splice(first, 2, grown);
+  const sizes = [...parent.sizes];
+  sizes.splice(first, 2, own + theirs);
+  return normalize(replaceNode(root, parent.id, () => ({ ...parent, children, sizes })));
 }
 
 /** Moves a tile out of its group, next to the group. */

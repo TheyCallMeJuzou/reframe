@@ -24,7 +24,7 @@
   <img src="docs/screenshots/drag-tile.gif" alt="A tile dragged by its header to below another tile">
 
 - **Out of the way when you want.** The arrow in a tile's corner collapses it into the side bar; a click puts it back where it was.
-- **Groups.** Put tiles into a group (right-click a tile, or drag it onto a group): a colored frame with a name. A group collapses, moves and leaves the window as one; dissolve it or end all its sessions from its menu.
+- **Groups.** Put tiles into a group (right-click a tile, or drag it onto a group): a colored frame with a name. A tile right next to the group stays where it is, and the frame grows around it. A group collapses, moves and leaves the window as one; dissolve it or end all its sessions from its menu.
 - **Several windows.** Open a new, empty window (toolbar, tray or Ctrl+Shift+N), or drag a tile or a group out of the window and it gets a window of its own; drag it back, or into another window, whenever you like.
 - **Workspaces.** Save a window under a name (Workspaces in the toolbar) and open it again later, as a window of its own with its tiles, groups and sessions, from the toolbar, the tray or the session list. F11 takes a window to full screen.
 
