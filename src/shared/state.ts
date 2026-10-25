@@ -109,6 +109,8 @@ export const preferencesSchema = z.object({
   fontSize: z.number().int().min(FONT_SIZE.min).max(FONT_SIZE.max).default(FONT_SIZE.normal),
   /** Separators snap to a grid over the layout while they are dragged (Alt drags freely). */
   snapToGrid: z.boolean().default(true),
+  /** Asks GitHub for a newer version now and then (where this copy updates at all). */
+  checkForUpdates: z.boolean().default(true),
 });
 
 export const DEFAULT_PREFERENCES: z.infer<typeof preferencesSchema> = {
@@ -116,6 +118,7 @@ export const DEFAULT_PREFERENCES: z.infer<typeof preferencesSchema> = {
   language: 'system',
   fontSize: FONT_SIZE.normal,
   snapToGrid: true,
+  checkForUpdates: true,
 };
 
 /** A window saved under a name, to be opened again later as a window of its own. */

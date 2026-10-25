@@ -156,7 +156,7 @@ export class ReframeApp {
     /** The portable copy (data next to it): it does not update itself. */
     private portable = false,
   ) {
-    this.updates = new Updates(this.log, portable);
+    this.updates = new Updates(this.log, portable, () => this.state.preferences.checkForUpdates);
     this.locale = systemLocale;
     this.windows = new WindowManager(assets.icon);
   }
@@ -328,6 +328,7 @@ export class ReframeApp {
       language: this.state.preferences.language,
       fontSize: this.state.preferences.fontSize,
       snapToGrid: this.state.preferences.snapToGrid,
+      checkForUpdates: this.updates.checks ? this.state.preferences.checkForUpdates : null,
       systemLocale: this.systemLocale,
       version: app.getVersion(),
       sidebarOpen: !!win.sidebarOpen,
@@ -1373,6 +1374,12 @@ export class ReframeApp {
   }
   private clipboardOverride: ClipboardContents | null = null;
 
+  /** Test hook (REFRAME_E2E): this copy checks for updates, as an installed one does (without checking). */
+  fakeUpdateChecks(): void {
+    this.updates.checks = true;
+    for (const w of this.state.windows) this.push(w.id);
+  }
+
   /**
    * A file dropped onto a tile that exists only in memory (an image dragged from a browser, say) is written to a
    * temporary folder, so the session can get a path for it like for any other file.
@@ -1668,9 +1675,13 @@ export class ReframeApp {
       const size = patch.fontSize;
       if (Number.isInteger(size) && size! >= FONT_SIZE.min && size! <= FONT_SIZE.max) next.fontSize = size!;
       if (typeof patch.snapToGrid === 'boolean') next.snapToGrid = patch.snapToGrid;
+      if (typeof patch.checkForUpdates === 'boolean') next.checkForUpdates = patch.checkForUpdates;
       const relabel = next.language !== this.state.preferences.language;
+      const was = this.state.preferences;
       const shown =
-        next.fontSize !== this.state.preferences.fontSize || next.snapToGrid !== this.state.preferences.snapToGrid;
+        next.fontSize !== was.fontSize ||
+        next.snapToGrid !== was.snapToGrid ||
+        next.checkForUpdates !== was.checkForUpdates;
       this.state = { ...this.state, preferences: next };
       this.save();
       if (relabel) {

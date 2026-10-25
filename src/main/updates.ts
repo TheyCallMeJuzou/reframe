@@ -5,6 +5,7 @@
 // in it, maybe in the middle of a long task. Installing stays the user's call (quitting, or "Restart to update").
 // The portable copy cannot replace itself (the installer would make a second, installed copy): it only checks,
 // and tells when there is a newer version to download.
+// The checks can be turned off in Settings; turned on again, the next scheduled check runs.
 import { EventEmitter } from 'node:events';
 import { app } from 'electron';
 import electronUpdater, { type AppUpdater } from 'electron-updater';
@@ -28,10 +29,14 @@ export class Updates extends EventEmitter<Events> {
   ready: string | null = null;
   /** Newer version a portable copy can download. */
   available: string | null = null;
+  /** This copy checks for updates at all (so Settings offers to turn that off). */
+  checks = false;
 
   constructor(
     private log: LogFn,
     private portable = false,
+    /** The checks are on (Settings). */
+    private enabled: () => boolean = () => true,
   ) {
     super();
   }
@@ -42,6 +47,7 @@ export class Updates extends EventEmitter<Events> {
     if (process.platform === 'linux' && !process.env.APPIMAGE) return;
     // macOS installs updates only into signed apps, which reframe's builds are not (yet).
     if (process.platform === 'darwin') return this.log('info', 'updates need a signed build on macOS, not checking');
+    this.checks = true;
     this.watch(electronUpdater.autoUpdater);
   }
 
@@ -69,6 +75,7 @@ export class Updates extends EventEmitter<Events> {
       });
     }
     const check = () => {
+      if (!this.enabled()) return;
       updater.checkForUpdates().catch((error: unknown) => {
         this.log('warn', 'update check failed', { error: String(error) });
       });

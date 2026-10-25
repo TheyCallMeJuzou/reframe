@@ -415,6 +415,7 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
             systemLocale={view.systemLocale}
             fontSize={view.fontSize}
             snapToGrid={view.snapToGrid}
+            checkForUpdates={view.checkForUpdates}
             onClose={() => setSettingsOpen(false)}
           />
         )}

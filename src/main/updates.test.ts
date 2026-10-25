@@ -40,4 +40,25 @@ describe('Updates', () => {
     expect(updates.available).toBe('0.6.0');
     expect(told).toEqual(['0.6.0']);
   });
+
+  it('checks only while the checks are on', () => {
+    vi.useFakeTimers();
+    try {
+      let on = false;
+      const updater = fakeUpdater();
+      new Updates(
+        () => {},
+        false,
+        () => on,
+      ).watch(updater);
+      vi.advanceTimersByTime(30_000);
+      expect(updater.checkForUpdates).not.toHaveBeenCalled();
+      // Turned on: the next scheduled check runs.
+      on = true;
+      vi.advanceTimersByTime(6 * 60 * 60_000);
+      expect(updater.checkForUpdates).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

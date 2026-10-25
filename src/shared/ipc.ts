@@ -35,6 +35,8 @@ export interface WindowView {
   fontSize: number;
   /** Separators snap to a grid while dragged (a preference). */
   snapToGrid: boolean;
+  /** Update checks are on (a preference); null where this copy does not check (macOS, a deb, development). */
+  checkForUpdates: boolean | null;
   systemLocale: Locale;
   version: string;
   sidebarOpen: boolean;

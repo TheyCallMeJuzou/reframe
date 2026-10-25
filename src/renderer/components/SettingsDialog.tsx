@@ -2,18 +2,23 @@ import { FONT_SIZE, type Language, type Preferences } from '@shared/state';
 import { useApp } from '../context';
 import { fontSizeAfter } from '../shortcuts';
 
-/** Settings: the language, the terminals' text size, and snapping separators to a grid. Each applies at once. */
+/**
+ * Settings: the language, the terminals' text size, snapping separators to a grid, and update checks (where this
+ * copy checks at all). Each applies at once.
+ */
 export function SettingsDialog({
   language,
   systemLocale,
   fontSize,
   snapToGrid,
+  checkForUpdates,
   onClose,
 }: {
   language: Language;
   systemLocale: string;
   fontSize: number;
   snapToGrid: boolean;
+  checkForUpdates: boolean | null;
   onClose: () => void;
 }) {
   const { t, keys, locale } = useApp();
@@ -90,6 +95,21 @@ export function SettingsDialog({
           {t('settings.snap')}
         </label>
         <p className="setting-hint">{t('settings.snapHint')}</p>
+
+        {checkForUpdates !== null && (
+          <>
+            <label className="checkbox">
+              <input
+                key={String(checkForUpdates)}
+                type="checkbox"
+                defaultChecked={checkForUpdates}
+                onChange={(e) => set({ checkForUpdates: e.target.checked })}
+              />
+              {t('settings.updates')}
+            </label>
+            <p className="setting-hint">{t('settings.updatesHint')}</p>
+          </>
+        )}
 
         <div className="button-row end">
           <button className="button primary" autoFocus onClick={onClose}>

@@ -1,10 +1,10 @@
 // End to end: Settings (the gear in the toolbar, or Ctrl+,). The language applies at once, everywhere, and after a
-// restart; the text size has buttons too; and separators snap to a grid over the layout while dragged (12 steps),
-// unless Alt is held or snapping is turned off.
+// restart; the text size has buttons too; update checks can be turned off where reframe checks; and separators snap
+// to a grid over the layout while dragged (12 steps), unless Alt is held or snapping is turned off.
 import { expect, test, type Page } from '@playwright/test';
-import { captureWindows, cleanup, launch, newSession, quit, setup } from './helpers';
+import { callMain, captureWindows, cleanup, launch, newSession, quit, setup } from './helpers';
 
-test('Settings: language, text size', async () => {
+test('Settings: language, text size, update checks', async () => {
   const { dir, env, state } = setup();
   try {
     let { app, page } = await launch(env);
@@ -18,6 +18,16 @@ test('Settings: language, text size', async () => {
     await expect.poll(() => state().preferences.fontSize).toBe(14);
     await settings.getByRole('button', { name: 'Normal' }).click();
     await expect.poll(() => state().preferences.fontSize).toBe(13);
+
+    // Update checks: offered only where this copy checks (in the tests it does not, until it is told to).
+    const updates = settings.getByRole('checkbox', { name: 'Check for updates' });
+    await expect(updates).toHaveCount(0);
+    await callMain(app, 'fakeUpdateChecks');
+    await expect(updates).toBeChecked();
+    await updates.uncheck();
+    await expect.poll(() => state().preferences.checkForUpdates).toBe(false);
+    await updates.check();
+    await expect.poll(() => state().preferences.checkForUpdates).toBe(true);
 
     // German, right away (also in the dialog itself) and after a restart.
     await settings.getByRole('combobox').selectOption('de');
