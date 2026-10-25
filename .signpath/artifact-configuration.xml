@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SignPath artifact configuration for reframe's Windows release (see docs/RELEASING.md). The release workflow sends
+  one ZIP: the installer and the portable ZIP. Signed are the installer and reframe.exe in the portable copy, the
+  files Windows checks when someone starts them after a download; everything else passes through unchanged.
+  The release workflow passes the version (0.5.1 for the tag v0.5.1). electron-builder writes reframe.exe's
+  product version with four parts (0.5.1.0), the installer's with three.
+-->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <parameters>
+    <parameter name="version" required="true" />
+  </parameters>
+  <zip-file>
+    <pe-file path="reframe-Setup-${version}.exe" product-name="reframe" product-version="${version}">
+      <authenticode-sign />
+    </pe-file>
+    <zip-file path="reframe-${version}-win-portable.zip">
+      <pe-file path="reframe-${version}-win-portable/reframe.exe" product-name="reframe" product-version="${version}.0">
+        <authenticode-sign />
+      </pe-file>
+    </zip-file>
+  </zip-file>
+</artifact-configuration>

@@ -36,8 +36,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      # Unsigned builds until there are certificates (see docs/RELEASING.md).
+      # macOS builds are unsigned until there is an Apple certificate (see docs/RELEASING.md).
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      # Windows builds are signed through SignPath once that is set up (the repository variable
+      # SIGNPATH_ORGANIZATION_ID, see docs/RELEASING.md); until then they go out unsigned.
+      SIGN_WINDOWS: ${{ matrix.os == 'windows-latest' && vars.SIGNPATH_ORGANIZATION_ID != '' }}
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-node@v7.1.0
@@ -46,11 +49,59 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
-      - run: npx electron-builder --publish always
+      - name: Build and upload
+        if: env.SIGN_WINDOWS != 'true'
+        run: npx electron-builder --publish always
+      - name: Build (Windows, to be signed)
+        if: env.SIGN_WINDOWS == 'true'
+        run: npx electron-builder --publish never
       # The portable Windows copy, made from the unpacked app electron-builder leaves in dist/win-unpacked.
       - name: Portable ZIP (Windows)
         if: runner.os == 'Windows'
+        run: node scripts/portable.mjs
+      - name: Upload the portable ZIP (Windows, unsigned)
+        if: runner.os == 'Windows' && env.SIGN_WINDOWS != 'true'
+        shell: bash
+        run: gh release upload "$GITHUB_REF_NAME" dist/reframe-*-win-portable.zip --clobber
+
+      # Signing: one request to SignPath with the installer and the portable ZIP (.signpath/artifact-configuration.xml
+      # says what in them gets signed), approved by hand there; this job waits for it up to four hours.
+      - name: Collect what gets signed (Windows)
+        id: to-sign
+        if: env.SIGN_WINDOWS == 'true'
         shell: bash
         run: |
-          node scripts/portable.mjs
-          gh release upload "$GITHUB_REF_NAME" dist/reframe-*-win-portable.zip --clobber
+          mkdir dist/to-sign
+          cp dist/reframe-Setup-*.exe dist/reframe-*-win-portable.zip dist/to-sign/
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - name: Upload for signing (Windows)
+        id: unsigned
+        if: env.SIGN_WINDOWS == 'true'
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: windows-to-sign
+          path: dist/to-sign/
+      - name: Sign (Windows, SignPath)
+        if: env.SIGN_WINDOWS == 'true'
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: reframe
+          signing-policy-slug: release-signing
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          parameters: |
+            version: ${{ toJSON(steps.to-sign.outputs.version) }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 14400
+          output-artifact-directory: dist/signed
+      # Checks the signatures, puts the signed files in place and renews latest.yml and the block map (the signed
+      # installer has another checksum), then uploads what electron-builder would have.
+      - name: Upload (Windows, signed)
+        if: env.SIGN_WINDOWS == 'true'
+        shell: bash
+        run: |
+          node scripts/signed.mjs dist/signed
+          v="${GITHUB_REF_NAME#v}"
+          gh release upload "$GITHUB_REF_NAME" dist/latest.yml "dist/reframe-Setup-$v.exe" \
+            "dist/reframe-Setup-$v.exe.blockmap" "dist/reframe-$v-win-portable.zip" --clobber

@@ -68,7 +68,7 @@ Download the installer for your system from [Releases](https://github.com/TheyCa
 The builds are not code-signed yet, so the first start needs a confirmation:
 
 - **Windows** (`reframe-Setup-<version>.exe`): installs for your user without admin rights. If SmartScreen warns, choose _More info_ → _Run anyway_.
-- **Windows, portable** (`reframe-<version>-win-portable.zip`): unpack it anywhere (a USB stick, say) and start `reframe.exe`. It keeps its sessions, windows and settings in the folder `data` next to it and runs apart from an installed reframe. It does not update itself: it tells you when there is a new version to download. If you let it start with the system and move the folder later, turn that on again.
+- **Windows, portable** (`reframe-<version>-win-portable.zip`): unpack it anywhere (a USB stick, say) and start `reframe.exe`. It keeps its sessions, windows and settings in the folder `data` next to it and runs apart from an installed reframe. It does not update itself: it tells you when there is a new version to download. If you let it start with the system and move the folder later, turn that on again. Before unpacking, right-click the ZIP → _Properties_ → tick _Unblock_: otherwise Windows marks every unpacked file as downloaded, and SmartScreen asks on the first start.
 - **macOS** (`.dmg`, Apple silicon): drag reframe into Applications, then right-click it → _Open_ the first time (or `xattr -dr com.apple.quarantine /Applications/reframe.app`). Updates on macOS need a signed build, so for now update by downloading the new version.
 - **Linux**: the `.AppImage` (make it executable, then run it; it updates itself) or the `.deb`.
 
@@ -77,6 +77,25 @@ The builds are not code-signed yet, so the first start needs a confirmation:
 | Windows  | Everything above; this is where reframe is developed and tested.                                                                   |
 | macOS    | Built in CI, not tested yet. Pulling terminal windows in is not available yet (use the session list to take sessions over).        |
 | Linux    | Built in CI, not tested yet. Pulling terminal windows in is not available yet (planned for X11; on Wayland only the session list). |
+
+## Code signing policy
+
+The Windows releases are going to be signed through the SignPath Foundation's free code signing for open source projects (being set up; until then they are unsigned, see [Install](#install)).
+
+Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+
+- **What gets signed**: the Windows installer and `reframe.exe` in the portable ZIP, built by the [release workflow](.github/workflows/release.yml) on GitHub Actions from this repository's tagged source. Each release is signed only after an approver has approved it.
+- **Committers and reviewers**: [TheyCallMeJuzou](https://github.com/TheyCallMeJuzou)
+- **Approvers**: [TheyCallMeJuzou](https://github.com/TheyCallMeJuzou)
+
+### Privacy
+
+reframe collects nothing about you and sends nothing about you or your sessions anywhere. Its own use of the network:
+
+- **Updates**: half a minute after starting and then every six hours, reframe asks [this repository's releases](https://github.com/TheyCallMeJuzou/reframe/releases) on GitHub whether there is a newer version. That is a plain web request, as when you open the page in a browser (GitHub sees your IP address, see [GitHub's privacy statement](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement)). The installed Windows app and the AppImage then download the new version from there.
+- **Links** you click (for example in About) open in your browser.
+
+Claude Code, which reframe starts for you, talks to Anthropic the way you have set it up; for that, [Anthropic's privacy policy](https://www.anthropic.com/legal/privacy) applies.
 
 ## Development
 
