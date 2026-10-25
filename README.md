@@ -5,8 +5,8 @@
 <h1 align="center">reframe</h1>
 
 <p align="center">
-  Keep your <a href="https://claude.com/claude-code">Claude Code</a> sessions side by side in one window,<br>
-  group them, tear them out, pull terminal windows in, and get every session back after a restart.
+  Keep your <a href="https://claude.com/claude-code">Claude Code</a> sessions side by side in one window: tile and group them,<br>
+  take over the ones running in other terminals, and get every session back after a restart.
 </p>
 
 <p align="center">
