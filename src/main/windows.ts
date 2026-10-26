@@ -1,5 +1,6 @@
-// Creates BrowserWindows for persisted windows. Closing a window only hides it: its sessions keep
-// running and it comes back from the tray. Bounds changes are reported so they can be saved.
+// Creates BrowserWindows for persisted windows. Closing a window does not close it but is reported (closeRequested):
+// the app hides it into the tray, its sessions running on, or ends them. Bounds changes are reported so they can be
+// saved.
 import { EventEmitter } from 'node:events';
 import path from 'node:path';
 import { BrowserWindow, screen, type WebContents } from 'electron';
@@ -9,6 +10,8 @@ type Events = {
   bounds: [windowId: string, bounds: Bounds, maximized: boolean];
   visibility: [windowId: string, hidden: boolean];
   fullscreen: [windowId: string, fullscreen: boolean];
+  /** The user closes the window (X, Alt+F4); it stays until the app hides or destroys it. */
+  closeRequested: [windowId: string];
   /** Windows is shutting down, restarting or logging off (it asks every window first, then tells them). */
   systemEnding: [];
 };
@@ -63,7 +66,7 @@ export class WindowManager extends EventEmitter<Events> {
     win.on('close', (event) => {
       if (this.quitting) return;
       event.preventDefault();
-      win.hide();
+      this.emit('closeRequested', state.id);
     });
     win.on('show', () => this.emit('visibility', state.id, false));
     win.on('hide', () => this.emit('visibility', state.id, true));
@@ -110,6 +113,12 @@ export class WindowManager extends EventEmitter<Events> {
     if (win.isMinimized()) win.restore();
     win.show();
     win.focus();
+  }
+
+  /** Into the tray: the window and its sessions stay, out of sight. */
+  hide(windowId: string): void {
+    const win = this.windows.get(windowId);
+    if (win && !win.isDestroyed()) win.hide();
   }
 
   toggleFullscreen(windowId: string): void {

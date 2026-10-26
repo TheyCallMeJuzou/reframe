@@ -1,16 +1,17 @@
-import { FONT_SIZE, type Language, type Preferences } from '@shared/state';
+import { FONT_SIZE, type CloseWindow, type Language, type Preferences } from '@shared/state';
 import { useApp } from '../context';
 import { fontSizeAfter } from '../shortcuts';
 
 /**
- * Settings: the language, the terminals' text size, snapping separators to a grid, and update checks (where this
- * copy checks at all). Each applies at once.
+ * Settings: the language, the terminals' text size, snapping separators to a grid, what closing a window with
+ * sessions does, and update checks (where this copy checks at all). Each applies at once.
  */
 export function SettingsDialog({
   language,
   systemLocale,
   fontSize,
   snapToGrid,
+  closeWindow,
   checkForUpdates,
   onClose,
 }: {
@@ -18,6 +19,7 @@ export function SettingsDialog({
   systemLocale: string;
   fontSize: number;
   snapToGrid: boolean;
+  closeWindow: CloseWindow;
   checkForUpdates: boolean | null;
   onClose: () => void;
 }) {
@@ -95,6 +97,16 @@ export function SettingsDialog({
           {t('settings.snap')}
         </label>
         <p className="setting-hint">{t('settings.snapHint')}</p>
+
+        <label className="setting">
+          <span>{t('settings.closeWindow')}</span>
+          <select value={closeWindow} onChange={(e) => set({ closeWindow: e.target.value as CloseWindow })}>
+            <option value="ask">{t('settings.closeWindowAsk')}</option>
+            <option value="end">{t('settings.closeWindowEnd')}</option>
+            <option value="keep">{t('settings.closeWindowKeep')}</option>
+          </select>
+        </label>
+        <p className="setting-hint">{t('settings.closeWindowHint')}</p>
 
         {checkForUpdates !== null && (
           <>

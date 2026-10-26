@@ -100,6 +100,13 @@ export const LANGUAGES = ['system', 'en', 'de'] as const;
 export const FONT_SIZE = { normal: 13, min: 8, max: 32 } as const;
 export type Language = (typeof LANGUAGES)[number];
 
+/**
+ * What closing a window with sessions in it does: ask; end them (the window goes, the first one stays empty); or
+ * keep them running, the window hidden in the tray.
+ */
+export const CLOSE_WINDOW = ['ask', 'end', 'keep'] as const;
+export type CloseWindow = (typeof CLOSE_WINDOW)[number];
+
 export const preferencesSchema = z.object({
   /** "New session" fills the name with the folder's name. */
   nameFromFolder: z.boolean(),
@@ -111,6 +118,7 @@ export const preferencesSchema = z.object({
   snapToGrid: z.boolean().default(true),
   /** Asks GitHub for a newer version now and then (where this copy updates at all). */
   checkForUpdates: z.boolean().default(true),
+  closeWindow: z.enum(CLOSE_WINDOW).default('ask'),
 });
 
 export const DEFAULT_PREFERENCES: z.infer<typeof preferencesSchema> = {
@@ -119,6 +127,7 @@ export const DEFAULT_PREFERENCES: z.infer<typeof preferencesSchema> = {
   fontSize: FONT_SIZE.normal,
   snapToGrid: true,
   checkForUpdates: true,
+  closeWindow: 'ask',
 };
 
 /** A window saved under a name, to be opened again later as a window of its own. */

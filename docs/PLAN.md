@@ -23,7 +23,7 @@ Wer mehrere Claude-Code-Sessions parallel nutzt, hat viele einzelne Terminal-Fen
 | Einklappen | Pfeil oben links: Die Kachel wandert in eine Leiste am Rand, ein Klick holt sie an ihren alten Platz zurück. |
 | Gruppen | Farbiger Rahmen mit Namen um benachbarte Kacheln. Verschieben, Einklappen und Rausziehen gehen gemeinsam. |
 | Rausziehen | Es entsteht ein eigenes App-Fenster, das man wieder reinziehen kann und das beim Restore mitkommt. |
-| X am Fenster | Versteckt nur dieses Fenster, die Sessions laufen weiter. Im Tray-Menü lässt es sich wieder einblenden. |
+| X am Fenster | Mit Sessions fragt reframe: beenden (das Fenster geht, das erste bleibt leer im Tray) oder im Tray weiterlaufen lassen (versteckt nur das Fenster, im Tray-Menü lässt es sich wieder einblenden). Die Antwort lässt sich merken und in den Einstellungen ändern. Ohne Sessions schließt es sich einfach. |
 | Tray → Beenden | Alle Sessions werden sauber beendet, beim nächsten Start resumed. |
 | Kachel × | Beendet den Claude-Prozess, die Session bleibt in der Liste. "Aus Liste entfernen" löscht sie nur aus reframe, das Transcript in `~/.claude` bleibt. |
 | Benachrichtigungen | OS-Notification bei "fertig" und "wartet auf Antwort", nur wenn Fenster versteckt oder unfokussiert ist oder die Kachel eingeklappt ist. |
@@ -107,7 +107,7 @@ LayoutNode = { kind: 'split', dir: 'row'|'col', children: LayoutNode[], sizes: n
 - **Terminal:** `@xterm/xterm` + `addon-webgl` + `addon-fit` + `addon-unicode11` + `addon-web-links`.
 
 ### Tray & Lifecycle
-- Das X versteckt das Fenster (`close` wird abgefangen). Das Tray-Menü enthält: Fenster (anzeigen/verstecken), Neue Session, Beenden.
+- Das X schließt das Fenster nicht selbst (`close` wird abgefangen): reframe fragt bei Sessions nach (siehe oben) und versteckt es oder beendet seine Sessions. Das Tray-Menü enthält: Fenster (anzeigen/verstecken), Neue Session, Beenden.
 - **Beenden:** Status speichern (Sessions bleiben `open`), an alle Sessions 2× `\x03` schicken, auf Exit warten (höchstens 5 s), dann den **Prozessbaum** killen (`taskkill /T /F` bzw. Prozessgruppe), und erst danach die App beenden. Beim nächsten Start werden verwaiste Prozesse des letzten Laufs (PID + `procStart` im State) beendet, danach wird alles resumed.
 - Ein Klick auf eine Notification zeigt das Fenster, klappt die Kachel aus und fokussiert sie.
 - `app.setAppUserModelId` (nötig für Windows-Toasts), `requestSingleInstanceLock`.

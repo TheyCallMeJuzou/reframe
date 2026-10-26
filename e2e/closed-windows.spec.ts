@@ -1,11 +1,25 @@
-// End to end: windows the user closed stay closed. An empty secondary window that is closed is gone for good; one
-// with sessions stays in the tray and does not come back when reframe is launched a second time (only the windows
-// that were open do); closed empty windows left over from older versions are dropped at the start.
+// End to end: windows the user closed stay closed. An empty secondary window that is closed is gone for good. One
+// with sessions asks first: end them (the window goes; the first window stays, empty), keep them running in the
+// tray, or cancel; the answer can be kept. Kept in the tray, it does not come back when reframe is launched a second
+// time (only the windows that were open do); closed empty windows left over from older versions are dropped at the
+// start.
 import fs from 'node:fs';
 import path from 'node:path';
 import { expect, test, type ElectronApplication } from '@playwright/test';
 import { tileKey } from '../src/shared/layout';
-import { callMain, captureWindows, cleanup, launch, newSession, pageOf, quit, setup, transferNode } from './helpers';
+import {
+  answerDialogs,
+  callMain,
+  captureWindows,
+  cleanup,
+  dialogsAsked,
+  launch,
+  newSession,
+  pageOf,
+  quit,
+  setup,
+  transferNode,
+} from './helpers';
 
 /** Which windows are visible, by window id. */
 async function visible(app: ElectronApplication, ids: string[]): Promise<Record<string, boolean>> {
@@ -39,12 +53,13 @@ test('closed windows stay closed: empty ones go, a second launch shows only the 
     await expect.poll(() => state().windows.map((w) => w.id)).toEqual([mainId]);
     await expect.poll(() => app.windows().length).toBe(1);
 
-    // A window with a session in it only hides when closed.
+    // A window with a session in it, closed keeping the session in the tray, only hides.
     opened = app.waitForEvent('window');
     const secondId = await callMain<string>(app, 'newWindow');
     const second = await opened;
     await transferNode(second, tileKey(byName('beta').id), mainId, null);
     await expect(second.locator('.tile')).toHaveCount(1);
+    await answerDialogs(app, 1);
     await close(app, secondId);
     await expect.poll(() => state().windows.find((w) => w.id === secondId)?.hidden).toBe(true);
 
@@ -73,6 +88,60 @@ test('closed windows stay closed: empty ones go, a second launch shows only the 
       .poll(() => visible(app, [mainId, secondId]), { timeout: 10_000 })
       .toEqual({ [mainId]: true, [secondId]: false });
     await expect((await pageOf(app, secondId)).locator('.tile')).toHaveCount(1);
+    await quit(app);
+  } catch (error) {
+    await captureWindows('closed-windows');
+    throw error;
+  } finally {
+    await cleanup(dir);
+  }
+});
+
+test('closing a window with sessions asks: cancel, keep them in the tray, or end them', async () => {
+  const { dir, project, env, state, byName, launches } = setup();
+  try {
+    const { app, page } = await launch(env);
+    await newSession(page, project, 'alpha');
+    await newSession(page, project, 'beta');
+    const mainId = state().windows[0]!.id;
+    const alpha = byName('alpha').id;
+    const beta = byName('beta').id;
+    const opened = app.waitForEvent('window');
+    const secondId = await callMain<string>(app, 'newWindow');
+    const second = await opened;
+    await transferNode(second, tileKey(beta), mainId, null);
+    await expect(second.locator('.tile')).toHaveCount(1);
+    const exits = () => launches().filter((l) => l.event === 'exit').length;
+
+    // Cancel: the window stays open.
+    await answerDialogs(app, 2);
+    await close(app, secondId);
+    await expect.poll(() => dialogsAsked(app)).toEqual(['End the session in this window?']);
+    expect(await visible(app, [secondId])).toEqual({ [secondId]: true });
+
+    // Keep in the tray: hidden, beta runs on.
+    await answerDialogs(app, 1);
+    await close(app, secondId);
+    await expect.poll(() => state().windows.find((w) => w.id === secondId)?.hidden).toBe(true);
+    expect(state().sessions[beta]!.lifecycle).toBe('open');
+    expect(exits()).toBe(0);
+
+    // End sessions, and don't ask again: beta ends (it stays in the session list) and the window is gone.
+    await (await app.browserWindow(second)).evaluate((win) => win.show());
+    await answerDialogs(app, 0, true);
+    await close(app, secondId);
+    await expect.poll(() => state().windows.map((w) => w.id)).toEqual([mainId]);
+    expect(state().sessions[beta]!.lifecycle).toBe('ended');
+    expect(state().preferences.closeWindow).toBe('end');
+    await expect.poll(exits, { timeout: 10_000 }).toBe(1);
+
+    // From now on without asking: closing the first window ends alpha; the window stays, empty, in the tray.
+    await close(app, mainId);
+    await expect.poll(() => state().sessions[alpha]!.lifecycle).toBe('ended');
+    await expect.poll(() => state().windows[0]!.hidden).toBe(true);
+    expect(state().windows.map((w) => w.id)).toEqual([mainId]);
+    await expect.poll(exits, { timeout: 10_000 }).toBe(2);
+    expect(await dialogsAsked(app)).toHaveLength(3);
     await quit(app);
   } catch (error) {
     await captureWindows('closed-windows');

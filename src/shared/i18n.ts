@@ -157,7 +157,21 @@ const en = {
   'settings.updates': 'Check for updates',
   'settings.updatesHint':
     'Half a minute after starting and then every six hours, reframe asks GitHub whether there is a newer version. Nothing else is sent.',
+  'settings.closeWindow': 'Closing a window with sessions',
+  'settings.closeWindowAsk': 'Ask',
+  'settings.closeWindowEnd': 'Ends them',
+  'settings.closeWindowKeep': 'Keeps them running in the tray',
+  'settings.closeWindowHint':
+    'Ended sessions stay in the session list, where you can open them again. A window without sessions always just closes.',
   'settings.close': 'Close',
+  'closeWindow.title': 'Close window',
+  'closeWindow.messageOne': 'End the session in this window?',
+  'closeWindow.message': 'End the {count} sessions in this window?',
+  'closeWindow.detail':
+    'Ended, they stay in the session list and the window closes for good. Kept, they go on running and the window waits in the tray.',
+  'closeWindow.end': 'End sessions',
+  'closeWindow.keep': 'Keep in the tray',
+  'closeWindow.remember': "Don't ask again (Settings can change it)",
   'about.github': 'reframe on GitHub',
   'about.star': 'Give reframe a star on GitHub',
   'about.madeWith': 'Made with ❤️ in Austria by reframe Team aka',
@@ -342,7 +356,21 @@ const de: Record<MessageKey, string> = {
   'settings.updates': 'Nach Updates suchen',
   'settings.updatesHint':
     'Eine halbe Minute nach dem Start und dann alle sechs Stunden fragt reframe bei GitHub nach, ob es eine neuere Version gibt. Sonst wird nichts gesendet.',
+  'settings.closeWindow': 'Ein Fenster mit Sessions schließen',
+  'settings.closeWindowAsk': 'Fragt nach',
+  'settings.closeWindowEnd': 'Beendet sie',
+  'settings.closeWindowKeep': 'Lässt sie im Tray weiterlaufen',
+  'settings.closeWindowHint':
+    'Beendete Sessions bleiben in der Session-Liste, dort kannst du sie wieder öffnen. Ein Fenster ohne Sessions schließt sich immer einfach.',
   'settings.close': 'Schließen',
+  'closeWindow.title': 'Fenster schließen',
+  'closeWindow.messageOne': 'Die Session in diesem Fenster beenden?',
+  'closeWindow.message': 'Die {count} Sessions in diesem Fenster beenden?',
+  'closeWindow.detail':
+    'Beendet bleiben sie in der Session-Liste, und das Fenster schließt sich ganz. Behalten laufen sie weiter, und das Fenster wartet im Tray.',
+  'closeWindow.end': 'Sessions beenden',
+  'closeWindow.keep': 'Im Tray behalten',
+  'closeWindow.remember': 'Nicht mehr fragen (in den Einstellungen änderbar)',
   'about.github': 'reframe auf GitHub',
   'about.star': 'reframe auf GitHub einen Stern geben',
   'about.madeWith': 'Mit ❤️ in Österreich gemacht vom reframe Team aka',

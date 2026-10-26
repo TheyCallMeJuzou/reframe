@@ -1,10 +1,11 @@
 // End to end: Settings (the gear in the toolbar, or Ctrl+,). The language applies at once, everywhere, and after a
-// restart; the text size has buttons too; update checks can be turned off where reframe checks; and separators snap
-// to a grid over the layout while dragged (12 steps), unless Alt is held or snapping is turned off.
+// restart; the text size has buttons too; update checks can be turned off where reframe checks; what closing a
+// window with sessions does can be chosen; and separators snap to a grid over the layout while dragged (12 steps),
+// unless Alt is held or snapping is turned off.
 import { expect, test, type Page } from '@playwright/test';
 import { callMain, captureWindows, cleanup, launch, newSession, quit, setup } from './helpers';
 
-test('Settings: language, text size, update checks', async () => {
+test('Settings: language, text size, update checks, closing windows', async () => {
   const { dir, env, state } = setup();
   try {
     let { app, page } = await launch(env);
@@ -29,8 +30,16 @@ test('Settings: language, text size, update checks', async () => {
     await updates.check();
     await expect.poll(() => state().preferences.checkForUpdates).toBe(true);
 
+    // Closing a window with sessions: asks, until something else is chosen.
+    const closing = settings.getByRole('combobox', { name: /^Closing a window with sessions/ });
+    await expect(closing).toHaveValue('ask');
+    await closing.selectOption('end');
+    await expect.poll(() => state().preferences.closeWindow).toBe('end');
+    await closing.selectOption('ask');
+    await expect.poll(() => state().preferences.closeWindow).toBe('ask');
+
     // German, right away (also in the dialog itself) and after a restart.
-    await settings.getByRole('combobox').selectOption('de');
+    await settings.getByRole('combobox', { name: /^Language/ }).selectOption('de');
     await expect(page.getByRole('dialog', { name: 'Einstellungen' })).toBeVisible();
     await expect(page.locator('.toolbar').getByRole('button', { name: 'Neue Session' })).toBeVisible();
     await expect.poll(() => state().preferences.language).toBe('de');
@@ -40,7 +49,10 @@ test('Settings: language, text size, update checks', async () => {
     await expect(page.locator('.toolbar').getByRole('button', { name: 'Neue Session' })).toBeVisible();
     // Back to the system's language (English in the tests), from the gear this time.
     await page.getByRole('button', { name: 'Einstellungen' }).click();
-    await page.getByRole('dialog').getByRole('combobox').selectOption('system');
+    await page
+      .getByRole('dialog')
+      .getByRole('combobox', { name: /^Sprache/ })
+      .selectOption('system');
     await expect(page.locator('.toolbar').getByRole('button', { name: 'New session' })).toBeVisible();
     await page.getByRole('dialog').getByRole('button', { name: 'Close' }).click();
     await expect(page.getByRole('dialog')).toHaveCount(0);

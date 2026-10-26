@@ -5,6 +5,7 @@
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { tileKey } from '../src/shared/layout';
 import {
+  answerDialogs,
   captureWindows,
   cleanup,
   launch,
@@ -78,13 +79,15 @@ test('tiles move between windows, empty windows close, all windows come back', a
     await expect(page.locator('.tile')).toHaveCount(3);
     expect(state().windows.map((w) => w.id)).toEqual([mainId]);
 
-    // Tear gamma out and collapse it there: a window with only a collapsed tile stays. Then hide it (X).
+    // Tear gamma out and collapse it there: a window with only a collapsed tile stays. Then hide it (X, keeping
+    // gamma in the tray).
     opened = app.waitForEvent('window');
     expect(await tearOut(app, gamma, outside)).toBe(true);
     const third = await opened;
     await tileByLabel(third, 'gamma').getByRole('button', { name: 'Collapse to the side bar' }).click();
     await expect(third.locator('.dock-item', { hasText: 'gamma' })).toBeVisible();
     const thirdId = state().windows[1]!.id;
+    await answerDialogs(app, 1);
     await (await app.browserWindow(third)).evaluate((win) => win.close());
     await expect.poll(() => state().windows[1]!.hidden, { timeout: 5_000 }).toBe(true);
     expect(launches().filter((l) => l.event === 'start')).toHaveLength(3);

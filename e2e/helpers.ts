@@ -33,6 +33,7 @@ export interface SavedState {
     fontSize: number;
     snapToGrid: boolean;
     checkForUpdates: boolean;
+    closeWindow: 'ask' | 'end' | 'keep';
   };
   workspaces: { id: string; name: string }[];
 }
@@ -178,6 +179,30 @@ export function callMain<T>(app: ElectronApplication, method: string, ...args: u
     { method, args },
   ) as Promise<T>;
 }
+
+type Asked = { asked?: string[] };
+
+/**
+ * From now on reframe's message boxes (which a test cannot click) are answered with button `response` and the
+ * checkbox as given; their messages are kept for dialogsAsked.
+ */
+export function answerDialogs(app: ElectronApplication, response: number, checkboxChecked = false): Promise<void> {
+  return app.evaluate(
+    ({ dialog }, answer) => {
+      const asked = ((globalThis as Asked).asked ??= []);
+      Object.assign(dialog, {
+        showMessageBox: async (...args: unknown[]) => {
+          asked.push((args[args.length - 1] as { message: string }).message);
+          return answer;
+        },
+      });
+    },
+    { response, checkboxChecked },
+  );
+}
+
+/** The messages of the boxes answerDialogs has answered so far. */
+export const dialogsAsked = (app: ElectronApplication) => app.evaluate(() => (globalThis as Asked).asked ?? []);
 
 /** What a drag that ends outside every window does: the tile or group gets a window at `point`. */
 export const tearOutNode = (app: ElectronApplication, key: string, point: Point) =>

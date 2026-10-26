@@ -3,7 +3,7 @@ import type { LayoutAction } from './actions';
 import type { DropTarget, LayoutNode } from './layout';
 import type { Locale } from './i18n';
 import type { PermissionMode } from './launch';
-import type { DockEntry, Preferences, SessionRecord, Language } from './state';
+import type { CloseWindow, DockEntry, Preferences, SessionRecord, Language } from './state';
 
 /** starting → idle/busy/waiting while running; ended once the process is gone; error if it could not run. */
 export type SessionStatus = 'starting' | 'idle' | 'busy' | 'waiting' | 'ended' | 'error';
@@ -37,6 +37,8 @@ export interface WindowView {
   snapToGrid: boolean;
   /** Update checks are on (a preference); null where this copy does not check (macOS, a deb, development). */
   checkForUpdates: boolean | null;
+  /** What closing a window with sessions does (a preference). */
+  closeWindow: CloseWindow;
   systemLocale: Locale;
   version: string;
   sidebarOpen: boolean;

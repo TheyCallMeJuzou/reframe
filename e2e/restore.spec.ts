@@ -2,7 +2,7 @@
 // /clear, quits through the real shutdown path and checks that a restart restores the layout, resumes
 // the used session under its latest id and starts the never-used one fresh under its own id.
 import { expect, test } from '@playwright/test';
-import { captureWindows, cleanup, launch, newSession, quit, setup, tileByLabel } from './helpers';
+import { answerDialogs, captureWindows, cleanup, launch, newSession, quit, setup, tileByLabel } from './helpers';
 
 test('sessions survive a restart with layout, dock and latest session ids', async () => {
   const { dir, project, env, launches, state, byName } = setup();
@@ -15,9 +15,13 @@ test('sessions survive a restart with layout, dock and latest session ids', asyn
     await newSession(page, project, 'beta');
     await expect(page.locator('.tile')).toHaveCount(2);
 
-    // Closing the window only hides it; the sessions keep running and the hidden state is saved.
+    // Closing the window, its sessions kept in the tray, only hides it; they keep running and the hidden state is
+    // saved.
+    await answerDialogs(app, 1);
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.close());
-    expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isVisible())).toBe(false);
+    await expect
+      .poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isVisible()))
+      .toBe(false);
     await expect.poll(() => state().windows[0]!.hidden, { timeout: 5_000 }).toBe(true);
     expect(launches().filter((l) => l.event === 'exit')).toHaveLength(0);
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.show());

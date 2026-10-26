@@ -74,9 +74,11 @@ import {
 import { PERMISSION_MODES } from '@shared/launch';
 import { RELEASES_URL } from '@shared/links';
 import {
+  CLOSE_WINDOW,
   emptyWindow,
   FONT_SIZE,
   LANGUAGES,
+  type CloseWindow,
   type Language,
   type AppState,
   type Preferences,
@@ -329,6 +331,66 @@ export class ReframeApp {
       }
       this.refreshTray();
     });
+    this.windows.on('closeRequested', (id) => void this.closeWindow(id));
+  }
+
+  /**
+   * The user closes a window. With sessions in it, reframe asks (unless an answer was remembered): end them, and the
+   * window goes (the first one stays, empty, in the tray), or keep them running with the window hidden in the tray.
+   * An empty window just closes; while the system goes down nothing is asked.
+   */
+  private async closeWindow(windowId: string): Promise<void> {
+    const win = this.findWindow(windowId);
+    if (!win || this.askingToClose.has(windowId)) return;
+    const sessions = windowSessions(win);
+    let choice: CloseWindow | null = this.state.preferences.closeWindow;
+    if (sessions.length === 0 || this.systemEndingTimer) choice = 'keep';
+    if (choice === 'ask') {
+      this.askingToClose.add(windowId);
+      try {
+        choice = await this.askToClose(windowId, sessions.length);
+      } finally {
+        this.askingToClose.delete(windowId);
+      }
+    }
+    // What is in the window now (the question may have been open for a while).
+    const now = this.findWindow(windowId);
+    if (!now || !choice) return;
+    if (choice === 'end') {
+      const ending = windowSessions(now);
+      this.log('info', 'window closed, its sessions ended', { window: windowId, sessions: ending.length });
+      // Ending the last one closes a secondary window for good; the first one stays, empty.
+      for (const id of ending) this.endSession(windowId, id);
+    }
+    this.windows.hide(windowId);
+  }
+  /** Windows whose closing question is open, so a second click on X does not ask twice. */
+  private askingToClose = new Set<string>();
+
+  /** End the window's sessions, keep them in the tray, or (null) leave the window open; the answer may be kept. */
+  private async askToClose(windowId: string, count: number): Promise<'end' | 'keep' | null> {
+    const browserWindow = this.windows.get(windowId);
+    const options = {
+      type: 'question' as const,
+      buttons: [this.t('closeWindow.end'), this.t('closeWindow.keep'), this.t('dialog.cancel')],
+      defaultId: 1,
+      cancelId: 2,
+      title: this.t('closeWindow.title'),
+      message: count === 1 ? this.t('closeWindow.messageOne') : this.t('closeWindow.message', { count }),
+      detail: this.t('closeWindow.detail'),
+      checkboxLabel: this.t('closeWindow.remember'),
+    };
+    const { response, checkboxChecked } = browserWindow
+      ? await dialog.showMessageBox(browserWindow, options)
+      : await dialog.showMessageBox(options);
+    const choice = response === 0 ? 'end' : response === 1 ? 'keep' : null;
+    if (choice && checkboxChecked) {
+      this.state = { ...this.state, preferences: { ...this.state.preferences, closeWindow: choice } };
+      this.save();
+      this.log('info', 'closing windows with sessions from now on', { choice });
+      for (const w of this.state.windows) this.push(w.id); // Settings shows it
+    }
+    return choice;
   }
 
   private view(windowId: string): WindowView | null {
@@ -351,6 +413,7 @@ export class ReframeApp {
       fontSize: this.state.preferences.fontSize,
       snapToGrid: this.state.preferences.snapToGrid,
       checkForUpdates: this.updates.checks ? this.state.preferences.checkForUpdates : null,
+      closeWindow: this.state.preferences.closeWindow,
       systemLocale: this.systemLocale,
       version: app.getVersion(),
       sidebarOpen: !!win.sidebarOpen,
@@ -1698,12 +1761,14 @@ export class ReframeApp {
       if (Number.isInteger(size) && size! >= FONT_SIZE.min && size! <= FONT_SIZE.max) next.fontSize = size!;
       if (typeof patch.snapToGrid === 'boolean') next.snapToGrid = patch.snapToGrid;
       if (typeof patch.checkForUpdates === 'boolean') next.checkForUpdates = patch.checkForUpdates;
+      if (CLOSE_WINDOW.includes(patch.closeWindow as CloseWindow)) next.closeWindow = patch.closeWindow as CloseWindow;
       const relabel = next.language !== this.state.preferences.language;
       const was = this.state.preferences;
       const shown =
         next.fontSize !== was.fontSize ||
         next.snapToGrid !== was.snapToGrid ||
-        next.checkForUpdates !== was.checkForUpdates;
+        next.checkForUpdates !== was.checkForUpdates ||
+        next.closeWindow !== was.closeWindow;
       this.state = { ...this.state, preferences: next };
       this.save();
       if (relabel) {

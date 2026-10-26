@@ -45,7 +45,7 @@
   <img src="docs/screenshots/paste.gif" alt="Ctrl+V pastes a screenshot from the clipboard into a session">
 
 - **Nothing gets lost.** Every change is saved right away. Quitting from the tray ends the sessions cleanly, and the next start resumes each one (`claude --resume`) in its folder, in its place.
-- **Runs in the background.** Closing a window only hides it: sessions keep working, and you get a notification when Claude is done or needs you, unless you are looking at it anyway.
+- **Runs in the background.** Closing a window with sessions asks whether to end them or keep them working in the tray (or does what you chose in Settings). In the tray they keep working, and you get a notification when Claude is done or needs you, unless you are looking at it anyway.
 - **Starts with the system** if you like (tray menu), quietly in the tray, and **updates itself** from GitHub Releases.
 - **Settings** (the ⚙ in the toolbar, or Ctrl+,): the language (English or German, or the system's), the text size, snapping to the grid, and checking for updates.
 
