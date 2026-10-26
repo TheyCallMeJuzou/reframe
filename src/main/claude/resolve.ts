@@ -11,6 +11,11 @@ export interface ClaudeBinary {
   env: Record<string, string>;
   /** Where it was found, for diagnostics. */
   source: string;
+  /**
+   * Windows: a launcher (batch file) reframe cannot see through, run by cmd.exe with a command line of its own (see
+   * cmdCommandLine) instead of `prefixArgs`.
+   */
+  viaCmd?: string;
 }
 
 export interface ResolveOptions {
@@ -45,7 +50,7 @@ export function resolveClaude(options: ResolveOptions): ClaudeBinary | null {
       const runner = options.nodeRunner ?? { file: process.execPath, env: { ELECTRON_RUN_AS_NODE: '1' } };
       return { file: runner.file, prefixArgs: [options.override], env: runner.env, source: options.override };
     }
-    return wrap(options.override, platform, readFile);
+    return wrap(options.override, platform, readFile, isFile, () => null);
   }
 
   const pathKey = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH';
@@ -57,13 +62,17 @@ export function resolveClaude(options: ResolveOptions): ClaudeBinary | null {
 
   if (platform === 'win32') {
     const exts = (env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean);
-    for (const dir of dirs) {
-      for (const ext of exts) {
-        const candidate = join(dir, `claude${ext.toLowerCase()}`);
-        if (isFile(candidate)) return wrap(candidate, platform, readFile);
+    const onPath = (name: string, only?: string[]) => {
+      for (const dir of dirs) {
+        for (const ext of only ?? exts) {
+          const candidate = join(dir, `${name}${ext.toLowerCase()}`);
+          if (isFile(candidate)) return candidate;
+        }
       }
-    }
-    return null;
+      return null;
+    };
+    const claude = onPath('claude');
+    return claude ? wrap(claude, platform, readFile, isFile, () => onPath('node', ['.exe'])) : null;
   }
 
   // GUI apps on macOS/Linux often start with a minimal PATH, so also look where installers put claude.
@@ -77,24 +86,54 @@ export function resolveClaude(options: ResolveOptions): ClaudeBinary | null {
   ];
   for (const dir of [...dirs, ...fallbacks]) {
     const candidate = join(dir, 'claude');
-    if (isFile(candidate)) return wrap(candidate, platform, readFile);
+    if (isFile(candidate)) return wrap(candidate, platform, readFile, isFile, () => null);
   }
   return null;
 }
 
-function wrap(file: string, platform: NodeJS.Platform, readFile: (p: string) => string): ClaudeBinary {
+/**
+ * What runs a claude found on the PATH. On Windows that is often a package manager's batch file (npm, pnpm, yarn)
+ * that starts the real program: reframe starts that program itself, so that the pty's process is claude, which is
+ * what Claude Code's session registry is keyed by.
+ */
+function wrap(
+  file: string,
+  platform: NodeJS.Platform,
+  readFile: (p: string) => string,
+  isFile: (p: string) => boolean,
+  findNode: () => string | null,
+): ClaudeBinary {
   if (platform === 'win32' && /\.(cmd|bat)$/i.test(file)) {
-    // npm's cmd-shim ends with `"%dp0%\...\claude.exe" %*`; running that exe directly makes the
-    // pty's pid the claude pid, which is what Claude Code's session registry is keyed by.
+    let text = '';
     try {
-      const match = readFile(file).match(/"%dp0%\\([^"]+\.exe)"/i);
-      if (match?.[1]) {
-        return { file: path.win32.join(path.win32.dirname(file), match[1]), prefixArgs: [], env: {}, source: file };
-      }
+      text = readFile(file);
     } catch {
-      // fall through to cmd.exe
+      // run as it is, below
     }
-    return { file: 'cmd.exe', prefixArgs: ['/d', '/s', '/c', file], env: {}, source: file };
+    const dir = path.win32.dirname(file);
+    // The batch file's folder is %dp0% (npm, yarn) or %~dp0 (pnpm).
+    const targets = [...text.matchAll(/"%~?dp0%?\\([^"]+)"/gi)].map((m) => m[1]!);
+    // A script, run by the node next to the batch file or else the one on the PATH. (Its batch file names node.exe
+    // too, so that is no program to take.)
+    const script = targets.find((t) => /\.(c|m)?js$/i.test(t));
+    const node = script && (isFile(path.win32.join(dir, 'node.exe')) ? path.win32.join(dir, 'node.exe') : findNode());
+    if (script && node) {
+      return { file: node, prefixArgs: [path.win32.join(dir, script)], env: {}, source: file };
+    }
+    // A program (npm's batch file for Claude Code's own claude.exe).
+    const program = targets.find((t) => /\.exe$/i.test(t) && !/(^|\\)node\.exe$/i.test(t));
+    if (program) return { file: path.win32.join(dir, program), prefixArgs: [], env: {}, source: file };
+    return { file: 'cmd.exe', prefixArgs: [], env: {}, source: file, viaCmd: file };
   }
   return { file, prefixArgs: [], env: {}, source: file };
+}
+
+/**
+ * The arguments for cmd.exe that run `script` (a batch file) with `args`, as one command line. With /s, cmd takes
+ * off the quotes around the whole of it, so a path with spaces stays one path (cmd mangles it otherwise). Arguments
+ * are quoted where needed; a quote inside one cannot get through cmd intact and is left out.
+ */
+export function cmdCommandLine(script: string, args: string[]): string {
+  const quote = (arg: string) => (/^[\w\-.:\\/=@+,]+$/.test(arg) ? arg : `"${arg.replace(/"/g, '')}"`);
+  return `/d /s /c "${[script, ...args].map(quote).join(' ')}"`;
 }

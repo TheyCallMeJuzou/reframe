@@ -7,7 +7,8 @@ export type HostRequest =
       sessionId: string;
       instance: number;
       file: string;
-      args: string[];
+      /** A string is the whole command line as it is (Windows; for cmd.exe, which parses its own). */
+      args: string[] | string;
       cwd: string;
       env: Record<string, string>;
       cols: number;

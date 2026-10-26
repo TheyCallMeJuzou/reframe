@@ -21,7 +21,7 @@ import {
   transcriptExistsAsync,
   type RegistryEntry,
 } from './claude/registry';
-import type { ClaudeBinary } from './claude/resolve';
+import { cmdCommandLine, type ClaudeBinary } from './claude/resolve';
 import { writeHookSettings } from './claude/settings';
 import type { HookMessage, HookServer } from './hooks/server';
 import type { LogFn } from './log';
@@ -71,6 +71,8 @@ interface Runtime {
   exited?: Promise<void>;
   markExited?: () => void;
   wsl?: WslRuntime;
+  /** Run through cmd.exe (a launcher reframe does not know): claude's registry entry is under its own process id. */
+  launched?: { claudeSessionId: string; pid?: number };
 }
 
 export interface SessionManagerDeps {
@@ -109,6 +111,7 @@ export class SessionManager extends EventEmitter<Events> {
   /** A pass over the registry is under way (one in WSL waits for a share), so the next tick skips. */
   private polling = false;
   private slowShareLoggedAt = 0;
+  private viaCmdLogged = false;
 
   private log: LogFn;
 
@@ -193,11 +196,23 @@ export class SessionManager extends EventEmitter<Events> {
       cwd: session.cwd,
       claude: claude.source,
     });
+    if (claude.viaCmd) {
+      // The pty's process is cmd's then, not claude's: its registry entry is found by its session id.
+      runtime.launched = { claudeSessionId: session.claudeSessionId };
+      if (!this.viaCmdLogged) {
+        this.viaCmdLogged = true;
+        this.log('warn', 'claude is a launcher reframe does not know, it runs through cmd.exe', {
+          claude: claude.source,
+        });
+      }
+    }
     this.deps.host.spawn({
       sessionId: session.id,
       instance: runtime.instance,
       file: claude.file,
-      args: [...claude.prefixArgs, ...claudeArgs(session, mode, settings)],
+      args: claude.viaCmd
+        ? cmdCommandLine(claude.viaCmd, claudeArgs(session, mode, settings))
+        : [...claude.prefixArgs, ...claudeArgs(session, mode, settings)],
       cwd: session.cwd,
       env: claudeEnv(this.deps.env, { ...claude.env, REFRAME_SESSION: session.id }),
       cols: 120,
@@ -375,7 +390,8 @@ export class SessionManager extends EventEmitter<Events> {
    * their session id, and the distribution's clock may differ.)
    */
   private isStale(sessionId: string, runtime: Runtime, entry: RegistryEntry): boolean {
-    if (runtime.wsl) return false;
+    // (Nor through cmd.exe, where the process id is cmd's and the entry found by its session id.)
+    if (runtime.wsl || runtime.launched) return false;
     const stale =
       entry.procStart && runtime.procStart
         ? entry.procStart !== runtime.procStart
@@ -479,7 +495,9 @@ export class SessionManager extends EventEmitter<Events> {
         if (!runtime.pid || !this.isRunning(sessionId)) continue;
         const entry = runtime.wsl
           ? await this.wslRegistryEntry(runtime.wsl)
-          : readRegistryEntry(this.deps.claudeHome, runtime.pid);
+          : runtime.launched
+            ? await this.launchedRegistryEntry(runtime.launched)
+            : readRegistryEntry(this.deps.claudeHome, runtime.pid);
         // Nothing (yet), or the session ended or started again while its share was asked.
         if (!entry || this.runtimes.get(sessionId) !== runtime || !this.isRunning(sessionId)) continue;
         if (this.isStale(sessionId, runtime, entry)) continue;
@@ -522,6 +540,18 @@ export class SessionManager extends EventEmitter<Events> {
    * it is found by the session id first (and again should that file go away). Null when there is none, or no answer
    * in time; a read that is still waiting for the share is not started a second time.
    */
+  /** The registry entry of a claude run through cmd.exe: found by its session id once, then by its process id. */
+  private async launchedRegistryEntry(launched: {
+    claudeSessionId: string;
+    pid?: number;
+  }): Promise<RegistryEntry | null> {
+    const known = launched.pid ? readRegistryEntry(this.deps.claudeHome, launched.pid) : null;
+    if (known) return known;
+    const found = await findRegistryEntry(this.deps.claudeHome, launched.claudeSessionId);
+    launched.pid = found?.pid;
+    return found;
+  }
+
   private async wslRegistryEntry(wsl: WslRuntime): Promise<RegistryEntry | null> {
     if (wsl.reading) return null;
     wsl.reading = true;

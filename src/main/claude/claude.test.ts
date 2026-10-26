@@ -15,7 +15,7 @@ import {
   transcriptExists,
   transcriptExistsAsync,
 } from './registry';
-import { resolveClaude } from './resolve';
+import { cmdCommandLine, resolveClaude } from './resolve';
 import { hookSettings } from './settings';
 
 const session = (patch: Partial<SessionRecord> = {}): SessionRecord => ({
@@ -128,15 +128,50 @@ describe('resolveClaude', () => {
     });
   });
 
-  it('runs unknown cmd wrappers through cmd.exe', () => {
+  it('runs the script of a script shim (npm, pnpm) with node, the one next to it or the one on the PATH', () => {
+    const npm = [
+      '@ECHO off',
+      'IF EXIST "%dp0%\\node.exe" (',
+      '  SET "_prog=%dp0%\\node.exe"',
+      ') ELSE (',
+      '  SET "_prog=node"',
+      ')',
+      'endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\@anthropic-ai\\claude-code\\cli.js" %*',
+    ].join('\r\n');
+    const pnpm = '@IF EXIST "%~dp0\\node.exe" (\r\n  "%~dp0\\node.exe"  "%~dp0\\..\\claude-code\\cli.mjs" %*\r\n)';
+    const files: Record<string, string> = {
+      'C:\\npm\\claude.cmd': npm,
+      'C:\\Program Files\\nodejs\\node.exe': '',
+    };
+    const find = (extra: Record<string, string>, searched: string) =>
+      resolveClaude({
+        platform: 'win32',
+        env: { Path: searched, PATHEXT: '.EXE;.CMD' },
+        isFile: (p) => p in { ...files, ...extra },
+        readFile: (p) => ({ ...files, ...extra })[p]!,
+      });
+    expect(find({}, 'C:\\npm;C:\\Program Files\\nodejs')).toMatchObject({
+      file: 'C:\\Program Files\\nodejs\\node.exe',
+      prefixArgs: ['C:\\npm\\node_modules\\@anthropic-ai\\claude-code\\cli.js'],
+    });
+    expect(find({ 'C:\\npm\\node.exe': '' }, 'C:\\npm')).toMatchObject({ file: 'C:\\npm\\node.exe' });
+    expect(find({ 'C:\\pnpm\\claude.cmd': pnpm }, 'C:\\pnpm;C:\\Program Files\\nodejs')).toMatchObject({
+      file: 'C:\\Program Files\\nodejs\\node.exe',
+      prefixArgs: ['C:\\claude-code\\cli.mjs'],
+    });
+  });
+
+  it('runs unknown cmd wrappers through cmd.exe, with one command line that keeps paths with spaces whole', () => {
     const found = resolveClaude({
       platform: 'win32',
-      env: { PATH: 'C:\\tools' },
-      isFile: (p) => p === 'C:\\tools\\claude.cmd',
+      env: { PATH: 'C:\\My Tools' },
+      isFile: (p) => p === 'C:\\My Tools\\claude.cmd',
       readFile: () => 'some other launcher',
     });
-    expect(found?.file).toBe('cmd.exe');
-    expect(found?.prefixArgs).toEqual(['/d', '/s', '/c', 'C:\\tools\\claude.cmd']);
+    expect(found).toMatchObject({ file: 'cmd.exe', viaCmd: 'C:\\My Tools\\claude.cmd' });
+    expect(cmdCommandLine(found!.viaCmd!, ['--resume', 'abc-1', '--name', 'my "big" task'])).toBe(
+      '/d /s /c ""C:\\My Tools\\claude.cmd" --resume abc-1 --name "my big task""',
+    );
   });
 
   it('runs a .js override with the given node runner', () => {
