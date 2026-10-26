@@ -1,10 +1,14 @@
-import { FONT_SIZE, type CloseWindow, type Language, type Preferences } from '@shared/state';
+import { useEffect, useState } from 'react';
+import type { PreferencesPatch } from '@shared/ipc';
+import { MODEL_SUGGESTIONS, PERMISSION_MODES, type PermissionMode } from '@shared/launch';
+import { FONT_SIZE, type CloseWindow, type Language } from '@shared/state';
 import { useApp } from '../context';
 import { fontSizeAfter } from '../shortcuts';
 
 /**
  * Settings: the language, the terminals' text size, snapping separators to a grid, what closing a window with
- * sessions does, and update checks (where this copy checks at all). Each applies at once.
+ * sessions does, which claude runs and what new sessions start with, and update checks (where this copy checks at
+ * all). Each applies at once.
  */
 export function SettingsDialog({
   language,
@@ -13,6 +17,9 @@ export function SettingsDialog({
   snapToGrid,
   closeWindow,
   checkForUpdates,
+  claudeBin,
+  defaultModel,
+  defaultPermissionMode,
   onClose,
 }: {
   language: Language;
@@ -21,10 +28,28 @@ export function SettingsDialog({
   snapToGrid: boolean;
   closeWindow: CloseWindow;
   checkForUpdates: boolean | null;
+  claudeBin: string | null;
+  defaultModel: string | null;
+  defaultPermissionMode: PermissionMode | null;
   onClose: () => void;
 }) {
   const { t, keys, locale } = useApp();
-  const set = (patch: Partial<Preferences>) => window.reframe.setPreferences(patch);
+  const set = (patch: PreferencesPatch) => window.reframe.setPreferences(patch);
+  // Where the claude that runs is (looked up again when another one is chosen).
+  const [claude, setClaude] = useState<string | null | undefined>(undefined);
+  useEffect(() => {
+    let alive = true;
+    void window.reframe.getDialogDefaults().then((defaults) => alive && setClaude(defaults.claude));
+    return () => {
+      alive = false;
+    };
+  }, [claudeBin]);
+  // Typed here, kept when the field is left.
+  const [model, setModel] = useState(defaultModel ?? '');
+  const chooseClaude = async () => {
+    const file = await window.reframe.pickClaude();
+    if (file) set({ claudeBin: file });
+  };
   // What "System" stands for right now, named in the current language.
   const systemName = new Intl.DisplayNames([locale], { type: 'language' }).of(systemLocale);
   const ctrl = window.reframe.platform === 'darwin' ? '⌘' : t('keys.ctrl');
@@ -107,6 +132,67 @@ export function SettingsDialog({
           </select>
         </label>
         <p className="setting-hint">{t('settings.closeWindowHint')}</p>
+
+        <div className="setting">
+          <span>{t('settings.claude')}</span>
+          <span className="setting-stepper">
+            {claudeBin && (
+              <button className="button" onClick={() => set({ claudeBin: '' })}>
+                {t('settings.claudeUsePath')}
+              </button>
+            )}
+            <button className="button" onClick={() => void chooseClaude()}>
+              {t('settings.claudeChoose')}
+            </button>
+          </span>
+        </div>
+        {claude !== undefined && (
+          <p className="setting-hint setting-claude">
+            {claudeBin ? (claude ? t('settings.claudeChosen') : t('settings.claudeMissing')) : null}
+            {!claudeBin && (claude ? t('settings.claudeFound') : t('settings.claudeNotFound'))}
+            {(claudeBin ?? claude) && (
+              // Cut off at its start, so the file stays in sight, but read left to right.
+              <span className="setting-path" title={claudeBin ?? claude ?? ''}>
+                <bdi>{claudeBin ?? claude}</bdi>
+              </span>
+            )}
+          </p>
+        )}
+        <p className="setting-hint">{t('settings.claudeHint')}</p>
+
+        <label className="setting">
+          <span>{t('settings.defaultModel')}</span>
+          <input
+            className="setting-input"
+            value={model}
+            list="settings-models"
+            placeholder={t('dialog.modelPlaceholder')}
+            spellCheck={false}
+            onChange={(e) => setModel(e.target.value)}
+            onBlur={() => model.trim() !== (defaultModel ?? '') && set({ defaultModel: model })}
+            onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+          />
+          <datalist id="settings-models">
+            {MODEL_SUGGESTIONS.map((m) => (
+              <option key={m} value={m} />
+            ))}
+          </datalist>
+        </label>
+        <label className="setting">
+          <span>{t('settings.defaultPermissionMode')}</span>
+          <select
+            value={defaultPermissionMode ?? ''}
+            onChange={(e) => set({ defaultPermissionMode: e.target.value as PermissionMode | '' })}
+          >
+            <option value="">{t('dialog.default')}</option>
+            {PERMISSION_MODES.map((mode) => (
+              <option key={mode} value={mode}>
+                {mode}
+              </option>
+            ))}
+          </select>
+        </label>
+        <p className="setting-hint">{t('settings.launchHint')}</p>
 
         {checkForUpdates !== null && (
           <>

@@ -46,6 +46,10 @@ export interface WindowView {
   checkForUpdates: boolean | null;
   /** What closing a window with sessions does (a preference). */
   closeWindow: CloseWindow;
+  /** The claude chosen in Settings (null: the one on the PATH), and what new sessions start with (preferences). */
+  claudeBin: string | null;
+  defaultModel: string | null;
+  defaultPermissionMode: PermissionMode | null;
   systemLocale: Locale;
   version: string;
   sidebarOpen: boolean;
@@ -72,7 +76,14 @@ export type NewSessionResult =
 export interface DialogDefaults {
   recentFolders: string[];
   preferences: Preferences;
+  /** The claude sessions run: where it was found (or chosen), null when there is none. */
+  claude: string | null;
 }
+
+/** A change of preferences; "" takes a chosen claude, model or permission mode back. */
+export type PreferencesPatch = Partial<Omit<Preferences, 'defaultPermissionMode'>> & {
+  defaultPermissionMode?: PermissionMode | '';
+};
 
 /**
  * A tile or group (by node key) dropped into this window from another one; without a target it is added
@@ -228,9 +239,11 @@ export interface ReframeApi {
   /** Asks main to send a MessagePort for the session's terminal (arrives as a window message). */
   attachTerminal(sessionId: string): void;
   pickFolder(): Promise<string | null>;
+  /** Asks for a claude to run (a file dialog). */
+  pickClaude(): Promise<string | null>;
   /** Recent folders and saved preferences for the "New session" dialog. */
   getDialogDefaults(): Promise<DialogDefaults>;
-  setPreferences(patch: Partial<Preferences>): void;
+  setPreferences(patch: PreferencesPatch): void;
   folderExists(path: string): Promise<boolean>;
   onFocusTile(listener: (sessionId: string) => void): () => void;
   /** The toolbar's Workspaces menu (native). */
@@ -314,6 +327,7 @@ export const IPC = {
   attachTerminal: 'reframe:attach-terminal',
   terminalPort: 'reframe:terminal-port',
   pickFolder: 'reframe:pick-folder',
+  pickClaude: 'reframe:pick-claude',
   dialogDefaults: 'reframe:dialog-defaults',
   setPreferences: 'reframe:set-preferences',
   folderExists: 'reframe:folder-exists',

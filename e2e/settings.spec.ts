@@ -2,8 +2,10 @@
 // restart; the text size has buttons too; update checks can be turned off where reframe checks; what closing a
 // window with sessions does can be chosen; and separators snap to a grid over the layout while dragged (12 steps),
 // unless Alt is held or snapping is turned off.
+import fs from 'node:fs';
+import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
-import { callMain, captureWindows, cleanup, launch, newSession, quit, setup } from './helpers';
+import { callMain, captureWindows, cleanup, launch, newSession, quit, setup, tileByLabel } from './helpers';
 
 test('Settings: language, text size, update checks, closing windows', async () => {
   const { dir, env, state } = setup();
@@ -110,6 +112,66 @@ test('Separators snap to a grid, unless Alt is held or snapping is off', async (
     await quit(app);
   } catch (error) {
     await captureWindows('snap');
+    throw error;
+  } finally {
+    await cleanup(dir);
+  }
+});
+
+test('Settings: which Claude Code runs, and what new sessions start with', async () => {
+  const { dir, project, env, launches, state } = setup();
+  try {
+    // Another claude to choose (a copy of the fake one).
+    const other = path.join(dir, 'other-claude.mjs');
+    fs.copyFileSync(env.REFRAME_CLAUDE_BIN!, other);
+    const { app, page } = await launch(env);
+    await page.keyboard.press('Control+Comma');
+    const settings = page.getByRole('dialog', { name: 'Settings' });
+    // Without a choice, the one reframe finds (in the tests the one REFRAME_CLAUDE_BIN names).
+    const claude = settings.locator('.setting-claude');
+    await expect(claude).toHaveText(`From the PATH:${env.REFRAME_CLAUDE_BIN}`);
+
+    await app.evaluate(({ dialog }, file) => {
+      Object.assign(dialog, { showOpenDialog: async () => ({ canceled: false, filePaths: [file] }) });
+    }, other);
+    await settings.getByRole('button', { name: 'Choose…' }).click();
+    await expect(claude).toHaveText(`Chosen:${other}`);
+    await settings.getByLabel('Model for new sessions').fill('opus');
+    await settings.getByLabel('Model for new sessions').press('Enter');
+    await settings.getByLabel('Permission mode for new sessions').selectOption('plan');
+    await expect
+      .poll(() => state().preferences)
+      .toMatchObject({
+        claudeBin: other,
+        defaultModel: 'opus',
+        defaultPermissionMode: 'plan',
+      });
+    await settings.getByRole('button', { name: 'Close' }).click();
+
+    // "New session" has them filled in, and the session runs the chosen claude with them.
+    await page.getByRole('button', { name: 'New session' }).first().click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByText('Advanced').click();
+    await expect(dialog.getByLabel('Model', { exact: true })).toHaveValue('opus');
+    await expect(dialog.locator('select')).toHaveValue('plan');
+    await dialog.getByPlaceholder('Path to a project folder').fill(project);
+    await dialog.getByPlaceholder('Shown on the tile and in notifications').fill('alpha');
+    await dialog.getByRole('button', { name: 'Start' }).click();
+    await expect(tileByLabel(page, 'alpha').locator('.status-idle')).toBeVisible({ timeout: 15_000 });
+    const start = launches().find((l) => l.event === 'start')!;
+    expect(start.script).toBe(other);
+    expect(start.args).toEqual(expect.arrayContaining(['--model', 'opus', '--permission-mode', 'plan']));
+
+    // Chosen and gone since: Settings says so (and sessions would say Claude Code is not found); back to the PATH's.
+    fs.rmSync(other);
+    await page.keyboard.press('Control+Comma');
+    await expect(claude).toHaveText(`Chosen, but not there any more:${other}`);
+    await settings.getByRole('button', { name: 'Use the one on the PATH' }).click();
+    await expect(claude).toHaveText(`From the PATH:${env.REFRAME_CLAUDE_BIN}`);
+    await expect.poll(() => state().preferences.claudeBin).toBeUndefined();
+    await quit(app);
+  } catch (error) {
+    await captureWindows('settings-claude');
     throw error;
   } finally {
     await cleanup(dir);

@@ -46,6 +46,8 @@ export function resolveClaude(options: ResolveOptions): ClaudeBinary | null {
   const { platform, env } = options;
 
   if (options.override) {
+    // One chosen that is not there (any more) is not found, rather than started and failing.
+    if (!isFile(options.override)) return null;
     if (/\.(c|m)?js$/i.test(options.override)) {
       const runner = options.nodeRunner ?? { file: process.execPath, env: { ELECTRON_RUN_AS_NODE: '1' } };
       return { file: runner.file, prefixArgs: [options.override], env: runner.env, source: options.override };

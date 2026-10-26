@@ -47,7 +47,7 @@
 - **Nothing gets lost.** Every change is saved right away. Quitting from the tray ends the sessions cleanly, and the next start resumes each one (`claude --resume`) in its folder, in its place.
 - **Runs in the background.** Closing a window with sessions asks whether to end them or keep them working in the tray (or does what you chose in Settings). In the tray they keep working, and you get a notification when Claude is done or needs you, unless you are looking at it anyway. A window's title says how many of its sessions need you (on Windows its taskbar button gets a badge, and flashes when one starts waiting unseen), the tray says how many in all, and Ctrl+Shift+Space takes you to the next one.
 - **Starts with the system** if you like (tray menu), quietly in the tray, and **updates itself** from GitHub Releases.
-- **Settings** (the ⚙ in the toolbar, or Ctrl+,): the language (English or German, or the system's), the text size, snapping to the grid, and checking for updates.
+- **Settings** (the ⚙ in the toolbar, or Ctrl+,): the language (English or German, or the system's), the text size, snapping to the grid, what closing a window with sessions does, which Claude Code runs (the one on the PATH, or one you choose: handy with more than one installed), the model and permission mode new sessions start with, and checking for updates.
 
 ## Keyboard shortcuts
 
@@ -142,16 +142,16 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for how to contribute and [docs/RELEASING
 
 ### Environment variables
 
-| Variable                        | Purpose                                                                      |
-| ------------------------------- | ---------------------------------------------------------------------------- |
-| `REFRAME_USER_DATA`             | Use another profile directory (state, hook settings, log)                    |
-| `REFRAME_CLAUDE_BIN`            | Path to the `claude` executable, or a `.js` stand-in                         |
-| `REFRAME_NODE`                  | Node binary that runs a `.js` stand-in (needed on Windows)                   |
-| `REFRAME_CLAUDE_HOME`           | Claude Code's config directory (default: `CLAUDE_CONFIG_DIR` or `~/.claude`) |
-| `REFRAME_LOCALE`                | Force `en` or `de`                                                           |
-| `REFRAME_DISABLE_NOTIFICATIONS` | Suppress OS notifications (tests)                                            |
-| `REFRAME_E2E`                   | Exposes test hooks to the end-to-end tests (set by the tests)                |
-| `REFRAME_E2E_APP`               | Run the end-to-end tests against a packaged app (e.g. `dist/win-unpacked/…`) |
+| Variable                        | Purpose                                                                                   |
+| ------------------------------- | ----------------------------------------------------------------------------------------- |
+| `REFRAME_USER_DATA`             | Use another profile directory (state, hook settings, log)                                 |
+| `REFRAME_CLAUDE_BIN`            | Path to the `claude` executable, or a `.js` stand-in (one chosen in Settings comes first) |
+| `REFRAME_NODE`                  | Node binary that runs a `.js` stand-in (needed on Windows)                                |
+| `REFRAME_CLAUDE_HOME`           | Claude Code's config directory (default: `CLAUDE_CONFIG_DIR` or `~/.claude`)              |
+| `REFRAME_LOCALE`                | Force `en` or `de`                                                                        |
+| `REFRAME_DISABLE_NOTIFICATIONS` | Suppress OS notifications (tests)                                                         |
+| `REFRAME_E2E`                   | Exposes test hooks to the end-to-end tests (set by the tests)                             |
+| `REFRAME_E2E_APP`               | Run the end-to-end tests against a packaged app (e.g. `dist/win-unpacked/…`)              |
 
 The app log is in the profile directory, under `logs/main.log`.
 

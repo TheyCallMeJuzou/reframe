@@ -15,6 +15,7 @@ import {
   type BrowserWindow,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
+  type OpenDialogOptions,
   type Menu,
   type MenuItem,
 } from 'electron';
@@ -65,6 +66,7 @@ import {
   type ListItemRef,
   type OpenMode,
   type OpenSessionsRequest,
+  type PreferencesPatch,
   type OpenSessionRequest,
   type RunningListItem,
   type SessionList,
@@ -73,7 +75,7 @@ import {
   type TransferRequest,
   type WindowView,
 } from '@shared/ipc';
-import { PERMISSION_MODES } from '@shared/launch';
+import { PERMISSION_MODES, type PermissionMode } from '@shared/launch';
 import { RELEASES_URL } from '@shared/links';
 import {
   CLOSE_WINDOW,
@@ -83,7 +85,6 @@ import {
   type CloseWindow,
   type Language,
   type AppState,
-  type Preferences,
   type SessionRecord,
   type WindowState,
   type Workspace,
@@ -223,7 +224,7 @@ export class ReframeApp {
       windows: this.state.windows.length,
       ...(leftovers.length > 0 ? { closedEmptyWindowsDropped: leftovers.length } : {}),
       sessions: Object.keys(this.state.sessions).length,
-      claude: findClaude()?.source ?? 'not found',
+      claude: this.findClaude()?.source ?? 'not found',
       claudeHome: this.claudeHome,
     });
 
@@ -235,7 +236,7 @@ export class ReframeApp {
       claudeHome: this.claudeHome,
       settingsDir: path.join(app.getPath('userData'), 'hooks'),
       env: process.env,
-      resolveClaude: findClaude,
+      resolveClaude: () => this.findClaude(),
       log: this.log,
       wsl: this.wsl ?? undefined,
     });
@@ -478,6 +479,9 @@ export class ReframeApp {
       snapToGrid: this.state.preferences.snapToGrid,
       checkForUpdates: this.updates.checks ? this.state.preferences.checkForUpdates : null,
       closeWindow: this.state.preferences.closeWindow,
+      claudeBin: this.state.preferences.claudeBin ?? null,
+      defaultModel: this.state.preferences.defaultModel ?? null,
+      defaultPermissionMode: this.state.preferences.defaultPermissionMode ?? null,
       systemLocale: this.systemLocale,
       version: app.getVersion(),
       sidebarOpen: !!win.sidebarOpen,
@@ -724,7 +728,7 @@ export class ReframeApp {
     const cwd = request.cwd.trim();
     if (!(await isFolder(cwd))) return { ok: false, error: 'folderMissing' };
     const where = this.wslPath(cwd);
-    if (where ? !(await this.wsl!.info(where.distro))?.claude : !findClaude()) {
+    if (where ? !(await this.wsl!.info(where.distro))?.claude : !this.findClaude()) {
       return { ok: false, error: 'claudeNotFound', ...(where ? { distro: where.distro } : {}) };
     }
     const now = Date.now();
@@ -2076,8 +2080,25 @@ export class ReframeApp {
     handle(IPC.dialogDefaults, () => ({
       recentFolders: this.state.recentFolders.filter((folder) => !!this.wslPath(folder) || isDirectory(folder)),
       preferences: this.state.preferences,
+      claude: this.findClaude()?.source ?? null,
     }));
-    on(IPC.setPreferences, (_id, _event, patch: Partial<Preferences> | null) => {
+    handle(IPC.pickClaude, async (id) => {
+      const win = this.windows.get(id);
+      const options: OpenDialogOptions = {
+        properties: ['openFile'],
+        ...(process.platform === 'win32'
+          ? {
+              filters: [
+                { name: this.t('settings.programs'), extensions: ['exe', 'cmd', 'bat'] },
+                { name: this.t('settings.allFiles'), extensions: ['*'] },
+              ],
+            }
+          : {}),
+      };
+      const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
+      return result.canceled ? null : (result.filePaths[0] ?? null);
+    });
+    on(IPC.setPreferences, (_id, _event, patch: PreferencesPatch | null) => {
       if (!patch || typeof patch !== 'object') return;
       const next = { ...this.state.preferences };
       if (typeof patch.nameFromFolder === 'boolean') next.nameFromFolder = patch.nameFromFolder;
@@ -2087,13 +2108,26 @@ export class ReframeApp {
       if (typeof patch.snapToGrid === 'boolean') next.snapToGrid = patch.snapToGrid;
       if (typeof patch.checkForUpdates === 'boolean') next.checkForUpdates = patch.checkForUpdates;
       if (CLOSE_WINDOW.includes(patch.closeWindow as CloseWindow)) next.closeWindow = patch.closeWindow as CloseWindow;
+      if (typeof patch.claudeBin === 'string') next.claudeBin = patch.claudeBin.trim().slice(0, 1024) || undefined;
+      if (typeof patch.defaultModel === 'string')
+        next.defaultModel = patch.defaultModel.trim().slice(0, 100) || undefined;
+      if (patch.defaultPermissionMode === '') next.defaultPermissionMode = undefined;
+      else if (PERMISSION_MODES.includes(patch.defaultPermissionMode as PermissionMode)) {
+        next.defaultPermissionMode = patch.defaultPermissionMode as PermissionMode;
+      }
+      if (next.claudeBin !== this.state.preferences.claudeBin) {
+        this.log('info', 'claude to run changed', { claude: next.claudeBin ?? 'the one on the PATH' });
+      }
       const relabel = next.language !== this.state.preferences.language;
       const was = this.state.preferences;
       const shown =
         next.fontSize !== was.fontSize ||
         next.snapToGrid !== was.snapToGrid ||
         next.checkForUpdates !== was.checkForUpdates ||
-        next.closeWindow !== was.closeWindow;
+        next.closeWindow !== was.closeWindow ||
+        next.claudeBin !== was.claudeBin ||
+        next.defaultModel !== was.defaultModel ||
+        next.defaultPermissionMode !== was.defaultPermissionMode;
       this.state = { ...this.state, preferences: next };
       this.save();
       if (relabel) {
@@ -2149,19 +2183,22 @@ export class ReframeApp {
       if (typeof sessionId === 'string') this.removeSession(sessionId);
     });
   }
+  /**
+   * The claude sessions run (in WSL folders their distribution's instead): the one chosen in Settings, else
+   * REFRAME_CLAUDE_BIN (tests: a .js fake run by REFRAME_NODE), else the one on the PATH.
+   */
+  private findClaude(): ClaudeBinary | null {
+    const node = process.env.REFRAME_NODE;
+    return resolveClaude({
+      env: process.env,
+      platform: process.platform,
+      override: this.state.preferences.claudeBin || process.env.REFRAME_CLAUDE_BIN,
+      nodeRunner: node ? { file: node, env: {} } : undefined,
+    });
+  }
+
   /** Channels a message came in on from something that is no window of reframe (logged once each). */
   private strangeSenders = new Set<string>();
-}
-
-/** claude from PATH, or REFRAME_CLAUDE_BIN (tests: a .js fake run by REFRAME_NODE). */
-function findClaude(): ClaudeBinary | null {
-  const node = process.env.REFRAME_NODE;
-  return resolveClaude({
-    env: process.env,
-    platform: process.platform,
-    override: process.env.REFRAME_CLAUDE_BIN,
-    nodeRunner: node ? { file: node, env: {} } : undefined,
-  });
 }
 
 const OPEN_MODES: OpenMode[] = ['open', 'group', 'groupInNewWindow'];

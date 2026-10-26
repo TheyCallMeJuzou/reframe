@@ -471,6 +471,9 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
             snapToGrid={view.snapToGrid}
             closeWindow={view.closeWindow}
             checkForUpdates={view.checkForUpdates}
+            claudeBin={view.claudeBin}
+            defaultModel={view.defaultModel}
+            defaultPermissionMode={view.defaultPermissionMode}
             onClose={() => setSettingsOpen(false)}
           />
         )}

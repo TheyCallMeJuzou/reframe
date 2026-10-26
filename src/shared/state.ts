@@ -123,6 +123,11 @@ export const preferencesSchema = z.object({
   /** Asks GitHub for a newer version now and then (where this copy updates at all). */
   checkForUpdates: z.boolean().default(true),
   closeWindow: z.enum(CLOSE_WINDOW).default('ask'),
+  /** The claude to run, chosen in Settings; without one, the one on the PATH. */
+  claudeBin: z.string().optional(),
+  /** What "New session" fills in for the model and the permission mode. */
+  defaultModel: z.string().optional(),
+  defaultPermissionMode: z.enum(PERMISSION_MODES).optional(),
 });
 
 export const DEFAULT_PREFERENCES: z.infer<typeof preferencesSchema> = {

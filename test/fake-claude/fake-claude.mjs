@@ -27,7 +27,8 @@ const transcript = (id) => path.join(home, 'projects', 'fake-project', `${id}.js
 const registryFile = path.join(home, 'sessions', `${process.pid}.json`);
 
 function record(event) {
-  if (log) fs.appendFileSync(log, JSON.stringify({ pid: process.pid, event, args, cwd: process.cwd() }) + '\n');
+  const script = process.argv[1];
+  if (log) fs.appendFileSync(log, JSON.stringify({ pid: process.pid, event, args, cwd: process.cwd(), script }) + '\n');
 }
 
 function writeRegistry(status) {

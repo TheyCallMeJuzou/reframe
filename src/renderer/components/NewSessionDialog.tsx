@@ -1,9 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { NewSessionResult } from '@shared/ipc';
-import { PERMISSION_MODES, type PermissionMode } from '@shared/launch';
+import { MODEL_SUGGESTIONS, PERMISSION_MODES, type PermissionMode } from '@shared/launch';
 import { useApp } from '../context';
-
-const MODEL_SUGGESTIONS = ['fable', 'opus', 'sonnet', 'haiku'];
 
 const folderName = (folder: string): string => folder.trim().split(/[\\/]/).filter(Boolean).pop() ?? '';
 
@@ -27,6 +25,9 @@ export function NewSessionDialog({ onClose }: { onClose: () => void }) {
       setRecent(recentFolders);
       setCwd((current) => current || recentFolders[0] || '');
       setNameFromFolder(preferences.nameFromFolder);
+      // What Settings says new sessions start with, unless something was picked here already.
+      setModel((current) => current || preferences.defaultModel || '');
+      setPermissionMode((current) => current || preferences.defaultPermissionMode || '');
     });
     folderInput.current?.focus();
   }, []);

@@ -176,13 +176,27 @@ describe('resolveClaude', () => {
 
   it('runs a .js override with the given node runner', () => {
     const runner = { file: 'electron.exe', env: { ELECTRON_RUN_AS_NODE: '1' } };
-    const found = resolveClaude({ platform: 'win32', env: {}, override: 'C:/fake.mjs', nodeRunner: runner });
+    const found = resolveClaude({
+      platform: 'win32',
+      env: {},
+      override: 'C:/fake.mjs',
+      nodeRunner: runner,
+      isFile: () => true,
+    });
     expect(found).toEqual({
       file: 'electron.exe',
       prefixArgs: ['C:/fake.mjs'],
       env: { ELECTRON_RUN_AS_NODE: '1' },
       source: 'C:/fake.mjs',
     });
+  });
+
+  it('does not find a chosen claude that is not there', () => {
+    const chosen = { platform: 'win32' as const, env: { PATH: 'C:\\npm' }, override: 'D:\\tools\\claude.exe' };
+    expect(resolveClaude({ ...chosen, isFile: () => false })).toBeNull();
+    expect(resolveClaude({ ...chosen, isFile: (p) => p === 'D:\\tools\\claude.exe' })?.file).toBe(
+      'D:\\tools\\claude.exe',
+    );
   });
 
   it('returns null when claude is missing', () => {

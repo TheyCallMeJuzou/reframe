@@ -39,6 +39,9 @@ export interface SavedState {
     snapToGrid: boolean;
     checkForUpdates: boolean;
     closeWindow: 'ask' | 'end' | 'keep';
+    claudeBin?: string;
+    defaultModel?: string;
+    defaultPermissionMode?: string;
   };
   workspaces: { id: string; name: string }[];
   recentFolders: string[];
@@ -48,6 +51,8 @@ export interface FakeLaunch {
   pid: number;
   event: 'start' | 'exit';
   args: string[];
+  /** The script node ran (which claude it was). */
+  script?: string;
 }
 
 export function setup() {

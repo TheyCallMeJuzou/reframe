@@ -844,6 +844,36 @@ select {
   gap: 12px;
 }
 
+.setting-input {
+  width: 160px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--terminal);
+  color: var(--text);
+  font: inherit;
+}
+
+.setting-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.setting-claude {
+  display: flex;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.setting-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+
 .setting-stepper {
   display: flex;
   align-items: center;

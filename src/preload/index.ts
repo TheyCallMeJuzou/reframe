@@ -30,6 +30,7 @@ const api: ReframeApi = {
   endSession: (sessionId) => ipcRenderer.send(IPC.endSession, sessionId),
   attachTerminal: (sessionId) => ipcRenderer.send(IPC.attachTerminal, sessionId),
   pickFolder: () => ipcRenderer.invoke(IPC.pickFolder),
+  pickClaude: () => ipcRenderer.invoke(IPC.pickClaude),
   getDialogDefaults: () => ipcRenderer.invoke(IPC.dialogDefaults),
   setPreferences: (patch) => ipcRenderer.send(IPC.setPreferences, patch),
   folderExists: (path) => ipcRenderer.invoke(IPC.folderExists, path),
