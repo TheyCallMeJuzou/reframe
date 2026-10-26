@@ -254,6 +254,8 @@ export interface ReframeApi {
   /** Opens a new, empty window next to this one. */
   newWindow(): void;
   toggleFullscreen(): void;
+  /** Brings up the next session that needs the user, after `after` (the focused one): in this window first. */
+  focusNextWaiting(after: string | null): void;
   /** `process.platform`, e.g. for how to quote paths. */
   readonly platform: string;
   readClipboard(): Promise<ClipboardContents>;
@@ -329,6 +331,7 @@ export const IPC = {
   transferNode: 'reframe:transfer-node',
   newWindow: 'reframe:new-window',
   toggleFullscreen: 'reframe:toggle-fullscreen',
+  focusNextWaiting: 'reframe:focus-next-waiting',
   readClipboard: 'reframe:read-clipboard',
   saveDroppedFile: 'reframe:save-dropped-file',
   saveClipboardImage: 'reframe:save-clipboard-image',

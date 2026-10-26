@@ -11,6 +11,7 @@ export type Shortcut =
   | { kind: 'focusDirection'; direction: Direction }
   | { kind: 'newSession' }
   | { kind: 'newWindow' }
+  | { kind: 'nextWaiting' }
   | { kind: 'toggleCollapse' }
   | { kind: 'toggleSidebar' }
   | { kind: 'toggleFullscreen' }
@@ -32,6 +33,7 @@ const LETTERS: Record<string, Shortcut> = {
   KeyN: { kind: 'newWindow' },
   KeyM: { kind: 'toggleCollapse' },
   KeyL: { kind: 'toggleSidebar' },
+  Space: { kind: 'nextWaiting' },
 };
 // By character, not key: they sit elsewhere on other layouts (+ has a key of its own on a German keyboard).
 const TEXT_SIZE: Record<string, TextSizeChange> = { '+': 'bigger', '=': 'bigger', '-': 'smaller', '0': 'reset' };

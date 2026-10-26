@@ -21,6 +21,9 @@ describe('shortcutFor', () => {
     expect(shortcutFor(press('KeyN', { ctrl: true, shift: true }), false)).toEqual({ kind: 'newWindow' });
     expect(shortcutFor(press('KeyM', { ctrl: true, shift: true }), false)).toEqual({ kind: 'toggleCollapse' });
     expect(shortcutFor(press('KeyL', { ctrl: true, shift: true }), false)).toEqual({ kind: 'toggleSidebar' });
+    expect(shortcutFor(press('Space', { ctrl: true, shift: true }, ' '), false)).toEqual({ kind: 'nextWaiting' });
+    expect(shortcutFor(press('Space', { meta: true, shift: true }, ' '), true)).toEqual({ kind: 'nextWaiting' });
+    expect(shortcutFor(press('Space', { ctrl: true }, ' '), false)).toBeNull();
     expect(shortcutFor(press('ArrowLeft', { ctrl: true, shift: true }), false)).toEqual({
       kind: 'focusDirection',
       direction: 'left',

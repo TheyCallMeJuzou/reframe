@@ -38,7 +38,11 @@ export interface TrayActions {
   quit: () => void;
 }
 
-export function createTray(icon: string, icon2x: string, actions: TrayActions): { tray: Tray; refresh: () => void } {
+export function createTray(
+  icon: string,
+  icon2x: string,
+  actions: TrayActions,
+): { tray: Tray; refresh: () => void; refreshTooltip: () => void } {
   const image = nativeImage.createFromPath(icon);
   image.addRepresentation({ scaleFactor: 2, buffer: nativeImage.createFromPath(icon2x).toPNG() });
   const tray = new Tray(image);
@@ -83,5 +87,6 @@ export function createTray(icon: string, icon2x: string, actions: TrayActions): 
   };
   refresh();
   tray.on('click', actions.showPrimary);
-  return { tray, refresh };
+  // The tooltip changes more often than the menu (sessions start and stop needing the user).
+  return { tray, refresh, refreshTooltip: () => tray.setToolTip(actions.labels().tooltip) };
 }

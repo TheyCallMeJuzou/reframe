@@ -113,6 +113,8 @@ const en = {
     'Installed it only in WSL? Choose a folder in WSL (\\\\wsl.localhost\\…), and it runs there.',
   'error.claudeNotFoundInWsl': 'Claude Code was not found in {distro} (WSL). Install it there: claude.com/claude-code',
   'tray.tooltip': 'reframe',
+  'title.waitingOne': 'reframe – a session needs you',
+  'title.waiting': 'reframe – {n} sessions need you',
   'tray.window': 'Window {n}',
   'tray.newSession': 'New session',
   'tray.newWindow': 'New window',
@@ -320,6 +322,8 @@ const de: Record<MessageKey, string> = {
   'error.claudeNotFoundInWsl':
     'Claude Code wurde in {distro} (WSL) nicht gefunden. Installiere es dort: claude.com/claude-code',
   'tray.tooltip': 'reframe',
+  'title.waitingOne': 'reframe – eine Session wartet auf dich',
+  'title.waiting': 'reframe – {n} Sessions warten auf dich',
   'tray.window': 'Fenster {n}',
   'tray.newSession': 'Neue Session',
   'tray.newWindow': 'Neues Fenster',

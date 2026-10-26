@@ -73,6 +73,8 @@ if (procFolder) fs.mkdirSync(procFolder, { recursive: true });
 process.stdout.write(`\x1b[1mFAKE CLAUDE\x1b[0m ${resumeId ? 'resumed' : 'new'} ${sessionId}\r\n> `);
 
 let line = '';
+// "/ask": like a permission prompt, the session waits for the user until the next Enter.
+let asking = false;
 let lastInterrupt = 0;
 let images = 0;
 if (process.stdin.isTTY) process.stdin.setRawMode(true);
@@ -90,6 +92,23 @@ process.stdin.on('data', async (input) => {
       const prompt = line;
       line = '';
       process.stdout.write('\r\n');
+      if (asking) {
+        asking = false;
+        writeRegistry('idle');
+        await hook('Stop');
+        process.stdout.write('allowed\r\n> ');
+        continue;
+      }
+      if (prompt === '/ask') {
+        asking = true;
+        await hook('UserPromptSubmit', { prompt });
+        fs.mkdirSync(path.dirname(transcript(sessionId)), { recursive: true });
+        fs.appendFileSync(transcript(sessionId), JSON.stringify({ type: 'user', prompt }) + '\n');
+        writeRegistry('waiting');
+        await hook('Notification', { notification_type: 'permission_prompt', message: 'Claude needs your permission' });
+        process.stdout.write('Allow? (Enter)\r\n');
+        continue;
+      }
       if (prompt === '/clear') {
         // Local slash commands fire no hooks; the new session has no transcript yet.
         sessionId = crypto.randomUUID();

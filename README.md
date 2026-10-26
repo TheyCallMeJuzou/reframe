@@ -45,7 +45,7 @@
   <img src="docs/screenshots/paste.gif" alt="Ctrl+V pastes a screenshot from the clipboard into a session">
 
 - **Nothing gets lost.** Every change is saved right away. Quitting from the tray ends the sessions cleanly, and the next start resumes each one (`claude --resume`) in its folder, in its place.
-- **Runs in the background.** Closing a window with sessions asks whether to end them or keep them working in the tray (or does what you chose in Settings). In the tray they keep working, and you get a notification when Claude is done or needs you, unless you are looking at it anyway.
+- **Runs in the background.** Closing a window with sessions asks whether to end them or keep them working in the tray (or does what you chose in Settings). In the tray they keep working, and you get a notification when Claude is done or needs you, unless you are looking at it anyway. A window's title says how many of its sessions need you (on Windows its taskbar button gets a badge, and flashes when one starts waiting unseen), the tray says how many in all, and Ctrl+Shift+Space takes you to the next one.
 - **Starts with the system** if you like (tray menu), quietly in the tray, and **updates itself** from GitHub Releases.
 - **Settings** (the ⚙ in the toolbar, or Ctrl+,): the language (English or German, or the system's), the text size, snapping to the grid, and checking for updates.
 
@@ -59,6 +59,7 @@ On macOS, use Cmd instead of Ctrl. Everything else goes to Claude Code as usual.
 | Ctrl+Shift+Arrow keys  | Focus the neighboring tile in that direction                                                       |
 | Ctrl+Shift+M           | Collapse the focused tile; without a focused tile, bring back the last one                         |
 | Ctrl+Shift+L           | Show or hide the session list (and search it)                                                      |
+| Ctrl+Shift+Space       | Go to the next session that needs you (in this window first, then in the others)                   |
 | Ctrl+Shift+T           | New session                                                                                        |
 | Ctrl+Shift+N           | New window                                                                                         |
 | F11                    | Full screen on and off                                                                             |

@@ -33,6 +33,7 @@ import {
   windowHasSession,
   windowSessions,
 } from '@shared/actions';
+import { nextWaiting } from '@shared/attention';
 import { isGroupColor, nextGroupColor, nextGroupNumber } from '@shared/groups';
 import { translate, type Locale, type MessageKey } from '@shared/i18n';
 import {
@@ -171,6 +172,7 @@ export class ReframeApp {
   private sessions!: SessionManager;
   private windows: WindowManager;
   private refreshTray: () => void = () => {};
+  private refreshTrayTooltip: () => void = () => {};
   private shuttingDown = false;
   private log = createLogger(path.join(app.getPath('userData'), 'logs'));
   private claudeHome = claudeHome();
@@ -513,6 +515,39 @@ export class ReframeApp {
   private push(windowId: string): void {
     const view = this.view(windowId);
     if (view) this.windows.send(windowId, IPC.view, view);
+    this.updateAttention();
+  }
+
+  /** How many sessions need the user, per window: shown as a badge on its taskbar button, and in all in the tray. */
+  private updateAttention(): void {
+    if (!this.sessions) return;
+    let total = 0;
+    for (const w of this.state.windows) {
+      const count = windowSessions(w).filter((id) => this.sessions.status(id)?.status === 'waiting').length;
+      total += count;
+      if ((this.attention.get(w.id) ?? 0) === count) continue;
+      this.attention.set(w.id, count);
+      this.windows.badge(w.id, count, count > 0 ? this.waitingText(count) : '');
+    }
+    if (total === this.waitingTotal) return;
+    this.waitingTotal = total;
+    this.refreshTrayTooltip();
+  }
+  private attention = new Map<string, number>();
+  private waitingTotal = 0;
+
+  private waitingText(count: number): string {
+    return count === 1 ? this.t('title.waitingOne') : this.t('title.waiting', { n: count });
+  }
+
+  /** Brings up the next session that needs the user: in this window first (after `after`), then in the others. */
+  private focusNextWaiting(windowId: string, after: string | null): void {
+    const here = this.findWindow(windowId);
+    const windows = here ? [here, ...this.state.windows.filter((w) => w !== here)] : this.state.windows;
+    const order = windows.flatMap(windowSessions);
+    const waiting = new Set(order.filter((id) => this.sessions.status(id)?.status === 'waiting'));
+    const next = nextWaiting(order, waiting, after);
+    if (next) this.focusSession(next);
   }
 
   private pushSession(sessionId: string): void {
@@ -1780,8 +1815,11 @@ export class ReframeApp {
     const record = this.state.sessions[sessionId];
     if (!win || !record) return;
     const skip = (reason: string) => this.log('info', 'notification skipped', { session: sessionId, kind, reason });
+    const seen = this.windows.isAttentive(win.id) && !isCollapsed(win, sessionId);
+    // Waiting where nobody looks: its window's taskbar button flashes too, until the window is looked at.
+    if (kind === 'waiting' && !seen && !process.env.REFRAME_DISABLE_NOTIFICATIONS) this.windows.flash(win.id);
     if (!Notification.isSupported() || process.env.REFRAME_DISABLE_NOTIFICATIONS) return skip('notifications off');
-    if (this.windows.isAttentive(win.id) && !isCollapsed(win, sessionId)) return skip('window in focus, tile visible');
+    if (seen) return skip('window in focus, tile visible');
     const label = this.sessionView(record).label;
     const notification = new Notification({
       title: translate(this.locale, kind === 'done' ? 'notify.done' : 'notify.waiting', { label }),
@@ -1815,9 +1853,9 @@ export class ReframeApp {
 
   private createTray(): void {
     const t = this.t;
-    const { refresh } = createTray(this.assets.trayIcon, this.assets.trayIcon2x, {
+    const { refresh, refreshTooltip } = createTray(this.assets.trayIcon, this.assets.trayIcon2x, {
       labels: () => ({
-        tooltip: t('tray.tooltip'),
+        tooltip: this.waitingTotal > 0 ? this.waitingText(this.waitingTotal) : t('tray.tooltip'),
         newSession: t('tray.newSession'),
         newWindow: t('tray.newWindow'),
         workspaces: t('tray.workspaces'),
@@ -1885,6 +1923,7 @@ export class ReframeApp {
       quit: () => app.quit(),
     });
     this.refreshTray = refresh;
+    this.refreshTrayTooltip = refreshTooltip;
   }
 
   private watchUpdates(): void {
@@ -1984,6 +2023,9 @@ export class ReframeApp {
     });
     on(IPC.newWindow, (id) => this.newWindow(id));
     on(IPC.toggleFullscreen, (id) => this.windows.toggleFullscreen(id));
+    on(IPC.focusNextWaiting, (id, _event, after: unknown) =>
+      this.focusNextWaiting(id, typeof after === 'string' ? after : null),
+    );
     handle(IPC.readClipboard, () => this.clipboardOverride ?? readClipboard());
     handle(IPC.saveDroppedFile, (_id, _event, name: unknown, data: unknown) =>
       typeof name === 'string' && data instanceof ArrayBuffer ? this.saveDroppedFile(name, data) : null,

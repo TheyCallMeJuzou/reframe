@@ -63,6 +63,16 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
     for (const session of Object.values(view.sessions)) terminals.setWsl(session.id, session.wsl);
   }, [view, terminals]);
 
+  // The window's title (and so its taskbar button) says how many of its sessions need the user.
+  const waiting = view ? Object.values(view.sessions).filter((s) => s.status === 'waiting').length : 0;
+  const locale = view?.locale;
+  useEffect(() => {
+    if (!locale) return;
+    const t = makeTranslate(locale);
+    document.title =
+      waiting === 0 ? 'reframe' : waiting === 1 ? t('title.waitingOne') : t('title.waiting', { n: waiting });
+  }, [waiting, locale]);
+
   const sessionList = useSessionList(!!view?.sidebarOpen);
   const newFound = !view?.sidebarOpen && sessionList.fresh.size > 0;
 
@@ -121,6 +131,8 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
           return setDialogOpen(true);
         case 'newWindow':
           return window.reframe.newWindow();
+        case 'nextWaiting':
+          return window.reframe.focusNextWaiting(activeTile());
         case 'toggleFullscreen':
           return window.reframe.toggleFullscreen();
         case 'openSettings':

@@ -1,8 +1,9 @@
 // Native context menus for tiles, groups and the session list. They only describe the choices; the actions live in the app.
-import { Menu, nativeImage, type MenuItemConstructorOptions, type NativeImage } from 'electron';
+import { Menu, type MenuItemConstructorOptions } from 'electron';
 import { GROUP_COLORS } from '@shared/groups';
 import type { MessageKey } from '@shared/i18n';
 import type { GroupNode } from '@shared/layout';
+import { swatch } from './images';
 
 type Translate = (key: MessageKey, params?: Record<string, string | number>) => string;
 
@@ -122,30 +123,4 @@ function colorItems(t: Translate, group: GroupNode, recolor: (hex: string) => vo
     checked: c.hex === group.color,
     click: () => recolor(c.hex),
   }));
-}
-
-const swatches = new Map<string, NativeImage>();
-
-/** A small filled circle in the given color, drawn once per color. */
-function swatch(hex: string): NativeImage {
-  const cached = swatches.get(hex);
-  if (cached) return cached;
-  const size = 16;
-  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)) as [number, number, number];
-  const pixels = Buffer.alloc(size * size * 4);
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const distance = Math.hypot(x + 0.5 - size / 2, y + 0.5 - size / 2);
-      const alpha = Math.max(0, Math.min(1, 6.5 - distance)); // radius 6 with a soft edge
-      const i = (y * size + x) * 4;
-      // Bitmaps for nativeImage are BGRA with premultiplied alpha.
-      pixels[i] = Math.round(b * alpha);
-      pixels[i + 1] = Math.round(g * alpha);
-      pixels[i + 2] = Math.round(r * alpha);
-      pixels[i + 3] = Math.round(255 * alpha);
-    }
-  }
-  const image = nativeImage.createFromBitmap(pixels, { width: size, height: size });
-  swatches.set(hex, image);
-  return image;
 }

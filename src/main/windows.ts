@@ -3,8 +3,9 @@
 // saved.
 import { EventEmitter } from 'node:events';
 import path from 'node:path';
-import { BrowserWindow, screen, type WebContents } from 'electron';
+import { app, BrowserWindow, screen, type WebContents } from 'electron';
 import type { Bounds, WindowState } from '@shared/state';
+import { attentionBadge } from './images';
 import type { LogFn } from './log';
 
 type Events = {
@@ -88,6 +89,7 @@ export class WindowManager extends EventEmitter<Events> {
     win.on('enter-full-screen', () => this.emit('fullscreen', state.id, true));
     win.on('leave-full-screen', () => this.emit('fullscreen', state.id, false));
     win.on('closed', () => this.windows.delete(state.id));
+    win.on('focus', () => win.flashFrame(false));
     win.on('query-session-end', () => this.emit('systemEnding'));
     win.on('session-end', () => this.emit('systemEnding'));
 
@@ -161,6 +163,21 @@ export class WindowManager extends EventEmitter<Events> {
       if (point.x >= b.x && point.x < b.x + b.width && point.y >= b.y && point.y < b.y + b.height) return id;
     }
     return undefined;
+  }
+
+  /** Draws attention to a window: its taskbar button flashes until it is looked at (on macOS the Dock icon bounces). */
+  flash(windowId: string): void {
+    const win = this.windows.get(windowId);
+    if (!win || win.isDestroyed()) return;
+    if (process.platform === 'darwin') app.dock?.bounce('informational');
+    else win.flashFrame(true);
+  }
+
+  /** Windows: a badge on the window's taskbar button while `count` sessions in it need the user. */
+  badge(windowId: string, count: number, description: string): void {
+    const win = this.windows.get(windowId);
+    if (process.platform !== 'win32' || !win || win.isDestroyed()) return;
+    win.setOverlayIcon(count > 0 ? attentionBadge() : null, description);
   }
 
   /** Whether the user is looking at this window right now. */

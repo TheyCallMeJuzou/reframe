@@ -47,6 +47,7 @@ const api: ReframeApi = {
   transferNode: (request) => ipcRenderer.send(IPC.transferNode, request),
   newWindow: () => ipcRenderer.send(IPC.newWindow),
   toggleFullscreen: () => ipcRenderer.send(IPC.toggleFullscreen),
+  focusNextWaiting: (after) => ipcRenderer.send(IPC.focusNextWaiting, after),
   platform: process.platform,
   readClipboard: () => ipcRenderer.invoke(IPC.readClipboard),
   pathForFile: (file) => webUtils.getPathForFile(file),
