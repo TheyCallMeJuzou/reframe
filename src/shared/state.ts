@@ -66,6 +66,8 @@ export const launchOptionsSchema = z.object({
   permissionMode: z.enum(PERMISSION_MODES).optional(),
   worktree: z.boolean().optional(),
   worktreeName: z.string().optional(),
+  /** Claude Code made the worktree, and the session runs in it: starting it fresh again must not make another. */
+  worktreeCreated: z.boolean().optional(),
 });
 
 export const sessionRecordSchema = z.object({

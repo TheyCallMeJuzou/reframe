@@ -15,6 +15,8 @@ export interface SavedSession {
   claudeSessionId: string;
   lifecycle: string;
   used?: boolean;
+  cwd: string;
+  launch: { worktree?: boolean; worktreeName?: string; worktreeCreated?: boolean };
 }
 
 export interface SavedWindow {

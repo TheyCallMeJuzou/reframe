@@ -18,6 +18,10 @@ const resumeId = option('--resume');
 let sessionId = resumeId ?? option('--session-id') ?? crypto.randomUUID();
 const name = option('--name') ?? `fake-${process.pid}`;
 const settings = option('--settings') ? JSON.parse(fs.readFileSync(option('--settings'), 'utf8')) : {};
+// --worktree [name]: like Claude Code, it makes <folder>/.claude/worktrees/<name> and runs in there.
+const worktree = args.includes('--worktree')
+  ? (option('--worktree')?.startsWith('-') ? undefined : option('--worktree')) || `wt-${process.pid}`
+  : undefined;
 
 const transcript = (id) => path.join(home, 'projects', 'fake-project', `${id}.jsonl`);
 const registryFile = path.join(home, 'sessions', `${process.pid}.json`);
@@ -55,6 +59,11 @@ function exit(code) {
 }
 
 record('start');
+if (worktree) {
+  const folder = path.join(process.cwd(), '.claude', 'worktrees', worktree);
+  fs.mkdirSync(folder, { recursive: true });
+  process.chdir(folder);
+}
 if (resumeId && !fs.existsSync(transcript(resumeId))) {
   process.stdout.write(`No conversation found with session ID: ${resumeId}\r\n`);
   exit(1);

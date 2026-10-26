@@ -81,6 +81,13 @@ describe('claudeArgs', () => {
     expect(claudeArgs(session({ name: 'Shown', claudeName: null }), 'resume', 'S.json')).not.toContain('--name');
   });
 
+  it('makes a worktree only on the first start, not when started fresh in it later', () => {
+    expect(claudeArgs(session({ launch: { worktree: true } }), 'new')).toContain('--worktree');
+    expect(claudeArgs(session({ launch: { worktree: true, worktreeCreated: true } }), 'new')).not.toContain(
+      '--worktree',
+    );
+  });
+
   it('resumes without creating another worktree', () => {
     const s = session({ launch: { worktree: true } });
     expect(claudeArgs(s, 'resume', 'S.json')).toEqual(['--resume', s.claudeSessionId, '--settings', 'S.json']);

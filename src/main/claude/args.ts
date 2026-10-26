@@ -10,8 +10,8 @@ export function claudeArgs(session: SessionRecord, mode: LaunchMode, settingsFil
   if (name) args.push('--name', name);
   if (session.launch.model) args.push('--model', session.launch.model);
   if (session.launch.permissionMode) args.push('--permission-mode', session.launch.permissionMode);
-  // A resumed worktree session already runs in the worktree folder; -w again would create another one.
-  if (mode === 'new' && session.launch.worktree) {
+  // A worktree session that was started once runs in its worktree folder; -w again would make another one in it.
+  if (mode === 'new' && session.launch.worktree && !session.launch.worktreeCreated) {
     args.push('--worktree');
     if (session.launch.worktreeName) args.push(session.launch.worktreeName);
   }

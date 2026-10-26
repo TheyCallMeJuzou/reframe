@@ -630,8 +630,16 @@ export class ReframeApp {
     if (patch.claudeSessionId && patch.claudeSessionId !== record.claudeSessionId && patch.used === undefined) {
       next.used = false;
     }
-    const changed = (Object.keys(next) as (keyof IdentityPatch)[]).some((k) => next[k] !== record[k]);
-    if (changed) this.updateSession(sessionId, { ...next, lastActiveAt: Date.now() });
+    // A worktree session whose folder moved runs in the worktree Claude Code made for it.
+    const intoWorktree =
+      !!record.launch.worktree && !record.launch.worktreeCreated && !!patch.cwd && !samePath(patch.cwd, record.cwd);
+    const changed = intoWorktree || (Object.keys(next) as (keyof IdentityPatch)[]).some((k) => next[k] !== record[k]);
+    if (!changed) return;
+    this.updateSession(sessionId, {
+      ...next,
+      ...(intoWorktree ? { launch: { ...record.launch, worktreeCreated: true } } : {}),
+      lastActiveAt: Date.now(),
+    });
   }
 
   private async createSession(windowId: string, request: NewSessionRequest): Promise<NewSessionResult> {
@@ -673,7 +681,8 @@ export class ReframeApp {
     if (!record || this.sessions.isRunning(sessionId)) return;
     const next: SessionRecord = {
       ...record,
-      ...(fresh ? { claudeSessionId: crypto.randomUUID() } : {}),
+      // A fresh start has had no prompt yet, whatever the session before it had.
+      ...(fresh ? { claudeSessionId: crypto.randomUUID(), used: false } : {}),
       lifecycle: 'open',
       lastActiveAt: Date.now(),
     };
@@ -1892,6 +1901,15 @@ const TEST_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
   'base64',
 );
+
+/** Whether two paths name the same folder, as this system compares them. */
+function samePath(a: string, b: string): boolean {
+  const norm = (p: string) => {
+    const resolved = path.resolve(p);
+    return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+  };
+  return norm(a) === norm(b);
+}
 
 function isDirectory(folder: string): boolean {
   try {
