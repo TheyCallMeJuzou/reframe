@@ -61,6 +61,7 @@ On macOS, use Cmd instead of Ctrl. Everything else goes to Claude Code as usual.
 | Ctrl+Shift+L           | Show or hide the session list (and search it)                                                            |
 | Ctrl+Shift+Space       | Go to the next session that needs you (in this window first, then in the others)                         |
 | Ctrl+Shift+F           | Find in the focused tile's terminal, its scrollback too (Enter: next, Shift+Enter: previous, Esc: close) |
+| Ctrl+Shift+Z           | Let the focused tile fill the window, and back (the layout stays as it is)                               |
 | Ctrl+Shift+T           | New session                                                                                              |
 | Ctrl+Shift+N           | New window                                                                                               |
 | F11                    | Full screen on and off                                                                                   |

@@ -33,6 +33,9 @@ export interface AppContextValue {
   /** Session whose terminal shows the find bar. */
   findIn: string | null;
   setFindIn: (sessionId: string | null) => void;
+  /** Session whose tile fills the window for now (the layout stays as it is). */
+  zoomed: string | null;
+  toggleZoom: (sessionId: string) => void;
 }
 
 export const AppContext = createContext<AppContextValue | null>(null);

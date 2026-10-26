@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ForeignDropRequest, SessionRename, WindowView } from '@shared/ipc';
-import type { DropTarget } from '@shared/layout';
+import { leaves, type DropTarget } from '@shared/layout';
 import { AppContext, makeTranslate, type AppContextValue, type DragState } from './context';
 import { dragKind, dropTargetAt, handleDrop, type PreviewRect } from './dnd';
 import type { TerminalRegistry } from './terminals';
 import { DockStrip } from './components/DockStrip';
 import { NewSessionDialog } from './components/NewSessionDialog';
 import { LayoutView } from './components/SplitView';
+import { Tile } from './components/Tile';
 import { ExitFullscreenIcon, GearIcon, InfoIcon, LayersIcon, ListIcon, PlusIcon, WindowIcon } from './components/icons';
 import { SaveWorkspaceDialog } from './components/SaveWorkspaceDialog';
 import { AboutDialog } from './components/AboutDialog';
@@ -40,6 +41,8 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renamingSession, setRenamingSession] = useState<SessionRename | null>(null);
   const [findIn, setFindIn] = useState<string | null>(null);
+  /** A tile filling the window, as long as the layout (its tiles) is what it was when it was zoomed. */
+  const [zoom, setZoom] = useState<{ sessionId: string; layout: string } | null>(null);
   // A terminal window from another app dragged over this window, and dropped on it.
   const [foreignPreview, setForeignPreview] = useState<PreviewRect | null>(null);
   const [foreignDrop, setForeignDrop] = useState<{ request: ForeignDropRequest; target: DropTarget | null } | null>(
@@ -101,6 +104,18 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
     [terminals],
   );
 
+  const layoutKey = view?.layout ? leaves(view.layout).join('|') : '';
+  // Over as soon as a tile is added, moved, expanded or closed (it would be out of sight), and while dragging.
+  const zoomed = zoom && zoom.layout === layoutKey && !dragging ? zoom.sessionId : null;
+  const toggleZoom = useCallback(
+    (sessionId: string) => {
+      setZoom((z) => (z?.sessionId === sessionId && z.layout === layoutKey ? null : { sessionId, layout: layoutKey }));
+      // The terminal moves to the other tile and loses the focus on the way.
+      requestAnimationFrame(() => terminals.focus(sessionId));
+    },
+    [layoutKey, terminals],
+  );
+
   const focusTile = useCallback(
     (sessionId: string) =>
       whenShown(`.tile[data-session="${CSS.escape(sessionId)}"]`, () => terminals.focus(sessionId)),
@@ -134,6 +149,11 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
           return window.reframe.newWindow();
         case 'nextWaiting':
           return window.reframe.focusNextWaiting(activeTile());
+        case 'zoom': {
+          const id = activeTile();
+          if (id) toggleZoom(id);
+          return;
+        }
         case 'find': {
           // In the focused tile (pressed in the find bar too: the field is selected again).
           const id = activeTile() ?? ids[0];
@@ -171,7 +191,7 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
         }
       }
     },
-    [terminals, focusTile, changeTextSize],
+    [terminals, focusTile, changeTextSize, toggleZoom],
   );
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -207,6 +227,8 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
   useEffect(
     () =>
       window.reframe.onFocusTile((sessionId) => {
+        // Another tile brought up (a notification, Ctrl+Shift+Space): all tiles show again.
+        setZoom((z) => (z && z.sessionId !== sessionId ? null : z));
         // The tile may only appear with the next view (when it was collapsed), so wait a frame.
         requestAnimationFrame(() => {
           terminals.focus(sessionId);
@@ -301,7 +323,10 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
         snapToGrid: view.snapToGrid,
         terminals,
         dragging,
-        setDragging,
+        setDragging: (drag: DragState | null) => {
+          if (drag) setZoom(null);
+          setDragging(drag);
+        },
         renaming,
         setRenaming,
         renamingSession,
@@ -309,8 +334,10 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
         // A find bar goes with its session's tile.
         findIn: findIn && view.sessions[findIn] ? findIn : null,
         setFindIn,
+        zoomed,
+        toggleZoom,
       },
-    [view, terminals, dragging, renaming, renamingSession, findIn],
+    [view, terminals, dragging, renaming, renamingSession, findIn, zoomed, toggleZoom],
   );
 
   if (!view || !context) return null;
@@ -386,7 +413,9 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
           {view.sidebarOpen && <SessionSidebar sessionList={sessionList} />}
           <DockStrip entries={view.dock} />
           <main className="layout">
-            {view.layout ? (
+            {view.layout && zoomed ? (
+              <Tile sessionId={zoomed} group={null} />
+            ) : view.layout ? (
               <LayoutView node={view.layout} />
             ) : (
               <div className="empty-area">

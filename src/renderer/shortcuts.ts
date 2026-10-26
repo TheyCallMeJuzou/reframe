@@ -13,6 +13,7 @@ export type Shortcut =
   | { kind: 'newWindow' }
   | { kind: 'nextWaiting' }
   | { kind: 'find' }
+  | { kind: 'zoom' }
   | { kind: 'toggleCollapse' }
   | { kind: 'toggleSidebar' }
   | { kind: 'toggleFullscreen' }
@@ -36,6 +37,7 @@ const LETTERS: Record<string, Shortcut> = {
   KeyL: { kind: 'toggleSidebar' },
   Space: { kind: 'nextWaiting' },
   KeyF: { kind: 'find' },
+  KeyZ: { kind: 'zoom' },
 };
 // By character, not key: they sit elsewhere on other layouts (+ has a key of its own on a German keyboard).
 const TEXT_SIZE: Record<string, TextSizeChange> = { '+': 'bigger', '=': 'bigger', '-': 'smaller', '0': 'reset' };

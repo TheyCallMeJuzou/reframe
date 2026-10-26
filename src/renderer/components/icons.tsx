@@ -83,6 +83,18 @@ export const ChevronDownIcon = () => (
   </svg>
 );
 
+export const ZoomIcon = () => (
+  <svg {...base} aria-hidden="true">
+    <path d="M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5 9 7M2.5 13.5 7 9" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+export const UnzoomIcon = () => (
+  <svg {...base} aria-hidden="true">
+    <path d="M13 7H9V3M3 9h4v4M9 7l4.5-4.5M7 9l-4.5 4.5" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
 export const GripIcon = () => (
   <svg {...base} aria-hidden="true" stroke="none" fill="currentColor">
     {[5, 8, 11].flatMap((y) => [6, 10].map((x) => <circle key={`${x}-${y}`} cx={x} cy={y} r={1.1} />))}

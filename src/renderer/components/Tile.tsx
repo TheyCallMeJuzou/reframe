@@ -3,14 +3,26 @@ import { tileKey, type GroupNode, type Side } from '@shared/layout';
 import { useApp } from '../context';
 import { dragKind, handleDrop, setNodeDrag, sideAt } from '../dnd';
 import { FindBar } from './FindBar';
-import { CloseIcon, CollapseIcon, GripIcon } from './icons';
+import { CloseIcon, CollapseIcon, GripIcon, UnzoomIcon, ZoomIcon } from './icons';
 import { NameInput } from './NameInput';
 import { StatusDot } from './StatusDot';
 
 /** A session's tile; `group` is the group it sits in, if any. */
 export function Tile({ sessionId, group }: { sessionId: string; group: GroupNode | null }) {
-  const { t, keys, windowId, sessions, terminals, dragging, setDragging, renamingSession, setRenamingSession, findIn } =
-    useApp();
+  const {
+    t,
+    keys,
+    windowId,
+    sessions,
+    terminals,
+    dragging,
+    setDragging,
+    renamingSession,
+    setRenamingSession,
+    findIn,
+    zoomed,
+    toggleZoom,
+  } = useApp();
   const session = sessions[sessionId];
   const slot = useRef<HTMLDivElement>(null);
   const tileRef = useRef<HTMLElement>(null);
@@ -82,7 +94,11 @@ export function Tile({ sessionId, group }: { sessionId: string; group: GroupNode
   };
 
   return (
-    <section ref={tileRef} className={`tile${isDragged ? ' is-dragging' : ''}`} data-session={sessionId}>
+    <section
+      ref={tileRef}
+      className={`tile${isDragged ? ' is-dragging' : ''}${zoomed === sessionId ? ' is-zoomed' : ''}`}
+      data-session={sessionId}
+    >
       <header
         className="tile-header"
         draggable={!editingName}
@@ -141,6 +157,15 @@ export function Tile({ sessionId, group }: { sessionId: string; group: GroupNode
           {/* Cut off at the start (right to left), but read left to right, also when it starts with "~\". */}
           <bdi>{session.cwdLabel}</bdi>
         </span>
+        <button
+          className="icon-button"
+          title={`${zoomed === sessionId ? t('tile.unzoom') : t('tile.zoom')} (${keys('Z')})`}
+          aria-label={zoomed === sessionId ? t('tile.unzoom') : t('tile.zoom')}
+          aria-pressed={zoomed === sessionId}
+          onClick={() => toggleZoom(sessionId)}
+        >
+          {zoomed === sessionId ? <UnzoomIcon /> : <ZoomIcon />}
+        </button>
         <button
           className="icon-button"
           title={t('tile.end')}
