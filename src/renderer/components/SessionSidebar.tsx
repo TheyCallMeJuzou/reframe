@@ -213,7 +213,8 @@ export function SessionSidebar({ sessionList }: { sessionList: SessionListState 
                 meta={[
                   folderName(item.cwd),
                   parseWslPath(item.cwd)?.distro,
-                  item.windowNumber ? t('list.window', { n: item.windowNumber }) : t('list.ended'),
+                  item.windowNumber && t('list.window', { n: item.windowNumber }),
+                  item.elsewhere ? t('list.running') : !item.windowNumber && t('list.ended'),
                 ]
                   .filter(Boolean)
                   .join(' · ')}

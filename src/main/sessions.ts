@@ -268,6 +268,22 @@ export class SessionManager extends EventEmitter<Events> {
     this.emit('changed', session.id);
   }
 
+  /** Shows a session as not started, for a reason (its conversation runs elsewhere), without starting anything. */
+  refuse(sessionId: string, error: NonNullable<SessionView['error']>): void {
+    if (this.isRunning(sessionId)) return;
+    const runtime: Runtime = {
+      instance: ++this.instances,
+      status: 'error',
+      error,
+      mode: 'resume',
+      startedAt: Date.now(),
+    };
+    runtime.exited = Promise.resolve();
+    this.runtimes.set(sessionId, runtime);
+    this.log('info', 'session not started', { session: sessionId, error });
+    this.emit('changed', sessionId);
+  }
+
   /** Ends a session the way a user would (Ctrl+C), then kills the process tree if it does not exit. */
   stop(sessionId: string, timeoutMs = 5000): Promise<void> {
     const runtime = this.runtimes.get(sessionId);

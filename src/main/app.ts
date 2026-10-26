@@ -103,6 +103,7 @@ import { activeByTitle, isShell, onlyShells } from './foreign-match';
 import { createLogger } from './log';
 import { PtyHostClient } from './ptyhost-client';
 import { SessionManager, type IdentityPatch, type NotifyKind } from './sessions';
+import type { LaunchMode } from './claude/args';
 import { StateStore } from './state/store';
 import { stopExternalClaude } from './takeover';
 import { colorMenu, groupMenu, listMenu, tileMenu, workspaceItemMenu, workspaceLabel, workspaceMenu } from './menus';
@@ -615,7 +616,8 @@ export class ReframeApp {
   private resumeSessions(): void {
     for (const record of Object.values(this.state.sessions)) {
       if (record.lifecycle !== 'open') continue;
-      if (this.windowOf(record.id)) this.sessions.start(record, 'resume');
+      // On the start nobody can be asked: one whose conversation runs elsewhere now waits for "Take over".
+      if (this.windowOf(record.id)) void this.startOrTakeOver(record.id, 'resume', null);
       else this.updateSession(record.id, { lifecycle: 'ended' }, false);
     }
   }
@@ -682,7 +684,7 @@ export class ReframeApp {
     return { ok: true };
   }
 
-  private restartSession(sessionId: string, fresh: boolean): void {
+  private restartSession(windowId: string, sessionId: string, fresh: boolean): void {
     const record = this.state.sessions[sessionId];
     if (!record || this.sessions.isRunning(sessionId)) return;
     const next: SessionRecord = {
@@ -694,8 +696,74 @@ export class ReframeApp {
     };
     this.state = { ...this.state, sessions: { ...this.state.sessions, [sessionId]: next } };
     this.save();
-    this.sessions.start(next, fresh ? 'new' : 'resume');
+    void this.startOrTakeOver(sessionId, fresh ? 'new' : 'resume', windowId);
     this.pushSession(sessionId);
+  }
+
+  /**
+   * Starts a session (resuming it), unless its conversation runs outside reframe already: someone resumed it in a
+   * terminal of their own, or in WSL. Then it is taken over (ended there, continued here) after asking in
+   * `windowId`'s window. Without a window to ask in (reframe starting), or when the answer is no, it is not started,
+   * and its tile says why and offers to take it over.
+   */
+  private async startOrTakeOver(sessionId: string, mode: LaunchMode, windowId: string | null): Promise<void> {
+    if (this.startsPending.has(sessionId) || this.sessions.keepsRunning(sessionId)) return;
+    const record = this.state.sessions[sessionId];
+    if (!record) return;
+    this.startsPending.add(sessionId);
+    try {
+      const outside = mode === 'resume' ? await this.runningElsewhere(record) : null;
+      if (outside) {
+        const asked = windowId !== null && (await this.confirmTakeover(windowId, [this.sessionView(record).label]));
+        this.log('info', 'session runs elsewhere already', { session: sessionId, pid: outside.entry.pid, asked });
+        if (!asked) return this.sessions.refuse(sessionId, 'runningElsewhere');
+        if (!(await this.stopOutside(outside.entry.pid, outside.source.distro))) {
+          await this.showError(windowId!, this.t('takeover.failed'));
+          return this.sessions.refuse(sessionId, 'runningElsewhere');
+        }
+        // Resumed in another folder, the conversation went on there; so it does here.
+        if (outside.entry.cwd) this.updateSession(sessionId, { cwd: outside.source.windowsPath(outside.entry.cwd) });
+      }
+    } catch (error) {
+      this.log('error', 'could not tell whether a session runs elsewhere, starting it', { error: String(error) });
+    } finally {
+      this.startsPending.delete(sessionId);
+    }
+    const current = this.state.sessions[sessionId];
+    // Removed, or its tile closed, while that was asked; or started meanwhile.
+    if (!current || !this.windowOf(sessionId) || this.sessions.keepsRunning(sessionId)) return;
+    this.sessions.start(current, mode);
+  }
+  /** Sessions on their way through startOrTakeOver, so a second click does not start one twice. */
+  private startsPending = new Set<string>();
+
+  /** The claude running a session's conversation outside reframe, if any; in WSL only if its distribution runs. */
+  private async runningElsewhere(
+    record: SessionRecord,
+  ): Promise<{ entry: RegistryEntry; source: ClaudeSource } | null> {
+    const where = this.wslPath(record.cwd);
+    let source: ClaudeSource | null = this.ownSource();
+    if (where) {
+      // Asking a distribution that does not run would start it, and nothing runs there.
+      const running = await this.wsl!.running();
+      if (!running.some((d) => d.toLowerCase() === where.distro.toLowerCase())) return null;
+      source = await this.wslSource(where.distro);
+      if (!source) return null;
+    }
+    // Its own last process is no other terminal's: an orphan of reframe's, ended before it resumes.
+    const last = where ? record.linuxPid : record.pid;
+    const entry = (await this.externalRunning(source)).find(
+      (e) => e.sessionId === record.claudeSessionId && e.pid !== last,
+    );
+    return entry ? { entry, source } : null;
+  }
+
+  /** Ends a claude running outside reframe the way its user would; whether it went. */
+  private async stopOutside(pid: number, distro?: string): Promise<boolean> {
+    // One in WSL is a Linux process: it gets the interrupt as a signal, as from Ctrl+C in its terminal.
+    const result = distro ? await this.wsl!.stopClaude(distro, pid) : await stopExternalClaude(pid, this.log);
+    this.log(result === 'failed' ? 'warn' : 'info', 'other terminal stopped', { pid, result });
+    return result !== 'failed';
   }
 
   private endSession(windowId: string, sessionId: string): void {
@@ -851,6 +919,15 @@ export class ReframeApp {
     const matches = (...fields: (string | undefined)[]) => !q || fields.some((f) => f?.toLowerCase().includes(q));
     const records = Object.values(this.state.sessions);
 
+    // Where Claude Code keeps its sessions: on Windows, and in each running WSL distribution that has it. What runs
+    // there outside reframe: other sessions, and reframe's own ones that someone resumed elsewhere.
+    const { sources, stopped } = await this.claudeSources();
+    const outside = await Promise.all(
+      sources.map(async (source) => ({ source, entries: await this.externalRunning(source) })),
+    );
+    const ownIds = new Set(records.map((r) => r.claudeSessionId));
+    const resumedElsewhere = new Set(outside.flatMap(({ entries }) => entries.map((e) => e.sessionId)));
+
     const app: AppListItem[] = records
       .map((record): AppListItem => {
         const view = this.sessionView(record);
@@ -865,29 +942,28 @@ export class ReframeApp {
           windowId: win?.id ?? null,
           windowNumber: win ? this.state.windows.indexOf(win) + 1 : null,
           lastActiveAt: record.lastActiveAt,
+          elsewhere: resumedElsewhere.has(record.claudeSessionId) && !this.sessions.keepsRunning(record.id),
         };
       })
       .filter((item) => matches(item.label, item.cwd))
       // Sessions in a window first, then the rest; most recently used first within each.
       .sort((a, b) => Number(!a.windowId) - Number(!b.windowId) || b.lastActiveAt - a.lastActiveAt);
 
-    // Where Claude Code keeps its sessions: on Windows, and in each running WSL distribution that has it.
-    const { sources, stopped } = await this.claudeSources();
-    const perSource = await Promise.all(
-      sources.map(async (source) =>
-        (await this.externalRunning(source)).map((entry): RunningListItem => ({
-          kind: 'running',
-          pid: entry.pid,
-          claudeSessionId: entry.sessionId,
-          cwd: source.windowsPath(entry.cwd!),
-          name: entry.name,
-          ...(source.distro ? { distro: source.distro } : {}),
-        })),
-      ),
-    );
-    const running = perSource.flat().filter((item) => matches(item.name, item.cwd));
+    const running = outside
+      .flatMap(({ source, entries }) =>
+        entries
+          .filter((entry) => !ownIds.has(entry.sessionId))
+          .map((entry): RunningListItem => ({
+            kind: 'running',
+            pid: entry.pid,
+            claudeSessionId: entry.sessionId,
+            cwd: source.windowsPath(entry.cwd!),
+            name: entry.name,
+            ...(source.distro ? { distro: source.distro } : {}),
+          })),
+      )
+      .filter((item) => matches(item.name, item.cwd));
 
-    const ownIds = new Set(records.map((r) => r.claudeSessionId));
     const exclude = new Set([...ownIds, ...running.map((r) => r.claudeSessionId)]);
     const pages = await Promise.all(
       sources.map(async (source) => ({ source, page: await source.transcripts.list({ query, limit, exclude }) })),
@@ -961,27 +1037,39 @@ export class ReframeApp {
   }
   private wslTranscripts = new Map<string, TranscriptIndex>();
 
-  /** Claudes running outside reframe (with a known folder); a distribution that does not answer in time has none. */
+  /**
+   * Claudes running outside reframe (with a known folder), reframe's own sessions resumed elsewhere among them; a
+   * distribution that does not answer in time has none.
+   */
   private async externalRunning(source: ClaudeSource): Promise<RegistryEntry[]> {
-    const exclude = this.ownClaudes(source.distro);
+    const exclude = { pids: this.ownProcesses(source.distro), sessionIds: new Set<string>() };
     const running = source.distro
       ? await withTimeout(listRunningAsync(source.home, exclude, source.alive), SHARE_TIMEOUT_MS, [])
       : listRunning(source.home, exclude);
     return running.filter((entry) => entry.cwd);
   }
 
-  /** The same for Windows' own claudes, for the window watcher, which asks while a window is dragged. */
+  /**
+   * The same for Windows' own claudes and other sessions only, for the window watcher, which asks while a window is
+   * dragged.
+   */
   private externalRunningHere(): RegistryEntry[] {
-    return listRunning(this.claudeHome, this.ownClaudes()).filter((entry) => entry.cwd);
+    const exclude: RunningExclusion = {
+      pids: this.ownProcesses(),
+      sessionIds: new Set(Object.values(this.state.sessions).map((r) => r.claudeSessionId)),
+    };
+    return listRunning(this.claudeHome, exclude).filter((entry) => entry.cwd);
   }
 
-  /** reframe's own claudes, to leave out of those running elsewhere (in WSL their process ids are not known). */
-  private ownClaudes(distro?: string): RunningExclusion {
-    const records = Object.values(this.state.sessions);
-    const pids = distro
-      ? new Set<number>()
-      : new Set(records.map((r) => this.sessions.status(r.id)?.pid).filter((p): p is number => !!p));
-    return { pids, sessionIds: new Set(records.map((r) => r.claudeSessionId)) };
+  /** The processes of reframe's sessions (in a WSL distribution their Linux ids, as far as known). */
+  private ownProcesses(distro?: string): Set<number> {
+    return new Set(
+      Object.values(this.state.sessions).flatMap((r) => {
+        const runtime = this.sessions.status(r.id);
+        const pid = runtime && (distro ? r.linuxPid : runtime.pid);
+        return pid ? [pid] : [];
+      }),
+    );
   }
 
   /** Where a list entry's Claude Code keeps its sessions: on Windows, or in its WSL distribution. */
@@ -1001,7 +1089,21 @@ export class ReframeApp {
     // A conversation reframe already manages is opened as that session, not a second copy.
     const known = Object.values(this.state.sessions).find((r) => r.claudeSessionId === item.claudeSessionId);
     if (known) return known;
+    // Asked for twice at once (two clicks, a click and a drop): one adoption, which both get.
+    const pending = this.adopting.get(item.claudeSessionId);
+    if (pending) return pending;
+    const adopting = this.adopt(windowId, item, confirmed).finally(() => this.adopting.delete(item.claudeSessionId));
+    this.adopting.set(item.claudeSessionId, adopting);
+    return adopting;
+  }
+  private adopting = new Map<string, Promise<SessionRecord | null>>();
 
+  /** A new record for a session found or running elsewhere (see recordFor). */
+  private async adopt(
+    windowId: string,
+    item: Exclude<ListItemRef, { kind: 'app' }>,
+    confirmed: boolean,
+  ): Promise<SessionRecord | null> {
     const source = await this.sourceOf(item);
     if (!source) return null;
     if (item.kind === 'found') {
@@ -1025,12 +1127,7 @@ export class ReframeApp {
       claudeSession: entry.sessionId,
       ...(source.distro ? { wsl: source.distro } : {}),
     });
-    // One in WSL is a Linux process: it gets the interrupt as a signal, as from Ctrl+C in its terminal.
-    const result = source.distro
-      ? await this.wsl!.stopClaude(source.distro, item.pid)
-      : await stopExternalClaude(item.pid, this.log);
-    this.log(result === 'failed' ? 'warn' : 'info', 'other terminal stopped', { pid: item.pid, result });
-    if (result === 'failed') {
+    if (!(await this.stopOutside(item.pid, source.distro))) {
       await this.showError(windowId, this.t('takeover.failed'));
       return null;
     }
@@ -1135,9 +1232,7 @@ export class ReframeApp {
       this.mutateWindow(into, (w) => putNode(w, group, target));
       this.log('info', 'group created from the list', { sessions: ids.length, name: group.name });
     }
-    for (const id of ids) {
-      if (!this.sessions.keepsRunning(id)) this.sessions.start(this.state.sessions[id]!, 'resume');
-    }
+    for (const id of ids) void this.startOrTakeOver(id, 'resume', into);
     for (const id of left) this.closeIfEmpty(id);
     this.windows.show(into);
     this.windows.send(into, IPC.focusTile, ids[0]);
@@ -1190,7 +1285,7 @@ export class ReframeApp {
     this.state = { ...this.state, sessions: { ...this.state.sessions, [record.id]: record } };
     this.mutateWindow(windowId, (w) => putNode(w, tile(record.id), target));
     this.log('info', 'session opened from the list', { session: record.id, window: windowId });
-    this.sessions.start(record, 'resume');
+    void this.startOrTakeOver(record.id, 'resume', windowId);
     this.windows.send(windowId, IPC.focusTile, record.id);
   }
 
@@ -1281,9 +1376,7 @@ export class ReframeApp {
     this.state = { ...this.state, windows: [...this.state.windows, win] };
     this.save();
     this.windows.open(win);
-    for (const id of ids.values()) {
-      if (!this.sessions.keepsRunning(id)) this.sessions.start(this.state.sessions[id]!, 'resume');
-    }
+    for (const id of ids.values()) void this.startOrTakeOver(id, 'resume', win.id);
     for (const id of left) this.closeIfEmpty(id);
     this.refreshTray();
     this.log('info', 'workspace opened', { workspace: workspaceId, window: win.id, sessions: ids.size });
@@ -1731,7 +1824,7 @@ export class ReframeApp {
       const id = windowId(event);
       const win = this.state.windows.find((w) => w.id === id);
       if (typeof sessionId === 'string' && win && windowHasSession(win, sessionId)) {
-        this.restartSession(sessionId, fresh === true);
+        this.restartSession(id!, sessionId, fresh === true);
       }
     });
     ipcMain.on(IPC.endSession, (event, sessionId: unknown) => {

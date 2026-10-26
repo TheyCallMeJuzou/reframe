@@ -59,6 +59,7 @@ const en = {
   'tile.error.spawnFailed': 'Claude Code could not be started.',
   'tile.error.folderMissing': 'The session folder no longer exists.',
   'tile.error.hostCrashed': "reframe's terminal host stopped unexpectedly, and the session with it. It can be resumed.",
+  'tile.error.runningElsewhere': 'This session is running in another terminal. Take it over to continue it here.',
   'status.starting': 'Starting',
   'status.idle': 'Ready',
   'status.busy': 'Working',
@@ -263,6 +264,8 @@ const de: Record<MessageKey, string> = {
   'tile.error.folderMissing': 'Der Ordner der Session existiert nicht mehr.',
   'tile.error.hostCrashed':
     'Der Terminal-Prozess von reframe wurde unerwartet beendet und die Session mit ihm. Sie lässt sich fortsetzen.',
+  'tile.error.runningElsewhere':
+    'Diese Session läuft in einem anderen Terminal. Übernimm sie, um sie hier fortzusetzen.',
   'status.starting': 'Startet',
   'status.idle': 'Bereit',
   'status.busy': 'Arbeitet',

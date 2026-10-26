@@ -18,7 +18,14 @@ export interface SessionView {
   status: SessionStatus;
   lifecycle: SessionRecord['lifecycle'];
   /** Translation key of the error shown in the tile, if any. */
-  error?: 'resumeFailed' | 'transcriptMissing' | 'claudeNotFound' | 'spawnFailed' | 'folderMissing' | 'hostCrashed';
+  error?:
+    | 'resumeFailed'
+    | 'transcriptMissing'
+    | 'claudeNotFound'
+    | 'spawnFailed'
+    | 'folderMissing'
+    | 'hostCrashed'
+    | 'runningElsewhere';
   /** Runs in this WSL distribution, which reaches Windows drives under `mountRoot` (e.g. /mnt/). */
   wsl?: { distro: string; mountRoot: string };
 }
@@ -89,6 +96,8 @@ export interface AppListItem {
   windowId: string | null;
   windowNumber: number | null;
   lastActiveAt: number;
+  /** Not running in reframe, but someone resumed its conversation in another terminal (or in WSL). */
+  elsewhere: boolean;
 }
 
 /** A claude running outside reframe (from Claude Code's session registry). */
