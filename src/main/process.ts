@@ -14,7 +14,7 @@ export function isAlive(pid: number): boolean {
 export function killTree(pid: number): Promise<void> {
   if (process.platform === 'win32') {
     return new Promise((resolve) => {
-      execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, () => resolve());
+      execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, timeout: 10_000 }, () => resolve());
     });
   }
   try {

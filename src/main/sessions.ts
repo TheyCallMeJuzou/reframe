@@ -18,6 +18,7 @@ import type { HookMessage, HookServer } from './hooks/server';
 import type { LogFn } from './log';
 import { isAlive, killTree } from './process';
 import type { PtyHostClient } from './ptyhost-client';
+import { settle } from './wait';
 import type { WslCommand, WslInfo } from './wsl/distros';
 
 export type NotifyKind = 'done' | 'waiting';
@@ -261,6 +262,11 @@ export class SessionManager extends EventEmitter<Events> {
     if (this.runtimes.get(sessionId) === runtime) this.runtimes.delete(sessionId);
   }
 
+  /** Sessions with a process, running or on their way out. */
+  get active(): string[] {
+    return [...this.runtimes.keys()];
+  }
+
   stopAll(timeoutMs = 5000): Promise<void> {
     return Promise.all([...this.runtimes.keys()].map((id) => this.stop(id, timeoutMs))).then(() => undefined);
   }
@@ -434,14 +440,4 @@ function isFolder(folder: string): Promise<boolean> {
     (stats) => stats.isDirectory(),
     () => false,
   );
-}
-
-function settle(promise: Promise<void>, ms: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => resolve(false), ms);
-    promise.then(() => {
-      clearTimeout(timer);
-      resolve(true);
-    });
-  });
 }

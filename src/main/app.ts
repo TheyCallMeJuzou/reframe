@@ -110,6 +110,7 @@ import { autostartEnabled, setAutostart } from './autostart';
 import { win32 } from './win32';
 import { WindowManager } from './windows';
 import { WslDistros } from './wsl/distros';
+import { settle } from './wait';
 
 export interface AppAssets {
   icon: string;
@@ -130,6 +131,8 @@ interface ClaudeSource {
 }
 
 const MAX_RECENT_FOLDERS = 8;
+/** How long quitting waits for the sessions to end (each gets Ctrl+C, then its process tree is killed). */
+const SHUTDOWN_MS = 15_000;
 /** How long after the system said it is going down sessions that end still count as ended by it. */
 const SYSTEM_ENDING_MS = 60_000;
 
@@ -278,7 +281,10 @@ export class ReframeApp {
     this.windows.quitting = true;
     this.log('info', 'reframe quitting, ending sessions');
     this.save();
-    await this.sessions.stopAll();
+    // Quitting must not hang on a session that does not go: what is left is ended as an orphan on the next start.
+    if (!(await settle(this.sessions.stopAll(), SHUTDOWN_MS))) {
+      this.log('warn', 'sessions did not end in time, quitting anyway', { sessions: this.sessions.active });
+    }
     this.sessions.dispose();
     this.host.stop();
     this.hooks.stop();
