@@ -6,6 +6,7 @@ import {
   TERMINAL_PORT_MESSAGE,
   type ForeignDropRequest,
   type ReframeApi,
+  type SessionList,
   type SessionRename,
   type WindowView,
 } from '@shared/ipc';
@@ -60,6 +61,7 @@ const api: ReframeApi = {
   renameSession: (sessionId, name) => ipcRenderer.send(IPC.renameSession, sessionId, name),
   onRenameSession: (listener) => subscribe<SessionRename>(IPC.startRenameSession, listener),
   getSessionList: (query, limit) => ipcRenderer.invoke(IPC.sessionList, query, limit),
+  onSessionList: (listener) => subscribe<SessionList>(IPC.sessionListChanged, listener),
   openSession: (request) => ipcRenderer.send(IPC.openSession, request),
   removeSession: (sessionId) => ipcRenderer.send(IPC.removeSession, sessionId),
   openSessions: (request) => ipcRenderer.send(IPC.openSessions, request),

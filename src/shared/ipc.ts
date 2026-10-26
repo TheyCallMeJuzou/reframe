@@ -142,6 +142,9 @@ export interface SessionList {
   wslStopped: string[];
 }
 
+/** How many past sessions the list shows at first (and adds with "Show more"). */
+export const LIST_PAGE = 20;
+
 /** What a list entry stands for when it is opened (main looks the details up again itself). */
 export type ListItemRef =
   | { kind: 'app'; sessionId: string }
@@ -279,6 +282,8 @@ export interface ReframeApi {
   /** The group menu's "Rename" asks the window to edit the group's name in place. */
   onRenameGroup(listener: (groupId: string) => void): () => void;
   getSessionList(query: string, limit: number): Promise<SessionList>;
+  /** The session list's first page (no search), sent whenever it changed. */
+  onSessionList(listener: (list: SessionList) => void): () => void;
   /** Shows a session that is open somewhere, or opens one from the list in this window (resuming it). */
   openSession(request: OpenSessionRequest): void;
   openSessions(request: OpenSessionsRequest): void;
@@ -336,6 +341,7 @@ export const IPC = {
   renameSession: 'reframe:rename-session',
   startRenameSession: 'reframe:start-rename-session',
   sessionList: 'reframe:session-list',
+  sessionListChanged: 'reframe:session-list-changed',
   openSession: 'reframe:open-session',
   removeSession: 'reframe:remove-session',
   openSessions: 'reframe:open-sessions',

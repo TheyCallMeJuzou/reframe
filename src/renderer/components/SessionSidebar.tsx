@@ -41,6 +41,12 @@ export function SessionSidebar({ sessionList }: { sessionList: SessionListState 
   const anchor = useRef<string | null>(null);
   const [renamingWorkspace, setRenamingWorkspace] = useState<string | null>(null);
   useEffect(() => window.reframe.onRenameWorkspace(setRenamingWorkspace), []);
+  // "5 minutes ago" moves on while the list stays the same.
+  const [, setMinute] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => setMinute((n) => n + 1), 60_000);
+    return () => clearInterval(timer);
+  }, []);
 
   const ago = useMemo(() => {
     const format = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });

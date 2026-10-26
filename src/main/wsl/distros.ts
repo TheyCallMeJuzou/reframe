@@ -154,9 +154,12 @@ export class WslDistros extends EventEmitter<Events> {
     return parseDistroList(await this.run(['-l', '-q'], 10_000).catch(() => ''));
   }
 
-  /** The distributions that run now, without Docker Desktop's own (asking does not start any). */
-  running(): Promise<string[]> {
-    if (!this.runningNow || Date.now() - this.runningNow.at > RUNNING_MS) {
+  /**
+   * The distributions that run now, without Docker Desktop's own (asking does not start any); an answer up to
+   * `maxAgeMs` old will do.
+   */
+  running(maxAgeMs = RUNNING_MS): Promise<string[]> {
+    if (!this.runningNow || Date.now() - this.runningNow.at > maxAgeMs) {
       const names = this.run(['-l', '--running', '-q'], 10_000)
         .then(parseDistroList, () => [])
         .then((list) => list.filter((name) => !/^docker-desktop/i.test(name)));

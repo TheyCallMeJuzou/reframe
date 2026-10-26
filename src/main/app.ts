@@ -53,6 +53,7 @@ import {
 } from '@shared/layout';
 import {
   IPC,
+  LIST_PAGE,
   type NewSessionRequest,
   type NewSessionResult,
   type AppListItem,
@@ -87,6 +88,7 @@ import {
   type Workspace,
 } from '@shared/state';
 import { listRunning, listRunningAsync, TranscriptIndex, type RunningExclusion } from './claude/discovery';
+import { ClaudeWatcher } from './claude/watcher';
 import {
   claudeHome,
   isRunningEntry,
@@ -126,6 +128,13 @@ export interface AppAssets {
   trayIcon2x: string;
 }
 
+/** What runs outside reframe, as last looked at: per place where Claude Code keeps sessions (Windows' own first). */
+interface OutsideScan {
+  sources: { source: ClaudeSource; running: RegistryEntry[] }[];
+  /** WSL distributions with Claude Code that do not run. */
+  stopped: string[];
+}
+
 /** Where Claude Code keeps sessions and transcripts: Windows' own, or a WSL distribution's. */
 interface ClaudeSource {
   distro?: string;
@@ -139,6 +148,16 @@ interface ClaudeSource {
 }
 
 const MAX_RECENT_FOLDERS = 8;
+/**
+ * How often the session list looks again what runs outside reframe without being told (a claude that was killed
+ * says nothing), and how often that includes WSL, whose folders cannot be watched: with a list shown, and without.
+ */
+const LIST_LOOK_MS = 20_000;
+const WSL_LOOK_MS = { shown: 20_000, hidden: 60_000 };
+/** A list asked for by the user is looked at afresh, WSL included, if it is older than this. */
+const LIST_ASKED_MS = 1_000;
+/** Changes that come together (a session's status, a layout change) send the list once. */
+const LIST_PUSH_MS = 300;
 /** How long quitting waits for the sessions to end (each gets Ctrl+C, then its process tree is killed). */
 const SHUTDOWN_MS = 15_000;
 /** How long after the system said it is going down sessions that end still count as ended by it. */
@@ -218,7 +237,10 @@ export class ReframeApp {
       log: this.log,
       wsl: this.wsl ?? undefined,
     });
-    this.sessions.on('changed', (id) => this.pushSession(id));
+    this.sessions.on('changed', (id) => {
+      this.pushSession(id);
+      this.listChanged();
+    });
     this.sessions.on('identity', (id, patch) => this.updateIdentity(id, patch));
     this.sessions.on('notify', (id, kind) => this.notify(id, kind));
     this.sessions.on('ended', (id) => this.sessionEnded(id));
@@ -241,6 +263,7 @@ export class ReframeApp {
     this.resumeSessions();
     this.createTray();
     this.watchUpdates();
+    this.watchList();
     this.save();
     void cleanUp(
       dropsDir(),
@@ -304,6 +327,9 @@ export class ReframeApp {
     this.host.stop();
     this.hooks.stop();
     this.wsl?.release();
+    this.listWatcher?.stop();
+    clearInterval(this.listLook);
+    clearTimeout(this.listPush);
     this.save();
     this.log('info', 'reframe stopped');
   }
@@ -617,6 +643,7 @@ export class ReframeApp {
 
   private save(): void {
     this.store.save(this.state);
+    this.listChanged();
   }
 
   // ---------- sessions ----------
@@ -927,14 +954,13 @@ export class ReframeApp {
     const matches = (...fields: (string | undefined)[]) => !q || fields.some((f) => f?.toLowerCase().includes(q));
     const records = Object.values(this.state.sessions);
 
-    // Where Claude Code keeps its sessions: on Windows, and in each running WSL distribution that has it. What runs
-    // there outside reframe: other sessions, and reframe's own ones that someone resumed elsewhere.
-    const { sources, stopped } = await this.claudeSources();
-    const outside = await Promise.all(
-      sources.map(async (source) => ({ source, entries: await this.externalRunning(source) })),
-    );
+    // Where Claude Code keeps its sessions (on Windows, and in each running WSL distribution that has it) and what
+    // runs there outside reframe: other sessions, and reframe's own ones that someone resumed elsewhere.
+    if (!this.outside) await this.scanOutside(0);
+    const { sources: scanned, stopped } = this.outside ?? { sources: [], stopped: [] };
+    const sources = scanned.map(({ source }) => source);
     const ownIds = new Set(records.map((r) => r.claudeSessionId));
-    const resumedElsewhere = new Set(outside.flatMap(({ entries }) => entries.map((e) => e.sessionId)));
+    const resumedElsewhere = new Set(scanned.flatMap(({ running }) => running.map((e) => e.sessionId)));
 
     const app: AppListItem[] = records
       .map((record): AppListItem => {
@@ -957,8 +983,8 @@ export class ReframeApp {
       // Sessions in a window first, then the rest; most recently used first within each.
       .sort((a, b) => Number(!a.windowId) - Number(!b.windowId) || b.lastActiveAt - a.lastActiveAt);
 
-    const running = outside
-      .flatMap(({ source, entries }) =>
+    const running = scanned
+      .flatMap(({ source, running: entries }) =>
         entries
           .filter((entry) => !ownIds.has(entry.sessionId))
           .map((entry): RunningListItem => ({
@@ -1005,11 +1031,11 @@ export class ReframeApp {
    * Where Claude Code keeps sessions and transcripts: on Windows, and in each running WSL distribution that has it
    * (a stopped one is not started for this; `stopped` names those Claude Code was found in before).
    */
-  private async claudeSources(): Promise<{ sources: ClaudeSource[]; stopped: string[] }> {
+  private async claudeSources(maxAgeMs?: number): Promise<{ sources: ClaudeSource[]; stopped: string[] }> {
     const windows = this.ownSource();
     const wsl = this.wsl;
     if (!wsl) return { sources: [windows], stopped: [] };
-    const running = await wsl.running();
+    const running = await wsl.running(maxAgeMs);
     const inWsl = await Promise.all(running.map((distro) => this.wslSource(distro)));
     const stopped = (this.state.wslDistros ?? []).filter(
       (d) => !running.some((r) => r.toLowerCase() === d.toLowerCase()),
@@ -1044,6 +1070,85 @@ export class ReframeApp {
     };
   }
   private wslTranscripts = new Map<string, TranscriptIndex>();
+
+  // ---------- keeping the session list up to date ----------
+
+  private outside: OutsideScan | null = null;
+  private wslLookedAt = 0;
+  private scans: Promise<void> = Promise.resolve();
+  private listWatcher: ClaudeWatcher | null = null;
+  private listLook: NodeJS.Timeout | undefined;
+  private listPush: NodeJS.Timeout | undefined;
+  /** The list as the windows got it last, to send it only when it changed. */
+  private listSent = '';
+
+  /**
+   * The windows get the session list from here, when it changed, instead of each asking for it every few seconds:
+   * that read every registry entry and looked at every transcript's time (thousands in a long history) and asked
+   * wsl.exe which distributions run, all the time, with or without anything changing. Windows' own Claude Code folder
+   * is watched; what runs in WSL is looked at every little while.
+   */
+  private watchList(): void {
+    this.listWatcher = new ClaudeWatcher(this.claudeHome);
+    this.listWatcher.on('changed', ({ projects }) => {
+      this.transcripts.invalidate(projects);
+      void this.scanOutside(null).then(() => this.listChanged());
+    });
+    this.listWatcher.start();
+    this.listLook = setInterval(() => {
+      const shown = this.state.windows.some((w) => w.sidebarOpen && !w.hidden);
+      void this.scanOutside(shown ? WSL_LOOK_MS.shown : WSL_LOOK_MS.hidden).then(() => this.listChanged());
+    }, LIST_LOOK_MS);
+    this.listLook.unref();
+  }
+
+  /**
+   * Looks again what runs outside reframe: on Windows always (cheap), in WSL when that was last done `wslMaxAgeMs`
+   * ago or longer (null: not now), and then WSL's transcripts are listed again too. One look at a time.
+   */
+  private scanOutside(wslMaxAgeMs: number | null): Promise<void> {
+    this.scans = this.scans
+      .then(async () => {
+        const own = this.ownSource();
+        const here = { source: own, running: await this.externalRunning(own) };
+        let inWsl = this.outside?.sources.slice(1) ?? [];
+        let stopped = this.outside?.stopped ?? [];
+        if (this.wsl && wslMaxAgeMs !== null && Date.now() - this.wslLookedAt >= wslMaxAgeMs) {
+          this.wslLookedAt = Date.now();
+          const found = await this.claudeSources(wslMaxAgeMs);
+          inWsl = await Promise.all(
+            found.sources
+              .filter((source) => source.distro)
+              .map(async (source) => {
+                source.transcripts.invalidate('all');
+                return { source, running: await this.externalRunning(source) };
+              }),
+          );
+          stopped = found.stopped;
+        }
+        this.outside = { sources: [here, ...inWsl], stopped };
+      })
+      .catch((error: unknown) =>
+        this.log('warn', 'could not look at the sessions outside reframe', { error: String(error) }),
+      );
+    return this.scans;
+  }
+
+  /** Something the session list shows may have changed: the windows get it in a moment, if it did. */
+  private listChanged(): void {
+    if (this.listPush || this.shuttingDown || !this.listWatcher) return;
+    this.listPush = setTimeout(() => {
+      this.listPush = undefined;
+      void this.sessionList('', LIST_PAGE)
+        .then((list) => {
+          const sent = JSON.stringify(list);
+          if (sent === this.listSent || this.shuttingDown) return;
+          this.listSent = sent;
+          for (const w of this.state.windows) this.windows.send(w.id, IPC.sessionListChanged, list);
+        })
+        .catch((error: unknown) => this.log('warn', 'could not make the session list', { error: String(error) }));
+    }, LIST_PUSH_MS);
+  }
 
   /**
    * Claudes running outside reframe (with a known folder), reframe's own sessions resumed elsewhere among them; a
@@ -1960,9 +2065,14 @@ export class ReframeApp {
       const png = this.clipboardOverride ? (this.clipboardOverride.image ? TEST_PNG : null) : await clipboardImage();
       return png && this.saveDroppedFile('clipboard.png', png);
     });
-    ipcMain.handle(IPC.sessionList, (_event, query: unknown, limit: unknown) =>
-      this.sessionList(typeof query === 'string' ? query : '', typeof limit === 'number' ? Math.min(limit, 500) : 20),
-    );
+    ipcMain.handle(IPC.sessionList, async (_event, query: unknown, limit: unknown) => {
+      // Asked for by the user (opening the list, searching, after an action there): as fresh as before.
+      await this.scanOutside(LIST_ASKED_MS);
+      return this.sessionList(
+        typeof query === 'string' ? query : '',
+        typeof limit === 'number' ? Math.min(limit, 500) : LIST_PAGE,
+      );
+    });
     ipcMain.on(IPC.openSession, (event, request: Partial<OpenSessionRequest> | null) => {
       const id = windowId(event);
       const item = request?.item;

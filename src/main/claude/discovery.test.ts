@@ -75,6 +75,29 @@ describe('TranscriptIndex', () => {
     expect(await ids({ query: 'middle' })).toEqual(['mid']);
     expect(await index.list({ limit: 2, exclude: new Set() })).toMatchObject({ hasMore: true });
   });
+
+  it('lists a project folder again only once it was named as changed', async () => {
+    const h = home();
+    transcript(h, 'p1', 'a', user('first'), 60_000);
+    transcript(h, 'p2', 'b', user('second'), 30_000);
+    const index = new TranscriptIndex(h);
+    const ids = async () => (await index.list({ limit: 10, exclude: new Set() })).items.map((i) => i.sessionId);
+    expect(await ids()).toEqual(['b', 'a']);
+
+    // Used again just now: its time changed, but nobody said so yet.
+    const later = new Date();
+    fs.utimesSync(path.join(h, 'projects', 'p1', 'a.jsonl'), later, later);
+    transcript(h, 'p2', 'c', user('third'));
+    expect(await ids()).toEqual(['b', 'a']);
+    index.invalidate(['p1']);
+    expect(await ids()).toEqual(['a', 'b']);
+    index.invalidate('all');
+    expect(await ids()).toEqual(['c', 'a', 'b']);
+    // A folder that is gone takes its transcripts along.
+    fs.rmSync(path.join(h, 'projects', 'p2'), { recursive: true });
+    index.invalidate(['p2']);
+    expect(await ids()).toEqual(['a']);
+  });
 });
 
 describe('listRunning', () => {

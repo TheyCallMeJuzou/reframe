@@ -138,11 +138,31 @@ function parseLines(text: string): Entry[] {
 
 const truncate = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
-/** Past sessions, newest first, with search and paging. */
+interface TranscriptFile {
+  file: string;
+  sessionId: string;
+  modifiedAt: number;
+}
+
+/**
+ * Past sessions, newest first, with search and paging. A project folder's transcripts are listed once and again only
+ * after invalidate() names that folder (or all): looking at every transcript's time each time is what a long history
+ * with thousands of them cannot afford.
+ */
 export class TranscriptIndex {
   private cache = new Map<string, { modifiedAt: number; info: TranscriptInfo | null }>();
+  /** Each project folder's transcripts, as last listed. */
+  private listed = new Map<string, TranscriptFile[]>();
+  private stale: Set<string> | 'all' = 'all';
+  private listing: Promise<TranscriptFile[]> | null = null;
 
   constructor(private home: string) {}
+
+  /** Project folders whose transcripts changed (or all, when that is not known): they are listed again. */
+  invalidate(projects: Iterable<string> | 'all'): void {
+    if (projects === 'all' || this.stale === 'all') this.stale = 'all';
+    else for (const project of projects) this.stale.add(project);
+  }
 
   async list(options: { query?: string; limit: number; exclude: Set<string> }): Promise<{
     items: TranscriptInfo[];
@@ -168,36 +188,35 @@ export class TranscriptIndex {
   }
 
   /** The transcripts, newest first; read without blocking (in WSL they are behind a network share). */
-  private async files(): Promise<{ file: string; sessionId: string; modifiedAt: number }[]> {
-    const projects = path.join(this.home, 'projects');
-    const out: { file: string; sessionId: string; modifiedAt: number }[] = [];
-    let dirs: string[];
-    try {
-      dirs = await fs.promises.readdir(projects);
-    } catch {
-      return out;
-    }
-    for (const dir of dirs) {
-      let names: string[];
-      try {
-        names = (await fs.promises.readdir(path.join(projects, dir))).filter((n) => n.endsWith('.jsonl'));
-      } catch {
-        continue;
-      }
-      for (const name of names) {
-        const file = path.join(projects, dir, name);
-        try {
-          const modifiedAt = (await fs.promises.stat(file)).mtimeMs;
-          out.push({ file, sessionId: name.slice(0, -'.jsonl'.length), modifiedAt });
-        } catch {
-          // removed in the meantime
-        }
-      }
-    }
-    return out.sort((a, b) => b.modifiedAt - a.modifiedAt);
+  private files(): Promise<TranscriptFile[]> {
+    // Asked again while listing: the same answer (what changes meanwhile is listed next time).
+    this.listing ??= this.listChanged().finally(() => (this.listing = null));
+    return this.listing;
   }
 
-  private async info(file: { file: string; sessionId: string; modifiedAt: number }): Promise<TranscriptInfo | null> {
+  private async listChanged(): Promise<TranscriptFile[]> {
+    const projects = path.join(this.home, 'projects');
+    const stale = this.stale;
+    this.stale = new Set();
+    let dirs: Set<string>;
+    try {
+      dirs = new Set(await fs.promises.readdir(projects));
+    } catch {
+      dirs = new Set();
+    }
+    for (const dir of this.listed.keys()) if (!dirs.has(dir)) this.listed.delete(dir);
+    for (const dir of dirs) {
+      if (stale !== 'all' && !stale.has(dir) && this.listed.has(dir)) continue;
+      this.listed.set(dir, await listProject(projects, dir));
+    }
+    const files = [...this.listed.values()].flat().sort((a, b) => b.modifiedAt - a.modifiedAt);
+    // What was read from transcripts that are gone is forgotten.
+    const present = new Set(files.map((f) => f.file));
+    for (const file of this.cache.keys()) if (!present.has(file)) this.cache.delete(file);
+    return files;
+  }
+
+  private async info(file: TranscriptFile): Promise<TranscriptInfo | null> {
     const cached = this.cache.get(file.file);
     if (cached && cached.modifiedAt === file.modifiedAt) return cached.info;
     let info: TranscriptInfo | null = null;
@@ -210,4 +229,25 @@ export class TranscriptIndex {
     this.cache.set(file.file, { modifiedAt: file.modifiedAt, info });
     return info;
   }
+}
+
+/** The transcripts in one project folder, with their times. */
+async function listProject(projects: string, dir: string): Promise<TranscriptFile[]> {
+  let names: string[];
+  try {
+    names = (await fs.promises.readdir(path.join(projects, dir))).filter((n) => n.endsWith('.jsonl'));
+  } catch {
+    return [];
+  }
+  const files: TranscriptFile[] = [];
+  for (const name of names) {
+    const file = path.join(projects, dir, name);
+    try {
+      const modifiedAt = (await fs.promises.stat(file)).mtimeMs;
+      files.push({ file, sessionId: name.slice(0, -'.jsonl'.length), modifiedAt });
+    } catch {
+      // removed in the meantime
+    }
+  }
+  return files;
 }
