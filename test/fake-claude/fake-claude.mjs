@@ -70,7 +70,11 @@ if (resumeId && !fs.existsSync(transcript(resumeId))) {
   exit(1);
 }
 writeRegistry('idle');
-if (procFolder) fs.mkdirSync(procFolder, { recursive: true });
+if (procFolder) {
+  fs.mkdirSync(procFolder, { recursive: true });
+  // As /proc/<pid>/cmdline has it: the distribution's claude and its arguments, NUL-separated.
+  fs.writeFileSync(path.join(procFolder, 'cmdline'), ['/usr/local/bin/claude', ...args].join('\0'));
+}
 process.stdout.write(`\x1b[1mFAKE CLAUDE\x1b[0m ${resumeId ? 'resumed' : 'new'} ${sessionId}\r\n> `);
 
 let line = '';

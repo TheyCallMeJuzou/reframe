@@ -96,6 +96,17 @@ export function parseProbe(distro: string, output: string): WslInfo | null {
   };
 }
 
+/**
+ * Whether a Linux command line (argv, NUL-separated, as /proc/<pid>/cmdline has it) is a Claude Code's: the program
+ * `claude` (the native install, or a link to it), or node running its script (an npm, pnpm or yarn install).
+ */
+export function looksLikeClaude(cmdline: string): boolean {
+  return cmdline
+    .split('\0')
+    .slice(0, 2)
+    .some((arg) => /(^|\/)claude$|\/claude-code\/|\/\.local\/share\/claude\//.test(arg));
+}
+
 type Events = {
   /** Claude Code was found in this distribution. */
   found: [distro: string];
@@ -177,10 +188,27 @@ export class WslDistros extends EventEmitter<Events> {
   }
 
   /**
+   * Whether the Linux process `pid` runs in `distro` and is a claude. A claude that was killed leaves its registry
+   * entry behind, and a distribution numbers its processes anew every time it starts: the pid in such an entry is
+   * soon another program's, which must be neither listed as a claude nor ended as one.
+   */
+  async isClaude(distro: string, pid: number): Promise<boolean> {
+    const cmdline = await fs.promises
+      .readFile(path.win32.join(this.share, distro, 'proc', String(pid), 'cmdline'), 'utf8')
+      .catch(() => '');
+    return looksLikeClaude(cmdline);
+  }
+
+  /**
    * Ends a claude running in `distro`, from outside (taking it over): an interrupt as from Ctrl+C, which Claude
    * Code answers by ending cleanly, a second one, then a plain termination.
    */
   async stopClaude(distro: string, pid: number): Promise<'stopped' | 'failed'> {
+    // Never a program that merely has the pid of a claude by now.
+    if (!(await this.isClaude(distro, pid))) {
+      this.log('warn', 'not a claude (any more), left alone', { distro, pid });
+      return 'failed';
+    }
     for (const signal of ['INT', 'INT', 'TERM']) {
       await this.run(['-d', distro, '-e', 'kill', '-s', signal, String(pid)], 10_000).catch(() => '');
       for (let waited = 0; waited < 3000; waited += 200) {

@@ -289,6 +289,11 @@ describe('registry', () => {
     expect((await findRegistryEntry(home, 's-2'))?.pid).toBe(5741);
     expect(await findRegistryEntry(home, 's-3')).toBeNull();
     expect(await findRegistryEntry(path.join(home, 'missing'), 's-1')).toBeNull();
+    // Told which entries are a running claude's, it passes over one left behind under a pid another program has.
+    fs.writeFileSync(path.join(home, 'sessions', '5742.json'), JSON.stringify({ pid: 5742, sessionId: 's-2' }));
+    const alive = async (entry: { pid: number }) => entry.pid === 5742;
+    expect((await findRegistryEntry(home, 's-2', alive))?.pid).toBe(5742);
+    expect(await findRegistryEntry(home, 's-1', alive)).toBeNull();
   });
 });
 

@@ -68,6 +68,8 @@ export function useSessionList(shown: boolean): SessionListState {
     [apply],
   );
 
+  // Also each time the list is shown again (`shown`): main looks at what runs outside reframe afresh for a list
+  // asked for, and the page it sends is otherwise up to a little while old. Hidden, that page is enough.
   useEffect(() => {
     let alive = true;
     if (since.current === 0) since.current = Date.now();
@@ -84,7 +86,7 @@ export function useSessionList(shown: boolean): SessionListState {
       alive = false;
       clearTimeout(timer);
     };
-  }, [asked.query, asked.limit, reloads, apply]);
+  }, [asked.query, asked.limit, reloads, apply, shown]);
 
   // Once the list is shown, new entries light up for a moment and then count as seen.
   useEffect(() => {

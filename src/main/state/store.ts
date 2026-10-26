@@ -43,8 +43,13 @@ export class StateStore {
       return { state: defaultState(), source: 'newer' };
     }
     const rejected = fromFile.reason ? { file: this.setAside(), reason: fromFile.reason } : undefined;
-    const fromBackup = readFile(this.backupFile).state;
-    if (fromBackup) return { state: fromBackup, source: 'backup', ...(rejected ? { rejected } : {}) };
+    const fromBackup = readFile(this.backupFile);
+    if (fromBackup.newer) {
+      // The backup is a newer reframe's as well: it must not be written over either.
+      this.readOnly = true;
+      return { state: defaultState(), source: 'newer', ...(rejected ? { rejected } : {}) };
+    }
+    if (fromBackup.state) return { state: fromBackup.state, source: 'backup', ...(rejected ? { rejected } : {}) };
     return { state: defaultState(), source: 'default', ...(rejected ? { rejected } : {}) };
   }
 

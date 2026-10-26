@@ -4,6 +4,7 @@
 // paths; and it resumes after a restart. A distribution without claude says so. The session list shows the
 // sessions of running distributions (and says which known one is not running, with a button to start it), and a
 // session running in a WSL terminal is taken over.
+import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -281,6 +282,73 @@ test('a claude that a crashed reframe left running in WSL is ended before its se
     throw error;
   } finally {
     if (orphan && !orphanExited) orphan.kill();
+    await cleanup(dir);
+  }
+});
+
+test('a registry entry left behind under a Linux pid that another program has now is left alone', async () => {
+  const { dir, env, share, byName } = wslSetup();
+  // Stands in for the program that has the pid now; it must still be running at the end.
+  const other = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  const alive = () => {
+    try {
+      process.kill(other.pid!, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  try {
+    const pid = other.pid!;
+    const id = crypto.randomUUID();
+    const home = path.join(share, 'Fake', 'home', 'ann');
+    // What a claude killed along with its distribution leaves behind: its registry entry, naming this session, under
+    // a pid that a shell got when the distribution started again.
+    fs.mkdirSync(path.join(home, '.claude', 'sessions'), { recursive: true });
+    fs.writeFileSync(
+      path.join(home, '.claude', 'sessions', `${pid}.json`),
+      JSON.stringify({ pid, sessionId: id, cwd: '/home/ann/proj', name: 'left', nameSource: 'user', status: 'idle' }),
+    );
+    fs.mkdirSync(path.join(share, 'Fake', 'proc', String(pid)), { recursive: true });
+    fs.writeFileSync(path.join(share, 'Fake', 'proc', String(pid), 'cmdline'), 'bash ');
+    fs.mkdirSync(env.REFRAME_USER_DATA!, { recursive: true });
+    const session = { id: 'a', claudeSessionId: id, cwd: path.join(home, 'proj'), name: 'left', launch: {} };
+    fs.writeFileSync(
+      path.join(env.REFRAME_USER_DATA!, 'state.json'),
+      JSON.stringify({
+        version: 1,
+        sessions: { a: { ...session, lifecycle: 'open', createdAt: 1, lastActiveAt: 1, linuxPid: pid } },
+        windows: [
+          {
+            id: 'w',
+            bounds: null,
+            maximized: false,
+            hidden: false,
+            layout: { kind: 'tile', sessionId: 'a' },
+            dock: [],
+          },
+        ],
+        recentFolders: [],
+      }),
+    );
+
+    const { app, page } = await launch(env);
+    await expect(tileByLabel(page, 'left').locator('.status-idle')).toBeVisible({ timeout: 15_000 });
+    // The session's claude is the new one, found past the stale entry; the other program was not ended.
+    await expect.poll(() => byName('left').linuxPid, { timeout: 10_000 }).not.toBe(pid);
+    expect(alive()).toBe(true);
+    // Nor is the stale entry a session running elsewhere.
+    await page.getByRole('button', { name: 'Sessions' }).click();
+    const rows = page.locator('.sidebar-row', { hasText: 'left' });
+    await expect(rows).toHaveCount(1);
+    await expect(rows).not.toContainText('running elsewhere');
+    expect(alive()).toBe(true);
+    await quit(app);
+  } catch (error) {
+    await captureWindows('wsl-reused-pid');
+    throw error;
+  } finally {
+    other.kill();
     await cleanup(dir);
   }
 });

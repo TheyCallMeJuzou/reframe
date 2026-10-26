@@ -41,6 +41,8 @@ export interface WslLauncher {
   stopClaude(distro: string, pid: number): Promise<unknown>;
   /** Whether a Linux process runs in the distribution. */
   alive(distro: string, pid: number): Promise<boolean>;
+  /** Whether a Linux process runs in the distribution and is a claude (and not another program with its pid now). */
+  isClaude(distro: string, pid: number): Promise<boolean>;
 }
 
 /** A session running in WSL: its distribution, Claude's folder there, and its registry entry once found. */
@@ -371,7 +373,8 @@ export class SessionManager extends EventEmitter<Events> {
     const wsl = this.deps.wsl!;
     const entry = await withTimeout(readRegistryEntryAsync(home, linuxPid), SHARE_TIMEOUT_MS, null);
     if (entry?.sessionId !== session.claudeSessionId) return;
-    if (!(await withTimeout(wsl.alive(distro, linuxPid), SHARE_TIMEOUT_MS, false))) return;
+    // The distribution started again since (every start numbers processes anew): the pid is another program's.
+    if (!(await withTimeout(wsl.isClaude(distro, linuxPid), SHARE_TIMEOUT_MS, false))) return;
     this.log('warn', 'ending orphaned claude in wsl from a previous run', { session: session.id, distro, linuxPid });
     await wsl.stopClaude(distro, linuxPid);
   }
@@ -380,8 +383,8 @@ export class SessionManager extends EventEmitter<Events> {
   private async killOwn(runtime: Runtime): Promise<void> {
     if (!runtime.pid) return;
     await killTree(runtime.pid);
-    // In WSL the entry is the Linux process's, in the distribution.
-    if (!runtime.wsl) forgetRegistryEntry(this.deps.claudeHome, runtime.pid);
+    // In WSL the entry is the Linux process's, in the distribution; through cmd.exe it is claude's own process's.
+    if (!runtime.wsl) forgetRegistryEntry(this.deps.claudeHome, runtime.launched?.pid ?? runtime.pid);
   }
 
   /**
@@ -517,6 +520,8 @@ export class SessionManager extends EventEmitter<Events> {
       ...(cwd ? { cwd } : {}),
       ...(entry.status === 'busy' ? { used: true } : {}),
       ...(runtime.wsl ? { linuxPid: entry.pid } : {}),
+      // Through cmd.exe the pty's process is cmd's; the session's is claude's own, for cleaning up after a crash.
+      ...(runtime.launched ? { pid: entry.pid } : {}),
     });
     if (entry.name !== runtime.registryName) {
       runtime.registryName = entry.name;
@@ -547,7 +552,9 @@ export class SessionManager extends EventEmitter<Events> {
   }): Promise<RegistryEntry | null> {
     const known = launched.pid ? readRegistryEntry(this.deps.claudeHome, launched.pid) : null;
     if (known) return known;
-    const found = await findRegistryEntry(this.deps.claudeHome, launched.claudeSessionId);
+    const found = await findRegistryEntry(this.deps.claudeHome, launched.claudeSessionId, async (e) =>
+      isRunningEntry(e),
+    );
     launched.pid = found?.pid;
     return found;
   }
@@ -558,7 +565,9 @@ export class SessionManager extends EventEmitter<Events> {
     const read = (async () => {
       const known = wsl.linuxPid ? await readRegistryEntryAsync(wsl.home, wsl.linuxPid) : null;
       if (known) return known;
-      const found = await findRegistryEntry(wsl.home, wsl.claudeSessionId);
+      const found = await findRegistryEntry(wsl.home, wsl.claudeSessionId, (e) =>
+        this.deps.wsl!.isClaude(wsl.distro, e.pid),
+      );
       wsl.linuxPid = found?.pid;
       return found;
     })().finally(() => (wsl.reading = false));

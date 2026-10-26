@@ -80,6 +80,17 @@ describe('StateStore', () => {
     expect(contents).toEqual(['garbage 2', 'garbage 3', 'garbage 4', 'garbage 5', 'garbage 6']);
   });
 
+  it('leaves a backup from a newer reframe alone as well', () => {
+    const s = store();
+    const newer = JSON.stringify({ version: 2, sessions: {}, somethingNew: true });
+    fs.writeFileSync(s.backupFile, newer);
+    fs.writeFileSync(s.file, 'garbage');
+    expect(s.load()).toMatchObject({ source: 'newer', rejected: { reason: expect.stringContaining('not JSON') } });
+    s.save(withFolder('one'));
+    expect(fs.existsSync(s.file)).toBe(false);
+    expect(fs.readFileSync(s.backupFile, 'utf8')).toBe(newer);
+  });
+
   it('leaves a file from a newer reframe alone and writes nothing', () => {
     const s = store();
     const newer = JSON.stringify({ version: 2, sessions: {}, somethingNew: true });

@@ -81,9 +81,14 @@ export async function readRegistryEntryAsync(home: string, pid: number): Promise
 
 /**
  * The entry of a running claude by its session id, for one whose process id reframe does not know (in WSL, the
- * entry is named after the Linux process id).
+ * entry is named after the Linux process id). `alive` tells a running claude's entry from one a killed claude left
+ * behind, which would otherwise be taken for the session's for good.
  */
-export async function findRegistryEntry(home: string, sessionId: string): Promise<RegistryEntry | null> {
+export async function findRegistryEntry(
+  home: string,
+  sessionId: string,
+  alive?: (entry: RegistryEntry) => Promise<boolean>,
+): Promise<RegistryEntry | null> {
   let files: string[];
   try {
     files = (await fs.promises.readdir(path.join(home, 'sessions'))).filter((f) => /^\d+\.json$/.test(f));
@@ -92,7 +97,7 @@ export async function findRegistryEntry(home: string, sessionId: string): Promis
   }
   for (const file of files) {
     const entry = await readRegistryEntryAsync(home, Number(file.slice(0, -'.json'.length)));
-    if (entry?.sessionId === sessionId) return entry;
+    if (entry?.sessionId === sessionId && (!alive || (await alive(entry)))) return entry;
   }
   return null;
 }

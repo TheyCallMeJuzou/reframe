@@ -23,6 +23,8 @@ const MAC = navigator.userAgent.includes('Mac');
 const tileIds = () =>
   [...document.querySelectorAll<HTMLElement>('.layout .tile[data-session]')].map((el) => el.dataset.session!);
 const activeTile = () => document.activeElement?.closest<HTMLElement>('.tile[data-session]')?.dataset.session ?? null;
+/** The tiles of a window's layout, in order: what a zoom (one tile filling the window) belongs to. */
+const layoutKeyOf = (view: WindowView | null) => (view?.layout ? leaves(view.layout).join('|') : '');
 
 /** Runs `action` once `selector` is on the page (it may only appear with the next view), giving up after a while. */
 function whenShown(selector: string, action: () => void, frames = 60): void {
@@ -51,12 +53,19 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
 
   useEffect(() => {
     let pushed = false;
+    // A zoom is over as soon as the layout changes (a tile added, moved, expanded or closed): for good, not just
+    // until the layout happens to look as before.
+    const unzoom = (next: WindowView) => setZoom((z) => (z && z.layout !== layoutKeyOf(next) ? null : z));
     const off = window.reframe.onView((next) => {
       pushed = true;
       setView(next);
+      unzoom(next);
     });
     void window.reframe.getView().then((initial) => {
-      if (initial && !pushed) setView(initial);
+      if (initial && !pushed) {
+        setView(initial);
+        unzoom(initial);
+      }
     });
     return off;
   }, []);
@@ -104,8 +113,8 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
     [terminals],
   );
 
-  const layoutKey = view?.layout ? leaves(view.layout).join('|') : '';
-  // Over as soon as a tile is added, moved, expanded or closed (it would be out of sight), and while dragging.
+  const layoutKey = layoutKeyOf(view);
+  // Not shown while dragging, nor in the render that brings the layout change (the view's handler ends it then).
   const zoomed = zoom && zoom.layout === layoutKey && !dragging ? zoom.sessionId : null;
   const toggleZoom = useCallback(
     (sessionId: string) => {

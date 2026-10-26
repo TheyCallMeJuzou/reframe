@@ -19,6 +19,8 @@ test('claude behind an unknown launcher in a folder with a space runs, with its 
     const { app, page } = await launch({ ...env, REFRAME_CLAUDE_BIN: launcher });
     await newSession(page, project, 'my task');
     const start = launches().find((l) => l.event === 'start')!;
+    // The session's process is claude's own (for cleaning up after a crash), not cmd's, once its entry was seen.
+    await expect.poll(() => byName('my task').pid, { timeout: 10_000 }).toBe(start.pid);
     expect(start.args).toEqual(
       expect.arrayContaining(['--session-id', byName('my task').claudeSessionId, '--name', 'my task']),
     );

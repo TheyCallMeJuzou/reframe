@@ -34,6 +34,9 @@ test('Ctrl+Shift+Z lets a tile fill the window and back, the layout unchanged', 
     await expect(tileByLabel(page, 'beta').getByRole('button', { name: 'Show all tiles again' })).toBeVisible();
     await newSession(page, project, 'gamma');
     await expect(page.locator('.tile')).toHaveCount(3);
+    // And it does not come back by itself once the layout is as it was when zoomed.
+    await tileByLabel(page, 'gamma').getByRole('button', { name: 'End session' }).click();
+    await expect(page.locator('.tile')).toHaveCount(2);
     await quit(app);
   } catch (error) {
     await captureWindows('zoom');

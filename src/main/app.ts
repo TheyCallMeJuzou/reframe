@@ -1104,7 +1104,7 @@ export class ReframeApp {
       distro,
       home,
       transcripts,
-      alive: (entry) => wsl.alive(distro, entry.pid),
+      alive: (entry) => wsl.isClaude(distro, entry.pid),
       windowsPath: (folder) => wslWindowsPath(distro, folder, wsl.share),
     };
   }
@@ -1218,8 +1218,10 @@ export class ReframeApp {
     return new Set(
       Object.values(this.state.sessions).flatMap((r) => {
         const runtime = this.sessions.status(r.id);
-        const pid = runtime && (distro ? r.linuxPid : runtime.pid);
-        return pid ? [pid] : [];
+        if (!runtime) return [];
+        // Through cmd.exe the pty's process is cmd's, and claude's own is known once its entry was found.
+        const pids = distro ? [r.linuxPid] : [runtime.pid, runtime.launched?.pid];
+        return pids.filter((pid): pid is number => !!pid);
       }),
     );
   }
