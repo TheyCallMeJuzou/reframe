@@ -160,7 +160,7 @@ export class ReframeApp {
   ) {
     this.updates = new Updates(this.log, portable, () => this.state.preferences.checkForUpdates);
     this.locale = systemLocale;
-    this.windows = new WindowManager(assets.icon);
+    this.windows = new WindowManager(assets.icon, this.log);
   }
 
   private applyLanguage(): void {

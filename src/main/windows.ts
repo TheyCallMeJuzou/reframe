@@ -5,6 +5,7 @@ import { EventEmitter } from 'node:events';
 import path from 'node:path';
 import { BrowserWindow, screen, type WebContents } from 'electron';
 import type { Bounds, WindowState } from '@shared/state';
+import type { LogFn } from './log';
 
 type Events = {
   bounds: [windowId: string, bounds: Bounds, maximized: boolean];
@@ -17,13 +18,18 @@ type Events = {
 };
 
 const DEFAULT_SIZE = { width: 1280, height: 800 };
+/** A page that crashed is loaded again, but not more often than this within a minute (it would only crash again). */
+const MAX_RELOADS = 3;
 
 export class WindowManager extends EventEmitter<Events> {
   private windows = new Map<string, BrowserWindow>();
   /** Set while the app shuts down, so closing really closes. */
   quitting = false;
 
-  constructor(private icon: string) {
+  constructor(
+    private icon: string,
+    private log: LogFn = () => {},
+  ) {
     super();
   }
 
@@ -84,6 +90,20 @@ export class WindowManager extends EventEmitter<Events> {
     win.on('closed', () => this.windows.delete(state.id));
     win.on('query-session-end', () => this.emit('systemEnding'));
     win.on('session-end', () => this.emit('systemEnding'));
+
+    // A page that crashed is loaded again: it gets its view from main and attaches its terminals anew, their screens
+    // coming from the PTY host, so nothing is lost. Without this the window stays blank.
+    const reloads: number[] = [];
+    win.webContents.on('render-process-gone', (_event, details) => {
+      if (details.reason === 'clean-exit' || win.isDestroyed()) return;
+      const now = Date.now();
+      while (reloads.length > 0 && now - reloads[0]! > 60_000) reloads.shift();
+      const info = { window: state.id, reason: details.reason, exitCode: details.exitCode };
+      if (reloads.length >= MAX_RELOADS) return this.log('error', 'window keeps crashing, not loading it again', info);
+      reloads.push(now);
+      this.log('warn', 'window crashed, loading it again', info);
+      win.webContents.reload();
+    });
 
     // Never navigate away from the app or open other windows from page content.
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
