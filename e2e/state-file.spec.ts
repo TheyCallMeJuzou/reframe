@@ -1,28 +1,9 @@
 // End to end: a state file reframe cannot use is never written over. One from a newer reframe makes this one quit
 // and leave it as it is (going back to that version keeps everything); any other is set aside and the backup used.
-import { spawn } from 'node:child_process';
 import fs from 'node:fs';
-import { createRequire } from 'node:module';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
-import { captureWindows, cleanup, launch, quit, root, setup } from './helpers';
-
-/** Starts reframe outside Playwright (it quits before it opens a window) and resolves with its exit code. */
-function run(env: Record<string, string>): Promise<number | null> {
-  const packaged = process.env.REFRAME_E2E_APP;
-  const electron = createRequire(__filename)('electron') as unknown as string;
-  const child = packaged ? spawn(packaged, [], { env }) : spawn(electron, [root], { env, cwd: root });
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      child.kill();
-      reject(new Error('reframe did not quit'));
-    }, 30_000);
-    child.on('exit', (code) => {
-      clearTimeout(timer);
-      resolve(code);
-    });
-  });
-}
+import { captureWindows, cleanup, launch, quit, runToExit, setup } from './helpers';
 
 test('a state file from a newer reframe is left alone, and reframe quits', async () => {
   const { dir, env } = setup();
@@ -32,7 +13,7 @@ test('a state file from a newer reframe is left alone, and reframe quits', async
     const newer = JSON.stringify({ version: 2, sessions: { a: { from: 'the future' } }, windows: [] });
     fs.writeFileSync(path.join(userData, 'state.json'), newer);
 
-    expect(await run(env)).toBe(1);
+    expect(await runToExit(env)).toBe(1);
     expect(fs.readFileSync(path.join(userData, 'state.json'), 'utf8')).toBe(newer);
     expect(fs.existsSync(path.join(userData, 'state.json.bak'))).toBe(false);
     expect(fs.readFileSync(path.join(userData, 'logs', 'main.log'), 'utf8')).toContain('from a newer reframe');

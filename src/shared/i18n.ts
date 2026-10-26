@@ -184,6 +184,8 @@ const en = {
   'otherBuild.detail': 'To use the other one, quit this one from the tray menu ("Quit reframe") and start it again.',
   'otherBuild.installed': 'installed version',
   'otherBuild.development': 'development build (npm run dev)',
+  'startFailed.title': 'reframe could not start',
+  'startFailed.message': 'Something went wrong while starting: {error}\n\nThe log tells more: {log}',
   'state.newerTitle': 'reframe cannot open its sessions',
   'state.newerMessage':
     'Your sessions and windows ({file}) were saved by a newer version of reframe. Install that version (or a newer one) to get them back: this one leaves them alone and quits.',
@@ -389,6 +391,8 @@ const de: Record<MessageKey, string> = {
     'Um die andere zu nutzen, beende diese über das Tray-Menü ("reframe beenden") und starte die andere erneut.',
   'otherBuild.installed': 'installierte Version',
   'otherBuild.development': 'Entwicklerversion (npm run dev)',
+  'startFailed.title': 'reframe konnte nicht starten',
+  'startFailed.message': 'Beim Starten ist etwas schiefgegangen: {error}\n\nMehr steht im Log: {log}',
   'state.newerTitle': 'reframe kann seine Sessions nicht öffnen',
   'state.newerMessage':
     'Deine Sessions und Fenster ({file}) wurden von einer neueren reframe-Version gespeichert. Installiere diese (oder eine neuere), um sie zurückzubekommen: Diese Version lässt sie unverändert und beendet sich.',

@@ -1,5 +1,5 @@
-import { app } from 'electron';
-import { resolveLocale } from '@shared/i18n';
+import { app, dialog } from 'electron';
+import { resolveLocale, translate } from '@shared/i18n';
 import icon from '../../resources/icon.png?asset';
 import trayIcon from '../../resources/tray.png?asset';
 import trayIcon2x from '../../resources/tray@2x.png?asset';
@@ -29,6 +29,16 @@ if (!app.requestSingleInstanceLock({ build })) {
     app.setAppUserModelId(app.isPackaged && !portable ? 'dev.reframe.app' : process.execPath);
   }
 
+  const log = createLogger(path.join(app.getPath('userData'), 'logs'));
+  // Logged and survived: ending the process would end every session, and Electron's own error box is a modal
+  // nobody sees while reframe sits in the tray.
+  process.on('uncaughtException', (error) =>
+    log('error', 'uncaught exception', { error: error.stack ?? String(error) }),
+  );
+  process.on('unhandledRejection', (reason) =>
+    log('error', 'unhandled promise rejection', { error: (reason as Error)?.stack ?? String(reason) }),
+  );
+
   let reframe: ReframeApp | null = null;
   let quitting = false;
 
@@ -55,8 +65,25 @@ if (!app.requestSingleInstanceLock({ build })) {
 
   void app.whenReady().then(async () => {
     const locale = resolveLocale(process.env.REFRAME_LOCALE || app.getLocale());
-    reframe = new ReframeApp(locale, { icon, trayIcon, trayIcon2x }, !!portable);
-    await reframe.start({ hidden: startedBySystem() });
+    try {
+      reframe = new ReframeApp(locale, { icon, trayIcon, trayIcon2x }, !!portable);
+      await reframe.start({ hidden: startedBySystem() });
+    } catch (error) {
+      // Without this, a failed start left a process with no window and no tray that still held the single-instance
+      // lock: every later launch only "showed the windows" of it. Sessions started meanwhile are ended first.
+      const text = (error as Error)?.stack ?? String(error);
+      log('error', 'reframe could not start', { error: text });
+      const ending = reframe?.shutdown().catch(() => {});
+      await Promise.race([ending, new Promise((resolve) => setTimeout(resolve, 8000))]);
+      if (!process.env.REFRAME_E2E) {
+        dialog.showErrorBox(
+          translate(locale, 'startFailed.title'),
+          translate(locale, 'startFailed.message', { error: String(error), log: log.file }),
+        );
+      }
+      app.exit(1);
+      return;
+    }
     // End-to-end tests drive things a real drag would do (e.g. tearing a tile out at a point).
     if (process.env.REFRAME_E2E) Object.assign(globalThis, { reframe });
   });

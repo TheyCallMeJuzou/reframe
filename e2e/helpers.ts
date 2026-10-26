@@ -1,5 +1,7 @@
 // Shared setup for end-to-end tests: the real app with a fake claude in a throwaway profile.
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { _electron as electron, expect, type ElectronApplication, type Page } from '@playwright/test';
@@ -110,6 +112,23 @@ export async function launch(
   const page = await app.firstWindow();
   await page.waitForSelector('.app');
   return { app, page };
+}
+
+/** Starts reframe outside Playwright (for one that quits before it opens a window) and resolves with its exit code. */
+export function runToExit(env: Record<string, string>): Promise<number | null> {
+  const packaged = process.env.REFRAME_E2E_APP;
+  const electron = createRequire(__filename)('electron') as unknown as string;
+  const child = packaged ? spawn(packaged, [], { env }) : spawn(electron, [root], { env, cwd: root });
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new Error('reframe did not quit'));
+    }, 30_000);
+    child.on('exit', (code) => {
+      clearTimeout(timer);
+      resolve(code);
+    });
+  });
 }
 
 /** Quits through the app's real shutdown path (as the tray's "Quit" does). */
