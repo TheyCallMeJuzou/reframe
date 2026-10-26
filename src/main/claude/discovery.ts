@@ -3,8 +3,7 @@
 // and end are read, and results are cached by modification time.
 import fs from 'node:fs';
 import path from 'node:path';
-import { isAlive } from '../process';
-import { parseRegistryEntry, type RegistryEntry } from './registry';
+import { isRunningEntry, parseRegistryEntry, type RegistryEntry } from './registry';
 
 export interface RunningExclusion {
   pids: Set<number>;
@@ -27,7 +26,7 @@ function registryEntry(text: string, exclude: RunningExclusion): RegistryEntry |
 export function listRunning(
   home: string,
   exclude: RunningExclusion,
-  alive: (pid: number) => boolean = isAlive,
+  alive: (entry: RegistryEntry) => boolean = isRunningEntry,
 ): RegistryEntry[] {
   let files: string[];
   try {
@@ -43,14 +42,14 @@ export function listRunning(
         return null;
       }
     })
-    .filter((entry): entry is RegistryEntry => !!entry && alive(entry.pid));
+    .filter((entry): entry is RegistryEntry => !!entry && alive(entry));
 }
 
 /** The same without blocking, for a WSL distribution's folder (`alive`: asked through its /proc there). */
 export async function listRunningAsync(
   home: string,
   exclude: RunningExclusion,
-  alive: (pid: number) => Promise<boolean>,
+  alive: (entry: RegistryEntry) => Promise<boolean>,
 ): Promise<RegistryEntry[]> {
   let files: string[];
   try {
@@ -62,7 +61,7 @@ export async function listRunningAsync(
   for (const file of files) {
     const text = await fs.promises.readFile(path.join(home, 'sessions', file), 'utf8').catch(() => '');
     const entry = registryEntry(text, exclude);
-    if (entry && (await alive(entry.pid))) running.push(entry);
+    if (entry && (await alive(entry))) running.push(entry);
   }
   return running;
 }

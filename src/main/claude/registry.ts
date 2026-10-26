@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { isAlive, processStart } from '../process';
 
 export interface RegistryEntry {
   pid: number;
@@ -14,6 +15,10 @@ export interface RegistryEntry {
   /** Whether the user named the session ('user'), or Claude did ('auto', 'derived'). */
   nameSource?: string;
   status?: 'idle' | 'busy' | 'waiting';
+  /** When the process started (ms since 1970). */
+  startedAt?: number;
+  /** The process's start as the system tells it (on Windows its creation time). */
+  procStart?: string;
 }
 
 const STATUSES = new Set(['idle', 'busy', 'waiting']);
@@ -34,7 +39,25 @@ export function parseRegistryEntry(value: unknown): RegistryEntry | null {
     name: typeof v.name === 'string' && v.name ? v.name : undefined,
     nameSource: typeof v.nameSource === 'string' ? v.nameSource : undefined,
     status: typeof v.status === 'string' && STATUSES.has(v.status) ? (v.status as RegistryEntry['status']) : undefined,
+    startedAt: typeof v.startedAt === 'number' ? v.startedAt : undefined,
+    procStart: typeof v.procStart === 'string' && v.procStart ? v.procStart : undefined,
   };
+}
+
+/**
+ * Whether the claude an entry names runs. A process that was killed leaves its entry behind, and Windows soon gives
+ * its id to another program: where the system tells when a process started, that must be when this one did.
+ */
+export function isRunningEntry(entry: RegistryEntry, startOf: (pid: number) => string | null = processStart): boolean {
+  if (!isAlive(entry.pid)) return false;
+  const start = entry.procStart ? startOf(entry.pid) : null;
+  return start === null || start === entry.procStart;
+}
+
+/** Removes the entry of a claude of reframe's that was killed (and could not remove it itself), once it is gone. */
+export function forgetRegistryEntry(home: string, pid: number): void {
+  if (isAlive(pid) || !readRegistryEntry(home, pid)) return;
+  fs.rmSync(path.join(home, 'sessions', `${pid}.json`), { force: true });
 }
 
 export function readRegistryEntry(home: string, pid: number): RegistryEntry | null {

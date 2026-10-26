@@ -14,6 +14,8 @@ export interface Win32 {
   processId(hwnd: string): number;
   /** Executable file name of a process, e.g. "WindowsTerminal.exe". */
   imageName(pid: number): string | null;
+  /** When a process was created (a FILETIME as a decimal string, as Claude Code's registry has it). */
+  processStart(pid: number): string | null;
   title(hwnd: string): string;
   /** Whether the window still exists. */
   isWindow(hwnd: string): boolean;
@@ -54,6 +56,10 @@ function load(): Win32 {
     'bool __stdcall QueryFullProcessImageNameW(void* process, uint32_t flags, _Out_ uint16_t* name, _Inout_ uint32_t* size)',
   );
   const CloseHandle = kernel32.func('bool __stdcall CloseHandle(void* handle)');
+  koffi.struct('FILETIME', { low: 'uint32_t', high: 'uint32_t' });
+  const GetProcessTimes = kernel32.func(
+    'bool __stdcall GetProcessTimes(void* process, _Out_ FILETIME* creation, _Out_ FILETIME* exit, _Out_ FILETIME* kernel, _Out_ FILETIME* user)',
+  );
   const SetProcessShutdownParameters = kernel32.func(
     'bool __stdcall SetProcessShutdownParameters(uint32_t level, uint32_t flags)',
   );
@@ -135,6 +141,17 @@ function load(): Win32 {
         if (!QueryFullProcessImageNameW(target, 0, buffer, size)) return null;
         const full = String.fromCharCode(...buffer.slice(0, size[0]));
         return full.split('\\').pop() ?? full;
+      } finally {
+        CloseHandle(target);
+      }
+    },
+    processStart(pid) {
+      const target = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+      if (!target) return null;
+      try {
+        const [creation, exit, kernel, user] = [{}, {}, {}, {}] as { low?: number; high?: number }[];
+        if (!GetProcessTimes(target, creation, exit, kernel, user)) return null;
+        return ((BigInt(creation!.high ?? 0) << 32n) | BigInt(creation!.low ?? 0)).toString();
       } finally {
         CloseHandle(target);
       }

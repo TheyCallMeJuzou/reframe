@@ -99,7 +99,7 @@ describe('listRunning', () => {
     write(11, 'gone');
     write(12, 'own');
     fs.writeFileSync(path.join(h, 'sessions', '13.json'), '{ half written');
-    const alive = async (pid: number) => pid !== 11;
+    const alive = async (entry: { pid: number }) => entry.pid !== 11;
     const none = { pids: new Set<number>(), sessionIds: new Set<string>() };
     expect((await listRunningAsync(h, none, alive)).map((r) => r.sessionId).sort()).toEqual(['own', 'running']);
     const own = { pids: new Set<number>(), sessionIds: new Set(['own']) };

@@ -89,6 +89,7 @@ import {
 import { listRunning, listRunningAsync, TranscriptIndex, type RunningExclusion } from './claude/discovery';
 import {
   claudeHome,
+  isRunningEntry,
   readRegistryEntry,
   readRegistryEntryAsync,
   transcriptExistsAsync,
@@ -100,7 +101,6 @@ import { consoleHelper } from './console';
 import { ForeignWindowWatcher, type ForeignDrop } from './foreign';
 import { activeByTitle, isShell, onlyShells } from './foreign-match';
 import { createLogger } from './log';
-import { isAlive } from './process';
 import { PtyHostClient } from './ptyhost-client';
 import { SessionManager, type IdentityPatch, type NotifyKind } from './sessions';
 import { StateStore } from './state/store';
@@ -130,8 +130,8 @@ interface ClaudeSource {
   /** Claude Code's folder, as Windows reaches it. */
   home: string;
   transcripts: TranscriptIndex;
-  /** Whether a process of its (by the id in its registry) runs; in WSL asked over the share, so without blocking. */
-  alive: (pid: number) => Promise<boolean>;
+  /** Whether the claude of a registry entry runs; in WSL asked over the share, so without blocking. */
+  alive: (entry: RegistryEntry) => Promise<boolean>;
   /** A folder it names, as Windows reaches it (WSL names Linux paths). */
   windowsPath: (folder: string) => string;
 }
@@ -938,7 +938,7 @@ export class ReframeApp {
     return {
       home: this.claudeHome,
       transcripts: this.transcripts,
-      alive: async (pid) => isAlive(pid),
+      alive: async (entry) => isRunningEntry(entry),
       windowsPath: (folder) => folder,
     };
   }
@@ -955,7 +955,7 @@ export class ReframeApp {
       distro,
       home,
       transcripts,
-      alive: (pid) => wsl.alive(distro, pid),
+      alive: (entry) => wsl.alive(distro, entry.pid),
       windowsPath: (folder) => wslWindowsPath(distro, folder, wsl.share),
     };
   }
@@ -1012,7 +1012,7 @@ export class ReframeApp {
     }
 
     const entry = await withTimeout(readRegistryEntryAsync(source.home, item.pid), SHARE_TIMEOUT_MS, null);
-    const alive = !!entry && (await withTimeout(source.alive(item.pid), SHARE_TIMEOUT_MS, false));
+    const alive = !!entry && (await withTimeout(source.alive(entry), SHARE_TIMEOUT_MS, false));
     if (!entry || entry.sessionId !== item.claudeSessionId || !entry.cwd || !alive) {
       this.log('info', 'running session is gone, nothing to take over', { pid: item.pid, wsl: source.distro });
       return null;

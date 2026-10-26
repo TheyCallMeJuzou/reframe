@@ -13,6 +13,8 @@ import { claudeArgs, type LaunchMode } from './claude/args';
 import { claudeEnv } from './claude/env';
 import {
   findRegistryEntry,
+  forgetRegistryEntry,
+  isRunningEntry,
   readRegistryEntry,
   readRegistryEntryAsync,
   transcriptExists,
@@ -23,7 +25,7 @@ import type { ClaudeBinary } from './claude/resolve';
 import { writeHookSettings } from './claude/settings';
 import type { HookMessage, HookServer } from './hooks/server';
 import type { LogFn } from './log';
-import { isAlive, killTree } from './process';
+import { isAlive, killTree, processStart } from './process';
 import type { PtyHostClient } from './ptyhost-client';
 import { settle, withTimeout } from './wait';
 import { SHARE_TIMEOUT_MS, type WslCommand, type WslInfo } from './wsl/distros';
@@ -56,6 +58,10 @@ interface Runtime {
   mode: LaunchMode;
   startedAt: number;
   pid?: number;
+  /** The process's start as the system tells it, to tell its registry entry from one left behind under its id. */
+  procStart?: string | null;
+  /** A registry entry left behind by another process was seen (and logged) for it. */
+  staleSeen?: boolean;
   error?: SessionView['error'];
   registryName?: string;
   registryStatus?: string;
@@ -149,7 +155,7 @@ export class SessionManager extends EventEmitter<Events> {
     if (previous?.pid && previous.status !== 'ended' && previous.status !== 'error') {
       // Started again before the old process was gone (e.g. reopened right after ending it): it goes now, and
       // whoever waits for it to end (its stop) is done; its exit is not reported, being an older instance.
-      void killTree(previous.pid);
+      void this.killOwn(previous);
       previous.markExited?.();
     }
     const runtime: Runtime = { instance: ++this.instances, status: 'starting', mode: requested, startedAt: Date.now() };
@@ -278,7 +284,7 @@ export class SessionManager extends EventEmitter<Events> {
           session: sessionId,
           pid: runtime.pid,
         });
-        await killTree(runtime.pid);
+        await this.killOwn(runtime);
         await settle(runtime.exited!, 1000);
       }
     }
@@ -302,9 +308,11 @@ export class SessionManager extends EventEmitter<Events> {
       sessions.map(async (s) => {
         if (!s.pid || !isAlive(s.pid)) return;
         const entry = readRegistryEntry(this.deps.claudeHome, s.pid);
-        if (entry && entry.sessionId === s.claudeSessionId) {
+        // Its entry alone is not enough: the process may be gone and its id another program's now.
+        if (entry && entry.sessionId === s.claudeSessionId && isRunningEntry(entry)) {
           this.log('warn', 'killing orphaned claude from a previous run', { session: s.id, pid: s.pid });
           await killTree(s.pid);
+          forgetRegistryEntry(this.deps.claudeHome, s.pid);
         }
       }),
     );
@@ -314,10 +322,37 @@ export class SessionManager extends EventEmitter<Events> {
     clearInterval(this.poller);
   }
 
+  /** Kills a session's process tree, and removes the registry entry the claude could not remove itself. */
+  private async killOwn(runtime: Runtime): Promise<void> {
+    if (!runtime.pid) return;
+    await killTree(runtime.pid);
+    // In WSL the entry is the Linux process's, in the distribution.
+    if (!runtime.wsl) forgetRegistryEntry(this.deps.claudeHome, runtime.pid);
+  }
+
+  /**
+   * A registry entry under the session's process id that another process left behind: a claude killed before it
+   * could remove it, whose id Windows gave to this one. Its session is not this one's. (In WSL entries are found by
+   * their session id, and the distribution's clock may differ.)
+   */
+  private isStale(sessionId: string, runtime: Runtime, entry: RegistryEntry): boolean {
+    if (runtime.wsl) return false;
+    const stale =
+      entry.procStart && runtime.procStart
+        ? entry.procStart !== runtime.procStart
+        : entry.startedAt !== undefined && entry.startedAt < runtime.startedAt - 2_000;
+    if (stale && !runtime.staleSeen) {
+      runtime.staleSeen = true;
+      this.log('info', 'registry entry left behind by an earlier process, ignored', { session: sessionId });
+    }
+    return stale;
+  }
+
   private onSpawned(sessionId: string, pid: number): void {
     const runtime = this.runtimes.get(sessionId);
     if (!runtime) return;
     runtime.pid = pid;
+    runtime.procStart = processStart(pid);
     this.log('info', 'session spawned', { session: sessionId, pid });
     this.emit('identity', sessionId, { pid });
   }
@@ -352,7 +387,7 @@ export class SessionManager extends EventEmitter<Events> {
     runtime.status = 'error';
     runtime.error = 'hostCrashed';
     runtime.markExited?.();
-    if (runtime.pid) void killTree(runtime.pid);
+    void this.killOwn(runtime);
     const wsl = runtime.wsl;
     if (wsl?.linuxPid) void this.deps.wsl?.stopClaude(wsl.distro, wsl.linuxPid);
     this.log('warn', 'session lost with the pty host', { session: sessionId, pid: runtime.pid });
@@ -408,6 +443,7 @@ export class SessionManager extends EventEmitter<Events> {
           : readRegistryEntry(this.deps.claudeHome, runtime.pid);
         // Nothing (yet), or the session ended or started again while its share was asked.
         if (!entry || this.runtimes.get(sessionId) !== runtime || !this.isRunning(sessionId)) continue;
+        if (this.isStale(sessionId, runtime, entry)) continue;
         this.followRegistry(sessionId, runtime, entry);
       }
     } finally {

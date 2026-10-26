@@ -7,6 +7,8 @@ import { claudeArgs } from './args';
 import { claudeEnv } from './env';
 import {
   findRegistryEntry,
+  forgetRegistryEntry,
+  isRunningEntry,
   parseRegistryEntry,
   readRegistryEntry,
   readRegistryEntryAsync,
@@ -169,6 +171,32 @@ describe('registry', () => {
     expect(parseRegistryEntry({ pid: 5, sessionId: 'abc', status: 'thinking' })?.status).toBeUndefined();
     expect(parseRegistryEntry({ sessionId: 'abc' })).toBeNull();
     expect(parseRegistryEntry('nope')).toBeNull();
+  });
+
+  it('tells a running claude from an entry left behind under an id another program has now', () => {
+    const entry = { pid: process.pid, sessionId: 's-1', procStart: '1000' };
+    expect(isRunningEntry(entry, () => '1000')).toBe(true);
+    expect(isRunningEntry(entry, () => '2000')).toBe(false);
+    // Where the system does not tell, or the entry does not say, the process id has to do.
+    expect(isRunningEntry(entry, () => null)).toBe(true);
+    expect(isRunningEntry({ pid: process.pid, sessionId: 's-1' }, () => '2000')).toBe(true);
+    expect(isRunningEntry({ ...entry, pid: 999_999_999 }, () => '1000')).toBe(false);
+    expect(parseRegistryEntry({ pid: 5, sessionId: 'a', startedAt: 17, procStart: '134' })).toMatchObject({
+      startedAt: 17,
+      procStart: '134',
+    });
+  });
+
+  it('forgets the entry of a killed claude, never that of a running process', () => {
+    const home = tempDir();
+    fs.mkdirSync(path.join(home, 'sessions'));
+    const write = (pid: number) =>
+      fs.writeFileSync(path.join(home, 'sessions', `${pid}.json`), JSON.stringify({ pid, sessionId: `s-${pid}` }));
+    write(999_999_999);
+    write(process.pid);
+    forgetRegistryEntry(home, 999_999_999);
+    forgetRegistryEntry(home, process.pid);
+    expect(fs.readdirSync(path.join(home, 'sessions'))).toEqual([`${process.pid}.json`]);
   });
 
   it('reads entries by pid and finds transcripts', () => {
