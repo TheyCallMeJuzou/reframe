@@ -58,6 +58,7 @@ const en = {
     'Claude Code was not found: `claude` is not on your PATH. Install it on this computer: claude.com/claude-code',
   'tile.error.spawnFailed': 'Claude Code could not be started.',
   'tile.error.folderMissing': 'The session folder no longer exists.',
+  'tile.error.hostCrashed': "reframe's terminal host stopped unexpectedly, and the session with it. It can be resumed.",
   'status.starting': 'Starting',
   'status.idle': 'Ready',
   'status.busy': 'Working',
@@ -258,6 +259,8 @@ const de: Record<MessageKey, string> = {
     'Claude Code wurde nicht gefunden: `claude` ist nicht im PATH. Installiere es auf diesem Computer: claude.com/claude-code',
   'tile.error.spawnFailed': 'Claude Code konnte nicht gestartet werden.',
   'tile.error.folderMissing': 'Der Ordner der Session existiert nicht mehr.',
+  'tile.error.hostCrashed':
+    'Der Terminal-Prozess von reframe wurde unerwartet beendet und die Session mit ihm. Sie lässt sich fortsetzen.',
   'status.starting': 'Startet',
   'status.idle': 'Bereit',
   'status.busy': 'Arbeitet',

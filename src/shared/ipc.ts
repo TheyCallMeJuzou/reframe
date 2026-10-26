@@ -18,7 +18,7 @@ export interface SessionView {
   status: SessionStatus;
   lifecycle: SessionRecord['lifecycle'];
   /** Translation key of the error shown in the tile, if any. */
-  error?: 'resumeFailed' | 'transcriptMissing' | 'claudeNotFound' | 'spawnFailed' | 'folderMissing';
+  error?: 'resumeFailed' | 'transcriptMissing' | 'claudeNotFound' | 'spawnFailed' | 'folderMissing' | 'hostCrashed';
   /** Runs in this WSL distribution, which reaches Windows drives under `mountRoot` (e.g. /mnt/). */
   wsl?: { distro: string; mountRoot: string };
 }

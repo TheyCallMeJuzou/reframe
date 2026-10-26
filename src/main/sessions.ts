@@ -27,6 +27,8 @@ export interface WslLauncher {
   readonly share: string;
   readonly command: WslCommand;
   info(distro: string): Promise<WslInfo | null>;
+  /** Ends a claude in the distribution by its Linux process id. */
+  stopClaude(distro: string, pid: number): Promise<unknown>;
 }
 
 /** A session running in WSL: its distribution, Claude's folder there, and its registry entry once found. */
@@ -99,9 +101,9 @@ export class SessionManager extends EventEmitter<Events> {
       if (event.type === 'spawn-failed') this.fail(event.sessionId, 'spawnFailed');
       if (event.type === 'exit') this.onExit(event.sessionId, event.exitCode);
     });
-    deps.host.on('crashed', (code) => {
-      this.log('error', 'pty host stopped unexpectedly, all its sessions are gone', { code });
-      for (const id of this.runtimes.keys()) this.onExit(id, -1);
+    deps.host.on('crashed', (code, restarting) => {
+      this.log('error', 'pty host stopped unexpectedly, all its sessions are gone', { code, restarting });
+      for (const [id, runtime] of this.runtimes) if (this.isRunning(id)) this.lostWithHost(id, runtime);
     });
     deps.hooks.on('hook', (message) => this.onHook(message));
     this.poller = setInterval(() => this.pollRegistry(), POLL_MS);
@@ -138,6 +140,8 @@ export class SessionManager extends EventEmitter<Events> {
     const runtime: Runtime = { instance: ++this.instances, status: 'starting', mode: requested, startedAt: Date.now() };
     runtime.exited = new Promise((resolve) => (runtime.markExited = resolve));
     this.runtimes.set(session.id, runtime);
+    // The host died too often in a row and was left down: nothing can start.
+    if (!this.deps.host.running) return this.fail(session.id, 'hostCrashed');
 
     const where = this.deps.wsl && parseWslPath(session.cwd, this.deps.wsl.share);
     if (where) {
@@ -183,7 +187,10 @@ export class SessionManager extends EventEmitter<Events> {
     const wsl = this.deps.wsl!;
     const info = await wsl.info(where.distro);
     const folder = !!info?.claude && (await isFolder(session.cwd));
-    if (this.runtimes.get(session.id) !== runtime || runtime.stopping) return runtime.markExited?.();
+    // Ended, started again, or its host died while the distribution was asked.
+    if (this.runtimes.get(session.id) !== runtime || runtime.stopping || runtime.status !== 'starting') {
+      return runtime.markExited?.();
+    }
     if (!info?.claude) return this.fail(session.id, 'claudeNotFound');
     if (!folder) return this.fail(session.id, 'folderMissing');
     const home = wslWindowsPath(where.distro, info.claudeHome, wsl.share);
@@ -304,6 +311,21 @@ export class SessionManager extends EventEmitter<Events> {
     });
     this.emit('changed', sessionId);
     if (!runtime.stopping) this.emit('ended', sessionId);
+  }
+
+  /**
+   * A running session whose PTY host died. A dying host does not reliably take its processes along on Windows, and
+   * resuming next to a survivor would run the conversation twice, so what is left of it is ended.
+   */
+  private lostWithHost(sessionId: string, runtime: Runtime): void {
+    runtime.status = 'error';
+    runtime.error = 'hostCrashed';
+    runtime.markExited?.();
+    if (runtime.pid) void killTree(runtime.pid);
+    const wsl = runtime.wsl;
+    if (wsl?.linuxPid) void this.deps.wsl?.stopClaude(wsl.distro, wsl.linuxPid);
+    this.log('warn', 'session lost with the pty host', { session: sessionId, pid: runtime.pid });
+    this.emit('changed', sessionId);
   }
 
   private fail(sessionId: string, error: NonNullable<SessionView['error']>): void {

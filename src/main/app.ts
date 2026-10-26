@@ -1474,6 +1474,14 @@ export class ReframeApp {
   }
   private clipboardOverride: ClipboardContents | null = null;
 
+  /** Test hook (REFRAME_E2E): ends the PTY host from outside, as a crash would. */
+  crashPtyHost(): boolean {
+    const pid = this.host.pid;
+    if (!pid) return false;
+    process.kill(pid);
+    return true;
+  }
+
   /** Test hook (REFRAME_E2E): this copy checks for updates, as an installed one does (without checking). */
   fakeUpdateChecks(): void {
     this.updates.checks = true;

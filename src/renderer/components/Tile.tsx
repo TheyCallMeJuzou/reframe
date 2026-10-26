@@ -180,7 +180,8 @@ export function Tile({ sessionId, group }: { sessionId: string; group: GroupNode
                     {t('tile.resume')}
                   </button>
                 )}
-                {session.error && session.error !== 'folderMissing' && (
+                {/* A fresh start is for a session whose history is the trouble, not for one its host lost. */}
+                {session.error && session.error !== 'folderMissing' && session.error !== 'hostCrashed' && (
                   <button className="button" onClick={() => window.reframe.restartSession(sessionId, true)}>
                     {t('tile.startFresh')}
                   </button>
