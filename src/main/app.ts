@@ -171,6 +171,8 @@ export class ReframeApp {
   /** `hidden`: started by the system, so the windows stay in the tray (sessions resume all the same). */
   async start({ hidden = false }: { hidden?: boolean } = {}): Promise<void> {
     const loaded = this.store.load();
+    if (loaded.source === 'newer') return this.refuseNewerState();
+    if (loaded.rejected) this.log('error', 'state file could not be used, set aside', loaded.rejected);
     this.state = loaded.state;
     if (this.state.windows.length === 0) this.state.windows.push(emptyWindow(crypto.randomUUID()));
     // Closed empty windows that versions up to 0.6.1 kept (and showed again on a second launch) are of no use.
@@ -229,6 +231,19 @@ export class ReframeApp {
     this.createTray();
     this.watchUpdates();
     this.save();
+  }
+
+  /**
+   * The saved state comes from a newer reframe (this one was installed over it, say). Starting from scratch would
+   * lose it once anything is saved, so this one says so and quits; the newer version finds everything as it was.
+   */
+  private refuseNewerState(): void {
+    this.log('error', 'state file is from a newer reframe, leaving it alone and quitting', { file: this.store.file });
+    // The end-to-end tests cannot click a native dialog away; the log tells them.
+    if (!process.env.REFRAME_E2E) {
+      dialog.showErrorBox(this.t('state.newerTitle'), this.t('state.newerMessage', { file: this.store.file }));
+    }
+    app.exit(1);
   }
 
   /**

@@ -36,6 +36,7 @@ export interface SavedState {
     closeWindow: 'ask' | 'end' | 'keep';
   };
   workspaces: { id: string; name: string }[];
+  recentFolders: string[];
 }
 
 export interface FakeLaunch {
