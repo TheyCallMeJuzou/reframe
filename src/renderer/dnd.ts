@@ -68,10 +68,13 @@ export function handleDrop(
   return true;
 }
 
-/** Drops into this window move within it; drops from another window transfer the node over. */
+/**
+ * Drops into this window move within it (a collapsed session from the list, also onto the empty area); drops from
+ * another window transfer the node over.
+ */
 export function dropNode(data: NodeDragData, windowId: string, target: { key: string; side: Side } | null): void {
   if (data.windowId === windowId) {
-    if (target) window.reframe.dispatch({ type: 'node/move', key: data.key, target });
+    window.reframe.dispatch({ type: 'node/move', key: data.key, target });
   } else {
     window.reframe.transferNode({ key: data.key, fromWindowId: data.windowId, target });
   }

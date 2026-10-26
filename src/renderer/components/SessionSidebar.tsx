@@ -3,7 +3,7 @@ import type { FoundListItem, ListItemRef, RunningListItem } from '@shared/ipc';
 import { tileKey } from '@shared/layout';
 import { parseWslPath } from '@shared/wsl';
 import { useApp } from '../context';
-import { setListDrag, setNodeDrag } from '../dnd';
+import { dragKind, setListDrag, setNodeDrag } from '../dnd';
 import { PAGE, type SessionListState } from '../session-list';
 import { CloseIcon, LayersIcon } from './icons';
 import { NameInput } from './NameInput';
@@ -35,7 +35,7 @@ interface Row {
  * right-click menu or by dragging them into a window.
  */
 export function SessionSidebar({ sessionList }: { sessionList: SessionListState }) {
-  const { t, locale, renamingSession, setRenamingSession } = useApp();
+  const { t, locale, renamingSession, setRenamingSession, setDragging } = useApp();
   const { list, query, setQuery, setLimit, fresh, reload } = sessionList;
   const [selected, setSelected] = useState<string[]>([]);
   const anchor = useRef<string | null>(null);
@@ -107,6 +107,10 @@ export function SessionSidebar({ sessionList }: { sessionList: SessionListState 
   const onRowDrag = (row: Row, event: DragEvent, single: () => void) => {
     if (chosen.length > 1 && chosen.includes(row.key)) setListDrag(event, refsOf(chosen));
     else single();
+    // The tiles show where it can go at once, as for a dragged tile (otherwise only once it entered one of them).
+    const kind = dragKind(event);
+    const tile = kind === 'tile' && row.ref.kind === 'app' ? tileKey(row.ref.sessionId) : null;
+    if (kind) setDragging({ key: tile, kind });
   };
   const rowProps = (row: Row) => ({
     selected: chosen.includes(row.key),

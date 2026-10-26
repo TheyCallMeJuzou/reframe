@@ -23,8 +23,11 @@ import {
 import type { DockEntry, WindowState } from './state';
 
 export type LayoutAction =
-  /** Moves a tile or a whole group (by node key) next to a target in the same window. */
-  | { type: 'node/move'; key: string; target: DropTarget }
+  /**
+   * Moves a tile or a whole group (by node key) next to a target in the same window. A collapsed one (dragged out of
+   * the session list) comes out of the side bar, to the end of the layout without a target.
+   */
+  | { type: 'node/move'; key: string; target: DropTarget | null }
   | { type: 'tile/collapse'; sessionId: string }
   | { type: 'tile/expand'; sessionId: string }
   | { type: 'group/collapse'; groupId: string }
@@ -53,8 +56,13 @@ export function isCollapsed(win: WindowState, sessionId: string): boolean {
 
 export function applyLayoutAction(win: WindowState, action: LayoutAction): WindowState {
   switch (action.type) {
-    case 'node/move':
-      return { ...win, layout: moveNode(win.layout, action.key, action.target) };
+    case 'node/move': {
+      if (!findNode(win.layout, action.key)) {
+        const { win: rest, node } = takeNode(win, action.key);
+        return node ? putNode(rest, node, action.target) : win;
+      }
+      return action.target ? { ...win, layout: moveNode(win.layout, action.key, action.target) } : win;
+    }
     case 'tile/collapse': {
       // The last tile of a group takes its group along, otherwise the group would be lost.
       const group = groupOf(win.layout, tileKey(action.sessionId));
@@ -129,10 +137,27 @@ export function dropSession(win: WindowState, sessionId: string): WindowState {
   return { ...win, layout: removeTile(win.layout, sessionId).root, dock };
 }
 
-/** Takes a tile or group (by node key) out of a window's layout, e.g. to move it to another window. */
+/**
+ * Takes a tile or group (by node key) out of a window, e.g. to move it to another window: out of its layout, or out
+ * of the side bar (a tile of a collapsed group comes out alone, and the group stays collapsed with the rest).
+ */
 export function takeNode(win: WindowState, key: string): { win: WindowState; node: LayoutNode | null } {
   const { root, removed } = removeNode(win.layout, key);
-  return removed ? { win: { ...win, layout: root }, node: removed } : { win, node: null };
+  if (removed) return { win: { ...win, layout: root }, node: removed };
+  for (const entry of win.dock) {
+    const others = win.dock.filter((d) => d !== entry);
+    if (entry.kind === 'tile') {
+      if (tileKey(entry.sessionId) === key) return { win: { ...win, dock: others }, node: tile(entry.sessionId) };
+      continue;
+    }
+    if (entry.node.id === key) return { win: { ...win, dock: others }, node: entry.node };
+    const inGroup = removeNode(entry.node, key);
+    if (!inGroup.removed) continue;
+    const rest = inGroup.root?.kind === 'group' ? inGroup.root : null;
+    const dock = rest ? win.dock.map((d) => (d === entry ? { ...entry, node: rest } : d)) : others;
+    return { win: { ...win, dock }, node: inGroup.removed };
+  }
+  return { win, node: null };
 }
 
 /** Puts a tile or group into a window next to a target, or at the end without one. */
@@ -163,7 +188,7 @@ export function isLayoutAction(value: unknown): value is LayoutAction {
   const a = value as Record<string, unknown>;
   switch (a.type) {
     case 'node/move':
-      return typeof a.key === 'string' && isDropTarget(a.target);
+      return typeof a.key === 'string' && (a.target === null || isDropTarget(a.target));
     case 'tile/collapse':
     case 'tile/expand':
       return typeof a.sessionId === 'string';

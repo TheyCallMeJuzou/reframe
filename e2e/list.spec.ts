@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
-import { callMain, captureWindows, cleanup, launch, quit, setup } from './helpers';
+import { callMain, captureWindows, cleanup, launch, newSession, quit, setup, tileByLabel } from './helpers';
 
 test('session list: select several, open them together, see new ones pop up', async () => {
   const { dir, project, env, launches, state } = setup();
@@ -81,6 +81,37 @@ test('session list: select several, open them together, see new ones pop up', as
     await quit(app);
   } catch (error) {
     await captureWindows('list');
+    throw error;
+  } finally {
+    await cleanup(dir);
+  }
+});
+
+test('a collapsed session dragged out of the list lands where it is dropped', async () => {
+  const { dir, project, env, state } = setup();
+  try {
+    const { app, page } = await launch(env);
+    await newSession(page, project, 'alpha');
+    await newSession(page, project, 'beta');
+    await tileByLabel(page, 'beta').getByRole('button', { name: 'Collapse to the side bar' }).click();
+    await expect(page.locator('.dock-item', { hasText: 'beta' })).toBeVisible();
+    await page.getByRole('button', { name: 'Sessions', exact: true }).click();
+
+    const target = tileByLabel(page, 'alpha').locator('.tile-body');
+    const box = (await target.boundingBox())!;
+    await page
+      .locator('.sidebar-row', { hasText: 'beta' })
+      .dragTo(target, { targetPosition: { x: box.width / 2, y: box.height * 0.9 } });
+    await expect(page.locator('.tile')).toHaveCount(2);
+    await expect(page.locator('.dock-item')).toHaveCount(0);
+    // Below alpha, where it was dropped.
+    const alpha = (await tileByLabel(page, 'alpha').boundingBox())!;
+    const beta = (await tileByLabel(page, 'beta').boundingBox())!;
+    expect(beta.y).toBeGreaterThan(alpha.y + alpha.height / 2);
+    await expect.poll(() => state().windows[0]!.dock).toEqual([]);
+    await quit(app);
+  } catch (error) {
+    await captureWindows('list-collapsed');
     throw error;
   } finally {
     await cleanup(dir);

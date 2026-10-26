@@ -127,6 +127,39 @@ describe('groups in a window', () => {
     expect(dropSession(one, 'b').dock).toEqual([]);
   });
 
+  it('takes a collapsed tile out of the side bar, and one tile out of a collapsed group', () => {
+    const docked = applyLayoutAction(withTiles('a', 'b'), { type: 'tile/collapse', sessionId: 'b' });
+    const { win: rest, node } = takeNode(docked, tileKey('b'));
+    expect(node).toEqual({ kind: 'tile', sessionId: 'b' });
+    expect(rest.dock).toEqual([]);
+
+    const collapsed = applyLayoutAction(grouped(), { type: 'group/collapse', groupId: 'g' });
+    const taken = takeNode(collapsed, tileKey('a'));
+    expect(taken.node).toEqual({ kind: 'tile', sessionId: 'a' });
+    expect(taken.win.dock).toMatchObject([
+      { kind: 'group', node: { id: 'g', child: { kind: 'tile', sessionId: 'b' } } },
+    ]);
+    // The last one takes the group along.
+    expect(takeNode(taken.win, tileKey('b')).win.dock).toEqual([]);
+  });
+
+  it('moves a collapsed tile next to a target, or to the end without one', () => {
+    const docked = applyLayoutAction(withTiles('a', 'b', 'c'), { type: 'tile/collapse', sessionId: 'b' });
+    const next = applyLayoutAction(docked, {
+      type: 'node/move',
+      key: tileKey('b'),
+      target: { key: tileKey('a'), side: 'bottom' },
+    });
+    expect(next.dock).toEqual([]);
+    expect(windowSessions(next).sort()).toEqual(['a', 'b', 'c']);
+    const atEnd = applyLayoutAction(docked, { type: 'node/move', key: tileKey('b'), target: null });
+    expect(atEnd.dock).toEqual([]);
+    expect(leaves(atEnd.layout)).toContain('b');
+    // One that is shown already stays where it is without a target.
+    expect(applyLayoutAction(docked, { type: 'node/move', key: tileKey('a'), target: null })).toBe(docked);
+    expect(isLayoutAction({ type: 'node/move', key: 'k', target: null })).toBe(true);
+  });
+
   it('moves a group between windows', () => {
     const from = grouped();
     const { win: rest, node } = takeNode(from, 'g');
