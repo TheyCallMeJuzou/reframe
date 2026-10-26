@@ -1,7 +1,7 @@
 {
   "name": "reframe",
   "productName": "reframe",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Keep your Claude Code sessions side by side in one window: tile and group them, take over the ones running in other terminals, and get every session back after a restart.",
   "license": "MIT",
   "private": true,
