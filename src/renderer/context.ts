@@ -30,6 +30,9 @@ export interface AppContextValue {
   /** Session whose name is being edited, in its tile or in the session list. */
   renamingSession: SessionRename | null;
   setRenamingSession: (rename: SessionRename | null) => void;
+  /** Session whose terminal shows the find bar. */
+  findIn: string | null;
+  setFindIn: (sessionId: string | null) => void;
 }
 
 export const AppContext = createContext<AppContextValue | null>(null);

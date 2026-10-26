@@ -53,19 +53,20 @@
 
 On macOS, use Cmd instead of Ctrl. Everything else goes to Claude Code as usual.
 
-| Shortcut               | What it does                                                                                       |
-| ---------------------- | -------------------------------------------------------------------------------------------------- |
-| Ctrl+1 … 9             | Focus the first … ninth tile in the window                                                         |
-| Ctrl+Shift+Arrow keys  | Focus the neighboring tile in that direction                                                       |
-| Ctrl+Shift+M           | Collapse the focused tile; without a focused tile, bring back the last one                         |
-| Ctrl+Shift+L           | Show or hide the session list (and search it)                                                      |
-| Ctrl+Shift+Space       | Go to the next session that needs you (in this window first, then in the others)                   |
-| Ctrl+Shift+T           | New session                                                                                        |
-| Ctrl+Shift+N           | New window                                                                                         |
-| F11                    | Full screen on and off                                                                             |
-| Ctrl+,                 | Settings                                                                                           |
-| Ctrl+= (or +) / Ctrl+- | Larger / smaller text in all terminals (also Ctrl+mouse wheel over a tile); Ctrl+0: back to normal |
-| Ctrl+C / Ctrl+V        | Copy the selection (otherwise Ctrl+C goes to Claude) / paste text, copied files or an image        |
+| Shortcut               | What it does                                                                                             |
+| ---------------------- | -------------------------------------------------------------------------------------------------------- |
+| Ctrl+1 … 9             | Focus the first … ninth tile in the window                                                               |
+| Ctrl+Shift+Arrow keys  | Focus the neighboring tile in that direction                                                             |
+| Ctrl+Shift+M           | Collapse the focused tile; without a focused tile, bring back the last one                               |
+| Ctrl+Shift+L           | Show or hide the session list (and search it)                                                            |
+| Ctrl+Shift+Space       | Go to the next session that needs you (in this window first, then in the others)                         |
+| Ctrl+Shift+F           | Find in the focused tile's terminal, its scrollback too (Enter: next, Shift+Enter: previous, Esc: close) |
+| Ctrl+Shift+T           | New session                                                                                              |
+| Ctrl+Shift+N           | New window                                                                                               |
+| F11                    | Full screen on and off                                                                                   |
+| Ctrl+,                 | Settings                                                                                                 |
+| Ctrl+= (or +) / Ctrl+- | Larger / smaller text in all terminals (also Ctrl+mouse wheel over a tile); Ctrl+0: back to normal       |
+| Ctrl+C / Ctrl+V        | Copy the selection (otherwise Ctrl+C goes to Claude) / paste text, copied files or an image              |
 
 ## Install
 

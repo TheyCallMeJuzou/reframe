@@ -24,6 +24,7 @@ describe('shortcutFor', () => {
     expect(shortcutFor(press('Space', { ctrl: true, shift: true }, ' '), false)).toEqual({ kind: 'nextWaiting' });
     expect(shortcutFor(press('Space', { meta: true, shift: true }, ' '), true)).toEqual({ kind: 'nextWaiting' });
     expect(shortcutFor(press('Space', { ctrl: true }, ' '), false)).toBeNull();
+    expect(shortcutFor(press('KeyF', { ctrl: true, shift: true }), false)).toEqual({ kind: 'find' });
     expect(shortcutFor(press('ArrowLeft', { ctrl: true, shift: true }), false)).toEqual({
       kind: 'focusDirection',
       direction: 'left',

@@ -39,6 +39,7 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
   const [emptyDropActive, setEmptyDropActive] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renamingSession, setRenamingSession] = useState<SessionRename | null>(null);
+  const [findIn, setFindIn] = useState<string | null>(null);
   // A terminal window from another app dragged over this window, and dropped on it.
   const [foreignPreview, setForeignPreview] = useState<PreviewRect | null>(null);
   const [foreignDrop, setForeignDrop] = useState<{ request: ForeignDropRequest; target: DropTarget | null } | null>(
@@ -133,6 +134,15 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
           return window.reframe.newWindow();
         case 'nextWaiting':
           return window.reframe.focusNextWaiting(activeTile());
+        case 'find': {
+          // In the focused tile (pressed in the find bar too: the field is selected again).
+          const id = activeTile() ?? ids[0];
+          if (!id) return;
+          setFindIn(id);
+          const field = `.tile[data-session="${CSS.escape(id)}"] .tile-find-input`;
+          whenShown(field, () => document.querySelector<HTMLInputElement>(field)?.select());
+          return;
+        }
         case 'toggleFullscreen':
           return window.reframe.toggleFullscreen();
         case 'openSettings':
@@ -296,8 +306,11 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
         setRenaming,
         renamingSession,
         setRenamingSession,
+        // A find bar goes with its session's tile.
+        findIn: findIn && view.sessions[findIn] ? findIn : null,
+        setFindIn,
       },
-    [view, terminals, dragging, renaming, renamingSession],
+    [view, terminals, dragging, renaming, renamingSession, findIn],
   );
 
   if (!view || !context) return null;

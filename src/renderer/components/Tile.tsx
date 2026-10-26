@@ -2,13 +2,14 @@ import { useEffect, useLayoutEffect, useRef, useState, type DragEvent } from 're
 import { tileKey, type GroupNode, type Side } from '@shared/layout';
 import { useApp } from '../context';
 import { dragKind, handleDrop, setNodeDrag, sideAt } from '../dnd';
+import { FindBar } from './FindBar';
 import { CloseIcon, CollapseIcon, GripIcon } from './icons';
 import { NameInput } from './NameInput';
 import { StatusDot } from './StatusDot';
 
 /** A session's tile; `group` is the group it sits in, if any. */
 export function Tile({ sessionId, group }: { sessionId: string; group: GroupNode | null }) {
-  const { t, keys, windowId, sessions, terminals, dragging, setDragging, renamingSession, setRenamingSession } =
+  const { t, keys, windowId, sessions, terminals, dragging, setDragging, renamingSession, setRenamingSession, findIn } =
     useApp();
   const session = sessions[sessionId];
   const slot = useRef<HTMLDivElement>(null);
@@ -159,6 +160,7 @@ export function Tile({ sessionId, group }: { sessionId: string; group: GroupNode
         onDrop={onFilesDrop}
       >
         {filesOver && <div className="files-drop">{t('tile.dropFiles')}</div>}
+        {findIn === sessionId && <FindBar sessionId={sessionId} />}
         <div className="tile-terminal" ref={slot} />
         {!running && (
           <div className="tile-overlay">

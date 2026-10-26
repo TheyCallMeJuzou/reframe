@@ -2,6 +2,7 @@
 // slot in the DOM: moving a tile re-parents the same terminal element, so nothing is redrawn or lost.
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { SearchAddon, type ISearchOptions } from '@xterm/addon-search';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { WebLinksAddon } from '@xterm/addon-web-links';
@@ -18,6 +19,7 @@ interface Entry {
   sessionId: string;
   term: Terminal;
   fit: FitAddon;
+  search: SearchAddon;
   element: HTMLDivElement;
   port: MessagePort | null;
   observer: ResizeObserver;
@@ -27,6 +29,15 @@ interface Entry {
 }
 
 const FONT = '"Cascadia Mono", "Cascadia Code", Consolas, "SF Mono", Menlo, "DejaVu Sans Mono", monospace';
+
+/** How found text is marked: every match, and the current one (its text stays readable on it). */
+const FIND_DECORATIONS: NonNullable<ISearchOptions['decorations']> = {
+  matchBackground: '#3d4250',
+  matchOverviewRuler: '#8a8f98',
+  activeMatchBackground: '#7a5f24',
+  activeMatchBorder: '#e0b04a',
+  activeMatchColorOverviewRuler: '#e0b04a',
+};
 
 const THEME = {
   background: '#17181c',
@@ -119,6 +130,28 @@ export class TerminalRegistry {
     this.entries.get(sessionId)?.term.focus();
   }
 
+  /** Finds `text` in the session's terminal, its scrollback too, from the match before (`incremental`: from it). */
+  find(sessionId: string, text: string, direction: 'next' | 'previous', incremental = false): void {
+    const search = this.entries.get(sessionId)?.search;
+    if (!search) return;
+    if (!text) return search.clearDecorations();
+    const options = { incremental, decorations: FIND_DECORATIONS };
+    if (direction === 'next') search.findNext(text, options);
+    else search.findPrevious(text, options);
+  }
+
+  /** Takes the marks of the last find off. */
+  clearFind(sessionId: string): void {
+    this.entries.get(sessionId)?.search.clearDecorations();
+  }
+
+  /** Calls back with where the current match is among how many, whenever that changes. */
+  onFindResults(sessionId: string, listener: (result: { index: number; count: number }) => void): () => void {
+    const search = this.entries.get(sessionId)?.search;
+    const subscription = search?.onDidChangeResults((r) => listener({ index: r.resultIndex, count: r.resultCount }));
+    return () => subscription?.dispose();
+  }
+
   /** Types file paths into the session, as a paste (so Claude Code attaches images among them). */
   pastePaths(sessionId: string, paths: string[]): void {
     const entry = this.entries.get(sessionId);
@@ -139,6 +172,8 @@ export class TerminalRegistry {
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
+    const search = new SearchAddon();
+    term.loadAddon(search);
     term.loadAddon(new Unicode11Addon());
     term.unicode.activeVersion = '11';
     term.loadAddon(new WebLinksAddon((_event, uri) => window.reframe.openExternal(uri)));
@@ -159,6 +194,7 @@ export class TerminalRegistry {
       sessionId,
       term,
       fit,
+      search,
       element,
       port: null,
       observer: new ResizeObserver(() => this.scheduleFit(entry)),

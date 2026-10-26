@@ -71,6 +71,18 @@ export const MoreIcon = () => (
   </svg>
 );
 
+export const ChevronUpIcon = () => (
+  <svg {...base} aria-hidden="true">
+    <path d="M3.5 10 8 5.5l4.5 4.5" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+export const ChevronDownIcon = () => (
+  <svg {...base} aria-hidden="true">
+    <path d="M3.5 6 8 10.5 12.5 6" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
 export const GripIcon = () => (
   <svg {...base} aria-hidden="true" stroke="none" fill="currentColor">
     {[5, 8, 11].flatMap((y) => [6, 10].map((x) => <circle key={`${x}-${y}`} cx={x} cy={y} r={1.1} />))}

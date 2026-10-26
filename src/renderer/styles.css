@@ -421,6 +421,48 @@ button {
   height: 100%;
 }
 
+/* ---------- find bar ---------- */
+
+.tile-find {
+  position: absolute;
+  top: 6px;
+  right: 18px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 4px 3px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  box-shadow: 0 4px 14px rgb(0 0 0 / 35%);
+}
+
+.tile-find-input {
+  width: 180px;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--terminal);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.tile-find-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.tile-find-count {
+  min-width: 64px;
+  padding: 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: right;
+  white-space: nowrap;
+}
+
 .tile-overlay {
   position: absolute;
   inset: 0;
