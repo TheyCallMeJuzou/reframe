@@ -1588,7 +1588,11 @@ export class ReframeApp {
   // ---------- terminal windows dragged onto reframe (Windows) ----------
 
   private foreign: ForeignWindowWatcher | null = null;
-  private foreignRequests = new Map<string, (answer: ForeignDropAnswer | null) => void>();
+  /** Open questions to windows about a terminal window dropped on them, by request id. */
+  private foreignRequests = new Map<
+    string,
+    { windowId: string; resolve: (answer: ForeignDropAnswer | null) => void }
+  >();
   private takingOver = new Set<string>();
 
   private watchForeignWindows(): void {
@@ -1645,7 +1649,7 @@ export class ReframeApp {
     }));
     const requestId = crypto.randomUUID();
     const answer = await new Promise<ForeignDropAnswer | null>((resolve) => {
-      this.foreignRequests.set(requestId, resolve);
+      this.foreignRequests.set(requestId, { windowId: drop.windowId, resolve });
       const { x, y } = this.toContent(drop.windowId, drop.point);
       this.windows.send(drop.windowId, IPC.foreignDrop, { requestId, x, y, candidates });
     });
@@ -1917,120 +1921,121 @@ export class ReframeApp {
   // ---------- IPC ----------
 
   private registerIpc(): void {
-    const windowId = (event: IpcMainEvent | IpcMainInvokeEvent) => this.windows.idOf(event.sender);
+    // Only reframe's own windows are listened to: each handler gets the id of the window that sent the message. The
+    // pages are reframe's own and cannot navigate away, so anything else is a bug (or worse) and is ignored.
+    const from = (channel: string, event: IpcMainEvent | IpcMainInvokeEvent): string | null => {
+      const id = this.windows.idOf(event.sender);
+      if (!id && !this.strangeSenders.has(channel)) {
+        this.strangeSenders.add(channel);
+        this.log('warn', 'message from something that is no window of reframe, ignored', { channel });
+      }
+      return id ?? null;
+    };
+    const on = <A extends unknown[]>(
+      channel: string,
+      listener: (id: string, event: IpcMainEvent, ...args: A) => void,
+    ) =>
+      ipcMain.on(channel, (event, ...args) => {
+        const id = from(channel, event);
+        if (id) listener(id, event, ...(args as A));
+      });
+    const handle = <A extends unknown[]>(
+      channel: string,
+      listener: (id: string, event: IpcMainInvokeEvent, ...args: A) => unknown,
+    ) =>
+      ipcMain.handle(channel, (event, ...args) => {
+        const id = from(channel, event);
+        return id ? listener(id, event, ...(args as A)) : null;
+      });
+    /** Whether the window shows the session (tile or collapsed). */
+    const shows = (id: string, sessionId: unknown): sessionId is string => {
+      const win = this.findWindow(id);
+      return typeof sessionId === 'string' && !!win && windowHasSession(win, sessionId);
+    };
 
-    ipcMain.handle(IPC.getView, (event) => {
-      const id = windowId(event);
-      return id ? this.view(id) : null;
-    });
-    ipcMain.on(IPC.dispatch, (event, action: unknown) => {
-      const id = windowId(event);
-      if (!id || !isLayoutAction(action)) return;
+    handle(IPC.getView, (id) => this.view(id));
+    on(IPC.dispatch, (id, _event, action: unknown) => {
+      if (!isLayoutAction(action)) return;
       this.mutateWindow(id, (w) => applyLayoutAction(w, action), action.type === 'split/resize' ? 'soon' : 'now');
     });
-    ipcMain.handle(IPC.createSession, (event, request: NewSessionRequest) => {
-      const id = windowId(event);
-      if (!id || !request || typeof request.cwd !== 'string') return { ok: false, error: 'folderMissing' };
+    handle(IPC.createSession, (id, _event, request: NewSessionRequest | null) => {
+      if (!request || typeof request.cwd !== 'string') return { ok: false, error: 'folderMissing' };
       return this.createSession(id, request);
     });
-    ipcMain.on(IPC.restartSession, (event, sessionId: unknown, fresh: unknown) => {
-      const id = windowId(event);
-      const win = this.state.windows.find((w) => w.id === id);
-      if (typeof sessionId === 'string' && win && windowHasSession(win, sessionId)) {
-        this.restartSession(id!, sessionId, fresh === true);
-      }
+    on(IPC.restartSession, (id, _event, sessionId: unknown, fresh: unknown) => {
+      if (shows(id, sessionId)) this.restartSession(id, sessionId, fresh === true);
     });
-    ipcMain.on(IPC.endSession, (event, sessionId: unknown) => {
-      const id = windowId(event);
-      if (id && typeof sessionId === 'string') this.endSession(id, sessionId);
+    on(IPC.endSession, (id, _event, sessionId: unknown) => {
+      if (shows(id, sessionId)) this.endSession(id, sessionId);
     });
-    ipcMain.on(IPC.attachTerminal, (event, sessionId: unknown) => {
-      const id = windowId(event);
-      const win = this.state.windows.find((w) => w.id === id);
-      if (typeof sessionId === 'string' && win && windowHasSession(win, sessionId)) {
-        this.host.attach(sessionId, event.sender);
-      }
+    on(IPC.attachTerminal, (id, event, sessionId: unknown) => {
+      if (shows(id, sessionId)) this.host.attach(sessionId, event.sender);
     });
-    ipcMain.handle(IPC.pickFolder, async (event) => {
-      const win = this.windows.get(windowId(event) ?? '');
+    handle(IPC.pickFolder, async (id) => {
+      const win = this.windows.get(id);
       const options = { properties: ['openDirectory' as const] };
       const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
       return result.canceled ? null : (result.filePaths[0] ?? null);
     });
-    ipcMain.on(IPC.transferNode, (event, request: Partial<TransferRequest> | null) => {
-      const id = windowId(event);
-      if (!id || !request || typeof request.key !== 'string' || typeof request.fromWindowId !== 'string') return;
+    on(IPC.transferNode, (id, _event, request: Partial<TransferRequest> | null) => {
+      if (!request || typeof request.key !== 'string' || typeof request.fromWindowId !== 'string') return;
       if (request.target !== null && !isDropTarget(request.target)) return;
       this.transferNode(id, { key: request.key, fromWindowId: request.fromWindowId, target: request.target });
     });
-    ipcMain.on(IPC.newWindow, (event) => this.newWindow(windowId(event)));
-    ipcMain.on(IPC.toggleFullscreen, (event) => {
-      const id = windowId(event);
-      if (id) this.windows.toggleFullscreen(id);
-    });
-    ipcMain.handle(IPC.readClipboard, () => this.clipboardOverride ?? readClipboard());
-    ipcMain.handle(IPC.saveDroppedFile, (_event, name: unknown, data: unknown) =>
+    on(IPC.newWindow, (id) => this.newWindow(id));
+    on(IPC.toggleFullscreen, (id) => this.windows.toggleFullscreen(id));
+    handle(IPC.readClipboard, () => this.clipboardOverride ?? readClipboard());
+    handle(IPC.saveDroppedFile, (_id, _event, name: unknown, data: unknown) =>
       typeof name === 'string' && data instanceof ArrayBuffer ? this.saveDroppedFile(name, data) : null,
     );
-    ipcMain.on(IPC.tearOut, (event, key: unknown, size: Partial<TileSize> | null) => {
-      const id = windowId(event);
-      if (!id || typeof key !== 'string') return;
+    on(IPC.tearOut, (id, _event, key: unknown, size: Partial<TileSize> | null) => {
+      if (typeof key !== 'string') return;
       const valid = !!size && Number.isFinite(size.width) && Number.isFinite(size.height);
       this.tearOut(id, key, screen.getCursorScreenPoint(), valid ? (size as TileSize) : undefined);
     });
-    ipcMain.on(IPC.tileMenu, (event, sessionId: unknown) => {
-      const id = windowId(event);
-      if (id && typeof sessionId === 'string') this.showTileMenu(id, sessionId);
+    on(IPC.tileMenu, (id, _event, sessionId: unknown) => {
+      if (typeof sessionId === 'string') this.showTileMenu(id, sessionId);
     });
-    ipcMain.on(IPC.renameSession, (_event, sessionId: unknown, name: unknown) => {
+    on(IPC.renameSession, (_id, _event, sessionId: unknown, name: unknown) => {
       if (typeof sessionId === 'string' && typeof name === 'string') this.renameSession(sessionId, name);
     });
-    ipcMain.on(IPC.workspaceMenu, (event) => {
-      const id = windowId(event);
-      if (id) this.showWorkspaceMenu(id);
+    on(IPC.workspaceMenu, (id) => this.showWorkspaceMenu(id));
+    on(IPC.workspaceItemMenu, (id, _event, workspaceId: unknown) => {
+      if (typeof workspaceId === 'string') this.showWorkspaceItemMenu(id, workspaceId);
     });
-    ipcMain.on(IPC.workspaceItemMenu, (event, workspaceId: unknown) => {
-      const id = windowId(event);
-      if (id && typeof workspaceId === 'string') this.showWorkspaceItemMenu(id, workspaceId);
+    on(IPC.saveWorkspace, (id, _event, name: unknown) => {
+      if (typeof name === 'string') this.saveWorkspace(id, name);
     });
-    ipcMain.on(IPC.saveWorkspace, (event, name: unknown) => {
-      const id = windowId(event);
-      if (id && typeof name === 'string') this.saveWorkspace(id, name);
-    });
-    ipcMain.on(IPC.openWorkspace, (_event, workspaceId: unknown) => {
+    on(IPC.openWorkspace, (_id, _event, workspaceId: unknown) => {
       if (typeof workspaceId === 'string') this.openWorkspace(workspaceId);
     });
-    ipcMain.on(IPC.renameWorkspace, (_event, workspaceId: unknown, name: unknown) => {
+    on(IPC.renameWorkspace, (_id, _event, workspaceId: unknown, name: unknown) => {
       if (typeof workspaceId === 'string' && typeof name === 'string') this.renameWorkspace(workspaceId, name);
     });
-    ipcMain.on(IPC.listMenu, (event, items: unknown) => {
-      const id = windowId(event);
-      if (id && isListItems(items)) this.showListMenu(id, items);
+    on(IPC.listMenu, (id, _event, items: unknown) => {
+      if (isListItems(items)) this.showListMenu(id, items);
     });
-    ipcMain.on(IPC.openSessions, (event, request: Partial<OpenSessionsRequest> | null) => {
-      const id = windowId(event);
-      if (!id || !isListItems(request?.items) || !OPEN_MODES.includes(request.mode as OpenMode)) return;
+    on(IPC.openSessions, (id, _event, request: Partial<OpenSessionsRequest> | null) => {
+      if (!isListItems(request?.items) || !OPEN_MODES.includes(request.mode as OpenMode)) return;
       if (request.target !== null && !isDropTarget(request.target)) return;
       void this.openSessions(id, request.items, request.mode as OpenMode, request.target ?? null).catch(
         (error: unknown) => this.log('error', 'opening sessions from the list failed', { error: String(error) }),
       );
     });
-    ipcMain.on(IPC.groupMenu, (event, groupId: unknown) => {
-      const id = windowId(event);
-      if (id && typeof groupId === 'string') this.showGroupMenu(id, groupId, false);
+    on(IPC.groupMenu, (id, _event, groupId: unknown) => {
+      if (typeof groupId === 'string') this.showGroupMenu(id, groupId, false);
     });
-    ipcMain.on(IPC.groupColorMenu, (event, groupId: unknown) => {
-      const id = windowId(event);
-      if (id && typeof groupId === 'string') this.showGroupMenu(id, groupId, true);
+    on(IPC.groupColorMenu, (id, _event, groupId: unknown) => {
+      if (typeof groupId === 'string') this.showGroupMenu(id, groupId, true);
     });
-    ipcMain.on(IPC.openExternal, (_event, url: unknown) => {
+    on(IPC.openExternal, (_id, _event, url: unknown) => {
       if (typeof url === 'string' && /^https?:\/\//i.test(url)) void shell.openExternal(url);
     });
-    ipcMain.handle(IPC.dialogDefaults, () => ({
+    handle(IPC.dialogDefaults, () => ({
       recentFolders: this.state.recentFolders.filter((folder) => !!this.wslPath(folder) || isDirectory(folder)),
       preferences: this.state.preferences,
     }));
-    ipcMain.on(IPC.setPreferences, (_event, patch: Partial<Preferences> | null) => {
+    on(IPC.setPreferences, (_id, _event, patch: Partial<Preferences> | null) => {
       if (!patch || typeof patch !== 'object') return;
       const next = { ...this.state.preferences };
       if (typeof patch.nameFromFolder === 'boolean') next.nameFromFolder = patch.nameFromFolder;
@@ -2057,15 +2062,15 @@ export class ReframeApp {
       }
       if (relabel || shown) for (const w of this.state.windows) this.push(w.id);
     });
-    ipcMain.handle(IPC.folderExists, (_event, folder: unknown) => typeof folder === 'string' && isFolder(folder));
-    ipcMain.on(IPC.startWsl, (_event, distro: unknown) => {
+    handle(IPC.folderExists, (_id, _event, folder: unknown) => typeof folder === 'string' && isFolder(folder));
+    on(IPC.startWsl, (_id, _event, distro: unknown) => {
       if (typeof distro === 'string' && (this.state.wslDistros ?? []).includes(distro)) this.wsl?.keep(distro);
     });
-    ipcMain.handle(IPC.saveClipboardImage, async () => {
+    handle(IPC.saveClipboardImage, async () => {
       const png = this.clipboardOverride ? (this.clipboardOverride.image ? TEST_PNG : null) : await clipboardImage();
       return png && this.saveDroppedFile('clipboard.png', png);
     });
-    ipcMain.handle(IPC.sessionList, async (_event, query: unknown, limit: unknown) => {
+    handle(IPC.sessionList, async (_id, _event, query: unknown, limit: unknown) => {
       // Asked for by the user (opening the list, searching, after an action there): as fresh as before.
       await this.scanOutside(LIST_ASKED_MS);
       return this.sessionList(
@@ -2073,37 +2078,37 @@ export class ReframeApp {
         typeof limit === 'number' ? Math.min(limit, 500) : LIST_PAGE,
       );
     });
-    ipcMain.on(IPC.openSession, (event, request: Partial<OpenSessionRequest> | null) => {
-      const id = windowId(event);
+    on(IPC.openSession, (id, _event, request: Partial<OpenSessionRequest> | null) => {
       const item = request?.item;
-      if (!id || !item || !isListItemRef(item)) return;
+      if (!item || !isListItemRef(item)) return;
       if (request.target !== null && !isDropTarget(request.target)) return;
       void this.openSession(id, item, request.target ?? null).catch((error: unknown) =>
         this.log('error', 'opening a session from the list failed', { error: String(error) }),
       );
     });
-    ipcMain.on(IPC.foreignPointer, (event, report: Partial<ForeignPointerReport> | null) => {
-      const id = windowId(event);
-      if (!id) return;
+    on(IPC.foreignPointer, (id, _event, report: Partial<ForeignPointerReport> | null) => {
       if (typeof report?.x !== 'number' || typeof report.y !== 'number') return this.foreign?.notePointer(id, null, []);
       const types = Array.isArray(report.types) ? report.types.filter((t) => typeof t === 'string') : [];
       this.foreign?.notePointer(id, { x: report.x, y: report.y }, types);
     });
-    ipcMain.on(IPC.foreignDropAnswer, (_event, requestId: unknown, answer: Partial<ForeignDropAnswer> | null) => {
-      if (typeof requestId !== 'string') return;
-      const resolve = this.foreignRequests.get(requestId);
-      this.foreignRequests.delete(requestId);
+    on(IPC.foreignDropAnswer, (id, _event, requestId: unknown, answer: Partial<ForeignDropAnswer> | null) => {
+      const request = typeof requestId === 'string' ? this.foreignRequests.get(requestId) : undefined;
+      // Answered by the window that was asked, once.
+      if (!request || request.windowId !== id) return;
+      this.foreignRequests.delete(requestId as string);
       const valid =
         !!answer &&
         Array.isArray(answer.pids) &&
         answer.pids.every((p) => typeof p === 'number') &&
         (answer.target === null || isDropTarget(answer.target));
-      resolve?.(valid ? { pids: answer.pids!, target: answer.target ?? null } : null);
+      request.resolve(valid ? { pids: answer.pids!, target: answer.target ?? null } : null);
     });
-    ipcMain.on(IPC.removeSession, (_event, sessionId: unknown) => {
+    on(IPC.removeSession, (_id, _event, sessionId: unknown) => {
       if (typeof sessionId === 'string') this.removeSession(sessionId);
     });
   }
+  /** Channels a message came in on from something that is no window of reframe (logged once each). */
+  private strangeSenders = new Set<string>();
 }
 
 /** claude from PATH, or REFRAME_CLAUDE_BIN (tests: a .js fake run by REFRAME_NODE). */

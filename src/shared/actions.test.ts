@@ -116,6 +116,8 @@ describe('groups in a window', () => {
     const again = applyLayoutAction(collapsed, { type: 'group/rename', groupId: 'g', name: 'Backend' });
     expect(windowGroups(again)[0]!.name).toBe('Backend');
     expect(applyLayoutAction(again, { type: 'group/rename', groupId: 'g', name: '   ' })).toBe(again);
+    const long = applyLayoutAction(again, { type: 'group/rename', groupId: 'g', name: 'x'.repeat(500) });
+    expect(windowGroups(long)[0]!.name).toHaveLength(80);
   });
 
   it('drops a session out of a collapsed group, and the group once it is empty', () => {

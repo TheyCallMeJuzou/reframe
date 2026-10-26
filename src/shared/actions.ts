@@ -89,7 +89,7 @@ export function applyLayoutAction(win: WindowState, action: LayoutAction): Windo
       };
     }
     case 'group/rename': {
-      const name = action.name.trim();
+      const name = action.name.trim().slice(0, 80);
       return name ? patchGroup(win, action.groupId, { name }) : win;
     }
     case 'split/resize':
