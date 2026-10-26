@@ -118,6 +118,7 @@ import { win32 } from './win32';
 import { WindowManager } from './windows';
 import { SHARE_TIMEOUT_MS, WslDistros } from './wsl/distros';
 import { settle, withTimeout } from './wait';
+import { cleanUp, dropsDir } from './cleanup';
 
 export interface AppAssets {
   icon: string;
@@ -241,6 +242,13 @@ export class ReframeApp {
     this.createTray();
     this.watchUpdates();
     this.save();
+    void cleanUp(
+      dropsDir(),
+      path.join(app.getPath('userData'), 'hooks'),
+      new Set(Object.keys(this.state.sessions)),
+    ).then((removed) => {
+      if (removed.drops || removed.hooks) this.log('info', 'old dropped files and hook settings removed', removed);
+    });
   }
 
   /**
@@ -1639,7 +1647,7 @@ export class ReframeApp {
     // A plain file name: no folders, nothing Windows refuses in names.
     const cleaned = [...path.basename(name)].map((c) => (c < ' ' || '<>:"/\\|?*'.includes(c) ? '_' : c)).join('');
     const safe = cleaned.slice(0, 120) || 'dropped';
-    const dir = path.join(os.tmpdir(), 'reframe-drops', crypto.randomUUID());
+    const dir = path.join(dropsDir(), crypto.randomUUID());
     fs.mkdirSync(dir, { recursive: true });
     const file = path.join(dir, safe);
     fs.writeFileSync(file, data instanceof Uint8Array ? data : Buffer.from(data));
