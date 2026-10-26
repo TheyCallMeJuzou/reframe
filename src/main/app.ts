@@ -86,8 +86,14 @@ import {
   type WindowState,
   type Workspace,
 } from '@shared/state';
-import { listRunning, TranscriptIndex } from './claude/discovery';
-import { claudeHome, readRegistryEntry, transcriptExists, type RegistryEntry } from './claude/registry';
+import { listRunning, listRunningAsync, TranscriptIndex, type RunningExclusion } from './claude/discovery';
+import {
+  claudeHome,
+  readRegistryEntry,
+  readRegistryEntryAsync,
+  transcriptExistsAsync,
+  type RegistryEntry,
+} from './claude/registry';
 import { resolveClaude, type ClaudeBinary } from './claude/resolve';
 import { HookServer } from './hooks/server';
 import { consoleHelper } from './console';
@@ -109,8 +115,8 @@ import { Updates } from './updates';
 import { autostartEnabled, setAutostart } from './autostart';
 import { win32 } from './win32';
 import { WindowManager } from './windows';
-import { WslDistros } from './wsl/distros';
-import { settle } from './wait';
+import { SHARE_TIMEOUT_MS, WslDistros } from './wsl/distros';
+import { settle, withTimeout } from './wait';
 
 export interface AppAssets {
   icon: string;
@@ -124,8 +130,8 @@ interface ClaudeSource {
   /** Claude Code's folder, as Windows reaches it. */
   home: string;
   transcripts: TranscriptIndex;
-  /** Whether a process of its (by the id in its registry) runs. */
-  alive: (pid: number) => boolean;
+  /** Whether a process of its (by the id in its registry) runs; in WSL asked over the share, so without blocking. */
+  alive: (pid: number) => Promise<boolean>;
   /** A folder it names, as Windows reaches it (WSL names Linux paths). */
   windowsPath: (folder: string) => string;
 }
@@ -867,9 +873,9 @@ export class ReframeApp {
 
     // Where Claude Code keeps its sessions: on Windows, and in each running WSL distribution that has it.
     const { sources, stopped } = await this.claudeSources();
-    const running: RunningListItem[] = sources
-      .flatMap((source) =>
-        this.externalRunning(source).map((entry): RunningListItem => ({
+    const perSource = await Promise.all(
+      sources.map(async (source) =>
+        (await this.externalRunning(source)).map((entry): RunningListItem => ({
           kind: 'running',
           pid: entry.pid,
           claudeSessionId: entry.sessionId,
@@ -877,8 +883,9 @@ export class ReframeApp {
           name: entry.name,
           ...(source.distro ? { distro: source.distro } : {}),
         })),
-      )
-      .filter((item) => matches(item.name, item.cwd));
+      ),
+    );
+    const running = perSource.flat().filter((item) => matches(item.name, item.cwd));
 
     const ownIds = new Set(records.map((r) => r.claudeSessionId));
     const exclude = new Set([...ownIds, ...running.map((r) => r.claudeSessionId)]);
@@ -928,7 +935,12 @@ export class ReframeApp {
 
   /** Claude Code's sessions on this system itself (on Windows: not the ones in WSL). */
   private ownSource(): ClaudeSource {
-    return { home: this.claudeHome, transcripts: this.transcripts, alive: isAlive, windowsPath: (folder) => folder };
+    return {
+      home: this.claudeHome,
+      transcripts: this.transcripts,
+      alive: async (pid) => isAlive(pid),
+      windowsPath: (folder) => folder,
+    };
   }
 
   /** Claude Code's sessions in a WSL distribution, if it has Claude Code (asking it starts it). */
@@ -949,14 +961,27 @@ export class ReframeApp {
   }
   private wslTranscripts = new Map<string, TranscriptIndex>();
 
-  /** Claudes running outside reframe (with a known folder). */
-  private externalRunning(source: ClaudeSource): RegistryEntry[] {
+  /** Claudes running outside reframe (with a known folder); a distribution that does not answer in time has none. */
+  private async externalRunning(source: ClaudeSource): Promise<RegistryEntry[]> {
+    const exclude = this.ownClaudes(source.distro);
+    const running = source.distro
+      ? await withTimeout(listRunningAsync(source.home, exclude, source.alive), SHARE_TIMEOUT_MS, [])
+      : listRunning(source.home, exclude);
+    return running.filter((entry) => entry.cwd);
+  }
+
+  /** The same for Windows' own claudes, for the window watcher, which asks while a window is dragged. */
+  private externalRunningHere(): RegistryEntry[] {
+    return listRunning(this.claudeHome, this.ownClaudes()).filter((entry) => entry.cwd);
+  }
+
+  /** reframe's own claudes, to leave out of those running elsewhere (in WSL their process ids are not known). */
+  private ownClaudes(distro?: string): RunningExclusion {
     const records = Object.values(this.state.sessions);
-    const ownPids = source.distro
+    const pids = distro
       ? new Set<number>()
       : new Set(records.map((r) => this.sessions.status(r.id)?.pid).filter((p): p is number => !!p));
-    const ownIds = new Set(records.map((r) => r.claudeSessionId));
-    return listRunning(source.home, { pids: ownPids, sessionIds: ownIds }, source.alive).filter((entry) => entry.cwd);
+    return { pids, sessionIds: new Set(records.map((r) => r.claudeSessionId)) };
   }
 
   /** Where a list entry's Claude Code keeps its sessions: on Windows, or in its WSL distribution. */
@@ -986,8 +1011,9 @@ export class ReframeApp {
       return null;
     }
 
-    const entry = readRegistryEntry(source.home, item.pid);
-    if (!entry || entry.sessionId !== item.claudeSessionId || !entry.cwd || !source.alive(item.pid)) {
+    const entry = await withTimeout(readRegistryEntryAsync(source.home, item.pid), SHARE_TIMEOUT_MS, null);
+    const alive = !!entry && (await withTimeout(source.alive(item.pid), SHARE_TIMEOUT_MS, false));
+    if (!entry || entry.sessionId !== item.claudeSessionId || !entry.cwd || !alive) {
       this.log('info', 'running session is gone, nothing to take over', { pid: item.pid, wsl: source.distro });
       return null;
     }
@@ -1062,7 +1088,8 @@ export class ReframeApp {
       const labels = await Promise.all(
         running.map(async (i) => {
           const source = await this.sourceOf(i);
-          const entry = source && readRegistryEntry(source.home, i.pid);
+          const entry =
+            source && (await withTimeout(readRegistryEntryAsync(source.home, i.pid), SHARE_TIMEOUT_MS, null));
           return entry?.name ?? (entry?.cwd ? path.basename(entry.cwd) : String(i.pid));
         }),
       );
@@ -1136,8 +1163,15 @@ export class ReframeApp {
 
   /** A new record for a Claude Code session started outside reframe. */
   /** `claudeHome`: where its Claude Code keeps transcripts (in WSL, its distribution's). */
-  private adopted(claudeSessionId: string, cwd: string, name?: string, claudeHome = this.claudeHome): SessionRecord {
-    // Without a transcript (no prompt yet) it starts fresh under the same id instead of failing to resume.
+  private async adopted(
+    claudeSessionId: string,
+    cwd: string,
+    name?: string,
+    claudeHome = this.claudeHome,
+  ): Promise<SessionRecord> {
+    // Without a transcript (no prompt yet) it starts fresh under the same id instead of failing to resume. A
+    // distribution whose share does not answer in time is taken to have one (a resume without one says so).
+    const used = await withTimeout(transcriptExistsAsync(claudeHome, claudeSessionId), SHARE_TIMEOUT_MS, true);
     const now = Date.now();
     return {
       id: crypto.randomUUID(),
@@ -1148,7 +1182,7 @@ export class ReframeApp {
       lifecycle: 'open',
       createdAt: now,
       lastActiveAt: now,
-      used: transcriptExists(claudeHome, claudeSessionId),
+      used,
     };
   }
 
@@ -1357,7 +1391,7 @@ export class ReframeApp {
     this.foreign = new ForeignWindowWatcher({
       win32: api,
       windowAt: (point) => this.windows.windowAt(point),
-      externalSessions: () => this.externalRunning(this.ownSource()),
+      externalSessions: () => this.externalRunningHere(),
       log: this.log,
     });
     this.foreign.on('hover', (windowId, point) => {
@@ -1432,7 +1466,7 @@ export class ReframeApp {
       this.log(result === 'failed' ? 'warn' : 'info', 'other terminal stopped', { pid: session.pid, result });
       if (result === 'failed') continue;
       const name = latest.nameSource === 'user' ? latest.name : undefined;
-      const record = this.adopted(latest.sessionId, latest.cwd ?? session.cwd!, name);
+      const record = await this.adopted(latest.sessionId, latest.cwd ?? session.cwd!, name);
       this.placeAndResume(drop.windowId, record, target);
       target = { key: tileKey(record.id), side: 'right' };
     }

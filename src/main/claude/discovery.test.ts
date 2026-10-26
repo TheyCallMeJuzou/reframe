@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { listRunning, readTranscriptInfo, TranscriptIndex } from './discovery';
+import { listRunning, listRunningAsync, readTranscriptInfo, TranscriptIndex } from './discovery';
 
 const temps: string[] = [];
 function home(): string {
@@ -88,5 +88,22 @@ describe('listRunning', () => {
     expect(listRunning(h, { pids: new Set(), sessionIds: new Set() }).map((r) => r.sessionId)).toEqual(['outside']);
     expect(listRunning(h, { pids: new Set([process.pid]), sessionIds: new Set() })).toEqual([]);
     expect(listRunning(h, { pids: new Set(), sessionIds: new Set(['outside']) })).toEqual([]);
+  });
+
+  it('lists them without blocking too, asking whether each runs (in WSL: through its /proc)', async () => {
+    const h = home();
+    fs.mkdirSync(path.join(h, 'sessions'));
+    const write = (pid: number, sessionId: string) =>
+      fs.writeFileSync(path.join(h, 'sessions', `${pid}.json`), JSON.stringify({ pid, sessionId, cwd: '/x' }));
+    write(10, 'running');
+    write(11, 'gone');
+    write(12, 'own');
+    fs.writeFileSync(path.join(h, 'sessions', '13.json'), '{ half written');
+    const alive = async (pid: number) => pid !== 11;
+    const none = { pids: new Set<number>(), sessionIds: new Set<string>() };
+    expect((await listRunningAsync(h, none, alive)).map((r) => r.sessionId).sort()).toEqual(['own', 'running']);
+    const own = { pids: new Set<number>(), sessionIds: new Set(['own']) };
+    expect((await listRunningAsync(h, own, alive)).map((r) => r.sessionId)).toEqual(['running']);
+    expect(await listRunningAsync(path.join(h, 'missing'), none, alive)).toEqual([]);
   });
 });

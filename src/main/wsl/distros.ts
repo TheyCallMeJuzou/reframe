@@ -101,6 +101,12 @@ type Events = {
   found: [distro: string];
 };
 
+/**
+ * How long reading from a distribution's share (its Claude Code folder, its /proc) may take before it counts as no
+ * answer: the share starts a distribution that is not running, which takes seconds.
+ */
+export const SHARE_TIMEOUT_MS = 3_000;
+
 /** How long a distribution without claude is taken at its word before it is asked again. */
 const NO_CLAUDE_MS = 30_000;
 /** How long the list of running distributions holds (the session list asks every few seconds). */
@@ -160,8 +166,11 @@ export class WslDistros extends EventEmitter<Events> {
   }
 
   /** Whether a Linux process runs in `distro` (as its /proc shows it). */
-  alive(distro: string, pid: number): boolean {
-    return fs.existsSync(path.win32.join(this.share, distro, 'proc', String(pid)));
+  alive(distro: string, pid: number): Promise<boolean> {
+    return fs.promises.access(path.win32.join(this.share, distro, 'proc', String(pid))).then(
+      () => true,
+      () => false,
+    );
   }
 
   /**
@@ -172,11 +181,11 @@ export class WslDistros extends EventEmitter<Events> {
     for (const signal of ['INT', 'INT', 'TERM']) {
       await this.run(['-d', distro, '-e', 'kill', '-s', signal, String(pid)], 10_000).catch(() => '');
       for (let waited = 0; waited < 3000; waited += 200) {
-        if (!this.alive(distro, pid)) return 'stopped';
+        if (!(await this.alive(distro, pid))) return 'stopped';
         await new Promise((resolve) => setTimeout(resolve, 200));
       }
     }
-    return this.alive(distro, pid) ? 'failed' : 'stopped';
+    return (await this.alive(distro, pid)) ? 'failed' : 'stopped';
   }
 
   /** Starts `distro` and keeps it running until release() (WSL stops a distribution soon when nothing runs in it). */

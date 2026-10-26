@@ -1,5 +1,7 @@
 // Reads Claude Code's per-process session registry (~/.claude/sessions/<pid>.json) and transcripts.
 // The registry format is undocumented, so everything here is parsed defensively and kept in one place.
+// The async readers are for a WSL distribution's Claude Code folder: it is behind a network share, which can take
+// seconds to answer (a distribution that stopped is started by it) and must not hold up the main process.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -44,19 +46,29 @@ export function readRegistryEntry(home: string, pid: number): RegistryEntry | nu
   }
 }
 
+export async function readRegistryEntryAsync(home: string, pid: number): Promise<RegistryEntry | null> {
+  try {
+    const text = await fs.promises.readFile(path.join(home, 'sessions', `${pid}.json`), 'utf8');
+    const entry = parseRegistryEntry(JSON.parse(text));
+    return entry && entry.pid === pid ? entry : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * The entry of a running claude by its session id, for one whose process id reframe does not know (in WSL, the
  * entry is named after the Linux process id).
  */
-export function findRegistryEntry(home: string, sessionId: string): RegistryEntry | null {
+export async function findRegistryEntry(home: string, sessionId: string): Promise<RegistryEntry | null> {
   let files: string[];
   try {
-    files = fs.readdirSync(path.join(home, 'sessions')).filter((f) => /^\d+\.json$/.test(f));
+    files = (await fs.promises.readdir(path.join(home, 'sessions'))).filter((f) => /^\d+\.json$/.test(f));
   } catch {
     return null;
   }
   for (const file of files) {
-    const entry = readRegistryEntry(home, Number(file.slice(0, -'.json'.length)));
+    const entry = await readRegistryEntryAsync(home, Number(file.slice(0, -'.json'.length)));
     if (entry?.sessionId === sessionId) return entry;
   }
   return null;
@@ -72,4 +84,23 @@ export function transcriptExists(home: string, sessionId: string): boolean {
     return false;
   }
   return dirs.some((dir) => fs.existsSync(path.join(projects, dir, `${sessionId}.jsonl`)));
+}
+
+export async function transcriptExistsAsync(home: string, sessionId: string): Promise<boolean> {
+  const projects = path.join(home, 'projects');
+  let dirs: string[];
+  try {
+    dirs = await fs.promises.readdir(projects);
+  } catch {
+    return false;
+  }
+  // One after the other: a share does better with that than with hundreds of requests at once.
+  for (const dir of dirs) {
+    const found = await fs.promises.access(path.join(projects, dir, `${sessionId}.jsonl`)).then(
+      () => true,
+      () => false,
+    );
+    if (found) return true;
+  }
+  return false;
 }

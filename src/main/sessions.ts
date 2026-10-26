@@ -11,15 +11,22 @@ import type { SessionRecord } from '@shared/state';
 import { parseWslPath, wslWindowsPath, type WslPath } from '@shared/wsl';
 import { claudeArgs, type LaunchMode } from './claude/args';
 import { claudeEnv } from './claude/env';
-import { findRegistryEntry, readRegistryEntry, transcriptExists, type RegistryEntry } from './claude/registry';
+import {
+  findRegistryEntry,
+  readRegistryEntry,
+  readRegistryEntryAsync,
+  transcriptExists,
+  transcriptExistsAsync,
+  type RegistryEntry,
+} from './claude/registry';
 import type { ClaudeBinary } from './claude/resolve';
 import { writeHookSettings } from './claude/settings';
 import type { HookMessage, HookServer } from './hooks/server';
 import type { LogFn } from './log';
 import { isAlive, killTree } from './process';
 import type { PtyHostClient } from './ptyhost-client';
-import { settle } from './wait';
-import type { WslCommand, WslInfo } from './wsl/distros';
+import { settle, withTimeout } from './wait';
+import { SHARE_TIMEOUT_MS, type WslCommand, type WslInfo } from './wsl/distros';
 
 export type NotifyKind = 'done' | 'waiting';
 
@@ -38,6 +45,8 @@ interface WslRuntime {
   home: string;
   claudeSessionId: string;
   linuxPid?: number;
+  /** Its registry is being read (over the share); no second read starts meanwhile. */
+  reading?: boolean;
 }
 
 interface Runtime {
@@ -82,11 +91,16 @@ type Events = {
 
 const EARLY_EXIT_MS = 5000;
 const POLL_MS = 1000;
+/** How long looking for a transcript in a distribution may take; without an answer, a resume is tried. */
+const TRANSCRIPT_TIMEOUT_MS = 5_000;
 
 export class SessionManager extends EventEmitter<Events> {
   private runtimes = new Map<string, Runtime>();
   private instances = 0;
   private poller: NodeJS.Timeout;
+  /** A pass over the registry is under way (one in WSL waits for a share), so the next tick skips. */
+  private polling = false;
+  private slowShareLoggedAt = 0;
 
   private log: LogFn;
 
@@ -107,7 +121,7 @@ export class SessionManager extends EventEmitter<Events> {
       for (const [id, runtime] of this.runtimes) if (this.isRunning(id)) this.lostWithHost(id, runtime);
     });
     deps.hooks.on('hook', (message) => this.onHook(message));
-    this.poller = setInterval(() => this.pollRegistry(), POLL_MS);
+    this.poller = setInterval(() => void this.pollRegistry(), POLL_MS);
     this.poller.unref();
   }
 
@@ -152,7 +166,11 @@ export class SessionManager extends EventEmitter<Events> {
     }
 
     if (!fs.existsSync(session.cwd)) return this.fail(session.id, 'folderMissing');
-    const mode = launchMode(session, requested, this.deps.claudeHome);
+    const mode = launchMode(
+      session,
+      requested,
+      requested !== 'resume' || transcriptExists(this.deps.claudeHome, session.claudeSessionId),
+    );
     if (mode === 'lost') return this.fail(session.id, 'transcriptMissing');
     runtime.mode = mode;
     const claude = this.deps.resolveClaude();
@@ -195,7 +213,14 @@ export class SessionManager extends EventEmitter<Events> {
     if (!info?.claude) return this.fail(session.id, 'claudeNotFound');
     if (!folder) return this.fail(session.id, 'folderMissing');
     const home = wslWindowsPath(where.distro, info.claudeHome, wsl.share);
-    const mode = launchMode(session, requested, home);
+    // Over the share: without an answer in time, the transcript is taken to be there (a resume without one says so).
+    const transcript =
+      requested !== 'resume' ||
+      (await withTimeout(transcriptExistsAsync(home, session.claudeSessionId), TRANSCRIPT_TIMEOUT_MS, true));
+    if (this.runtimes.get(session.id) !== runtime || runtime.stopping || runtime.status !== 'starting') {
+      return runtime.markExited?.();
+    }
+    const mode = launchMode(session, requested, transcript);
     if (mode === 'lost') return this.fail(session.id, 'transcriptMissing');
     runtime.mode = mode;
     runtime.startedAt = Date.now();
@@ -372,49 +397,71 @@ export class SessionManager extends EventEmitter<Events> {
     }
   }
 
-  private pollRegistry(): void {
-    for (const [sessionId, runtime] of this.runtimes) {
-      if (!runtime.pid || !this.isRunning(sessionId)) continue;
-      const entry = runtime.wsl
-        ? this.wslRegistryEntry(runtime.wsl)
-        : readRegistryEntry(this.deps.claudeHome, runtime.pid);
-      if (!entry) continue;
-      // In WSL the folder is a Linux path; reframe keeps it as Windows reaches it.
-      const cwd =
-        entry.cwd && runtime.wsl ? wslWindowsPath(runtime.wsl.distro, entry.cwd, this.deps.wsl!.share) : entry.cwd;
-      this.emit('identity', sessionId, {
-        claudeSessionId: entry.sessionId,
-        ...(cwd ? { cwd } : {}),
-        ...(entry.status === 'busy' ? { used: true } : {}),
-      });
-      if (entry.name !== runtime.registryName) {
-        runtime.registryName = entry.name;
-        this.emit('changed', sessionId);
+  private async pollRegistry(): Promise<void> {
+    if (this.polling) return;
+    this.polling = true;
+    try {
+      for (const [sessionId, runtime] of [...this.runtimes]) {
+        if (!runtime.pid || !this.isRunning(sessionId)) continue;
+        const entry = runtime.wsl
+          ? await this.wslRegistryEntry(runtime.wsl)
+          : readRegistryEntry(this.deps.claudeHome, runtime.pid);
+        // Nothing (yet), or the session ended or started again while its share was asked.
+        if (!entry || this.runtimes.get(sessionId) !== runtime || !this.isRunning(sessionId)) continue;
+        this.followRegistry(sessionId, runtime, entry);
       }
-      // Follow the registry only when it changes, so it does not undo a fresher hook-based status.
-      if (entry.status && entry.status !== runtime.registryStatus) {
-        const before = runtime.registryStatus;
-        runtime.registryStatus = entry.status;
-        this.setStatus(sessionId, runtime, entry.status);
-        // Without hooks (WSL), the registry is also what tells that Claude is done or needs the user.
-        if (runtime.wsl && entry.status === 'waiting') this.emit('notify', sessionId, 'waiting');
-        if (runtime.wsl && entry.status === 'idle' && before === 'busy') this.emit('notify', sessionId, 'done');
-      } else if (runtime.status === 'starting') {
-        this.setStatus(sessionId, runtime, entry.status ?? 'idle');
-      }
+    } finally {
+      this.polling = false;
+    }
+  }
+
+  private followRegistry(sessionId: string, runtime: Runtime, entry: RegistryEntry): void {
+    // In WSL the folder is a Linux path; reframe keeps it as Windows reaches it.
+    const cwd =
+      entry.cwd && runtime.wsl ? wslWindowsPath(runtime.wsl.distro, entry.cwd, this.deps.wsl!.share) : entry.cwd;
+    this.emit('identity', sessionId, {
+      claudeSessionId: entry.sessionId,
+      ...(cwd ? { cwd } : {}),
+      ...(entry.status === 'busy' ? { used: true } : {}),
+    });
+    if (entry.name !== runtime.registryName) {
+      runtime.registryName = entry.name;
+      this.emit('changed', sessionId);
+    }
+    // Follow the registry only when it changes, so it does not undo a fresher hook-based status.
+    if (entry.status && entry.status !== runtime.registryStatus) {
+      const before = runtime.registryStatus;
+      runtime.registryStatus = entry.status;
+      this.setStatus(sessionId, runtime, entry.status);
+      // Without hooks (WSL), the registry is also what tells that Claude is done or needs the user.
+      if (runtime.wsl && entry.status === 'waiting') this.emit('notify', sessionId, 'waiting');
+      if (runtime.wsl && entry.status === 'idle' && before === 'busy') this.emit('notify', sessionId, 'done');
+    } else if (runtime.status === 'starting') {
+      this.setStatus(sessionId, runtime, entry.status ?? 'idle');
     }
   }
 
   /**
    * A WSL session's registry entry. It is named after the Linux process id, which only the entry itself tells, so
-   * it is found by the session id first (and again should that file go away).
+   * it is found by the session id first (and again should that file go away). Null when there is none, or no answer
+   * in time; a read that is still waiting for the share is not started a second time.
    */
-  private wslRegistryEntry(wsl: WslRuntime): RegistryEntry | null {
-    const known = wsl.linuxPid ? readRegistryEntry(wsl.home, wsl.linuxPid) : null;
-    if (known) return known;
-    const found = findRegistryEntry(wsl.home, wsl.claudeSessionId);
-    wsl.linuxPid = found?.pid;
-    return found;
+  private async wslRegistryEntry(wsl: WslRuntime): Promise<RegistryEntry | null> {
+    if (wsl.reading) return null;
+    wsl.reading = true;
+    const read = (async () => {
+      const known = wsl.linuxPid ? await readRegistryEntryAsync(wsl.home, wsl.linuxPid) : null;
+      if (known) return known;
+      const found = await findRegistryEntry(wsl.home, wsl.claudeSessionId);
+      wsl.linuxPid = found?.pid;
+      return found;
+    })().finally(() => (wsl.reading = false));
+    const entry = await withTimeout(read, SHARE_TIMEOUT_MS, undefined);
+    if (entry === undefined && Date.now() - this.slowShareLoggedAt > 60_000) {
+      this.slowShareLoggedAt = Date.now();
+      this.log('warn', 'a wsl distribution did not answer in time', { distro: wsl.distro });
+    }
+    return entry ?? null;
   }
 
   private setStatus(sessionId: string, runtime: Runtime, status: SessionStatus): void {
@@ -429,8 +476,8 @@ export class SessionManager extends EventEmitter<Events> {
  * without one there is nothing to resume: an unused session starts fresh under the same id, a used one has lost
  * its history.
  */
-function launchMode(session: SessionRecord, requested: LaunchMode, claudeHome: string): LaunchMode | 'lost' {
-  if (requested !== 'resume' || transcriptExists(claudeHome, session.claudeSessionId)) return requested;
+function launchMode(session: SessionRecord, requested: LaunchMode, transcript: boolean): LaunchMode | 'lost' {
+  if (requested !== 'resume' || transcript) return requested;
   return session.used ? 'lost' : 'new';
 }
 

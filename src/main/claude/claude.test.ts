@@ -5,7 +5,14 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { SessionRecord } from '@shared/state';
 import { claudeArgs } from './args';
 import { claudeEnv } from './env';
-import { findRegistryEntry, parseRegistryEntry, readRegistryEntry, transcriptExists } from './registry';
+import {
+  findRegistryEntry,
+  parseRegistryEntry,
+  readRegistryEntry,
+  readRegistryEntryAsync,
+  transcriptExists,
+  transcriptExistsAsync,
+} from './registry';
 import { resolveClaude } from './resolve';
 import { hookSettings } from './settings';
 
@@ -179,15 +186,32 @@ describe('registry', () => {
     expect(transcriptExists(home, 's-2')).toBe(false);
   });
 
-  it('finds an entry by its session id when the process id is not known', () => {
+  it('reads the same without blocking, for a folder behind a share', async () => {
+    const home = tempDir();
+    fs.mkdirSync(path.join(home, 'sessions'));
+    fs.writeFileSync(path.join(home, 'sessions', '77.json'), JSON.stringify({ pid: 77, sessionId: 's-1' }));
+    fs.writeFileSync(path.join(home, 'sessions', '78.json'), '{ broken');
+    expect((await readRegistryEntryAsync(home, 77))?.sessionId).toBe('s-1');
+    expect(await readRegistryEntryAsync(home, 78)).toBeNull();
+    expect(await readRegistryEntryAsync(home, 79)).toBeNull();
+
+    fs.mkdirSync(path.join(home, 'projects', 'C--work'), { recursive: true });
+    fs.mkdirSync(path.join(home, 'projects', 'C--other'), { recursive: true });
+    fs.writeFileSync(path.join(home, 'projects', 'C--work', 's-1.jsonl'), '');
+    expect(await transcriptExistsAsync(home, 's-1')).toBe(true);
+    expect(await transcriptExistsAsync(home, 's-2')).toBe(false);
+    expect(await transcriptExistsAsync(path.join(home, 'missing'), 's-1')).toBe(false);
+  });
+
+  it('finds an entry by its session id when the process id is not known', async () => {
     const home = tempDir();
     fs.mkdirSync(path.join(home, 'sessions'));
     fs.writeFileSync(path.join(home, 'sessions', '5740.json'), JSON.stringify({ pid: 5740, sessionId: 's-1' }));
     fs.writeFileSync(path.join(home, 'sessions', '5741.json'), JSON.stringify({ pid: 5741, sessionId: 's-2' }));
     fs.writeFileSync(path.join(home, 'sessions', 'notes.txt'), 's-2');
-    expect(findRegistryEntry(home, 's-2')?.pid).toBe(5741);
-    expect(findRegistryEntry(home, 's-3')).toBeNull();
-    expect(findRegistryEntry(path.join(home, 'missing'), 's-1')).toBeNull();
+    expect((await findRegistryEntry(home, 's-2'))?.pid).toBe(5741);
+    expect(await findRegistryEntry(home, 's-3')).toBeNull();
+    expect(await findRegistryEntry(path.join(home, 'missing'), 's-1')).toBeNull();
   });
 });
 

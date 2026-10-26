@@ -6,27 +6,63 @@ import path from 'node:path';
 import { isAlive } from '../process';
 import { parseRegistryEntry, type RegistryEntry } from './registry';
 
-/** Claudes that run (`alive`: whether a process id does; a Linux one in WSL is asked differently). */
+export interface RunningExclusion {
+  pids: Set<number>;
+  sessionIds: Set<string>;
+}
+
+const REGISTRY_FILE = /^\d+\.json$/;
+
+/** A registry file's entry, unless it is one to leave out; null also for a file being written or removed now. */
+function registryEntry(text: string, exclude: RunningExclusion): RegistryEntry | null {
+  try {
+    const entry = parseRegistryEntry(JSON.parse(text));
+    return entry && !exclude.pids.has(entry.pid) && !exclude.sessionIds.has(entry.sessionId) ? entry : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Claudes that run on this system. */
 export function listRunning(
   home: string,
-  exclude: { pids: Set<number>; sessionIds: Set<string> },
+  exclude: RunningExclusion,
   alive: (pid: number) => boolean = isAlive,
 ): RegistryEntry[] {
   let files: string[];
   try {
-    files = fs.readdirSync(path.join(home, 'sessions')).filter((f) => /^\d+\.json$/.test(f));
+    files = fs.readdirSync(path.join(home, 'sessions')).filter((f) => REGISTRY_FILE.test(f));
+  } catch {
+    return [];
+  }
+  return files
+    .map((file) => {
+      try {
+        return registryEntry(fs.readFileSync(path.join(home, 'sessions', file), 'utf8'), exclude);
+      } catch {
+        return null;
+      }
+    })
+    .filter((entry): entry is RegistryEntry => !!entry && alive(entry.pid));
+}
+
+/** The same without blocking, for a WSL distribution's folder (`alive`: asked through its /proc there). */
+export async function listRunningAsync(
+  home: string,
+  exclude: RunningExclusion,
+  alive: (pid: number) => Promise<boolean>,
+): Promise<RegistryEntry[]> {
+  let files: string[];
+  try {
+    files = (await fs.promises.readdir(path.join(home, 'sessions'))).filter((f) => REGISTRY_FILE.test(f));
   } catch {
     return [];
   }
   const running: RegistryEntry[] = [];
   for (const file of files) {
-    try {
-      const entry = parseRegistryEntry(JSON.parse(fs.readFileSync(path.join(home, 'sessions', file), 'utf8')));
-      if (!entry || exclude.pids.has(entry.pid) || exclude.sessionIds.has(entry.sessionId)) continue;
-      if (alive(entry.pid)) running.push(entry);
-    } catch {
-      // a registry file being written or removed right now
-    }
+    const text = await fs.promises.readFile(path.join(home, 'sessions', file), 'utf8').catch(() => '');
+    const entry = registryEntry(text, exclude);
+    if (entry && (await alive(entry.pid))) running.push(entry);
   }
   return running;
 }
