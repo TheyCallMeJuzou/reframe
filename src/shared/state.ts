@@ -89,6 +89,8 @@ export const sessionRecordSchema = z.object({
   lastActiveAt: z.number(),
   /** Last known process id, used to clean up orphans after a crash. */
   pid: z.number().optional(),
+  /** In WSL: the last known Linux process id of its claude (`pid` is wsl.exe's), for the same. */
+  linuxPid: z.number().optional(),
   /**
    * Whether the current claudeSessionId has had a prompt. Claude Code writes a transcript only from the
    * first message on, so an unused session cannot be resumed and is started fresh under the same id.

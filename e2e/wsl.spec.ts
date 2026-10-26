@@ -217,3 +217,70 @@ test('the session list: WSL sessions, taking over one, starting a distribution',
     await cleanup(dir);
   }
 });
+
+test('a claude that a crashed reframe left running in WSL is ended before its session resumes', async () => {
+  const { dir, env, share, byName } = wslSetup();
+  let orphan: pty.IPty | null = null;
+  let orphanExited = false;
+  try {
+    const id = crypto.randomUUID();
+    const folder = path.join(share, 'Fake', 'home', 'ann', 'other');
+    fs.mkdirSync(folder, { recursive: true });
+    orphan = pty.spawn(
+      process.execPath,
+      [
+        env.REFRAME_WSL_EXE!,
+        '-d',
+        'Fake',
+        '--cd',
+        '/home/ann/other',
+        '--exec',
+        'env',
+        'PATH=/usr/bin',
+        'claude',
+      ].concat(['--session-id', id, '--name', 'left']),
+      { env, cols: 100, rows: 30 },
+    );
+    orphan.onExit(() => (orphanExited = true));
+    const registry = path.join(share, 'Fake', 'home', 'ann', '.claude', 'sessions');
+    await expect.poll(() => (fs.existsSync(registry) ? fs.readdirSync(registry) : [])).toHaveLength(1);
+    const linuxPid = Number(fs.readdirSync(registry)[0]!.replace('.json', ''));
+
+    // What a reframe that crashed left: the session open in its window, with the Linux id of its claude.
+    fs.mkdirSync(env.REFRAME_USER_DATA!, { recursive: true });
+    const session = { id: 'a', claudeSessionId: id, cwd: folder, name: 'left', launch: {}, lifecycle: 'open' };
+    fs.writeFileSync(
+      path.join(env.REFRAME_USER_DATA!, 'state.json'),
+      JSON.stringify({
+        version: 1,
+        sessions: { a: { ...session, createdAt: 1, lastActiveAt: 1, linuxPid } },
+        windows: [
+          {
+            id: 'w',
+            bounds: null,
+            maximized: false,
+            hidden: false,
+            layout: { kind: 'tile', sessionId: 'a' },
+            dock: [],
+          },
+        ],
+        recentFolders: [],
+      }),
+    );
+
+    const { app, page } = await launch(env);
+    await expect.poll(() => orphanExited, { timeout: 15_000 }).toBe(true);
+    await expect(tileByLabel(page, 'left').locator('.status-idle')).toBeVisible({ timeout: 15_000 });
+    // One claude on the session, the new one, whose Linux id is kept for next time.
+    expect(fs.readdirSync(registry)).toHaveLength(1);
+    await expect.poll(() => byName('left').linuxPid, { timeout: 10_000 }).not.toBe(linuxPid);
+    expect(byName('left').linuxPid).toBe(Number(fs.readdirSync(registry)[0]!.replace('.json', '')));
+    await quit(app);
+  } catch (error) {
+    await captureWindows('wsl-orphan');
+    throw error;
+  } finally {
+    if (orphan && !orphanExited) orphan.kill();
+    await cleanup(dir);
+  }
+});

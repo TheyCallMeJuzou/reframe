@@ -39,6 +39,8 @@ export interface WslLauncher {
   info(distro: string): Promise<WslInfo | null>;
   /** Ends a claude in the distribution by its Linux process id. */
   stopClaude(distro: string, pid: number): Promise<unknown>;
+  /** Whether a Linux process runs in the distribution. */
+  alive(distro: string, pid: number): Promise<boolean>;
 }
 
 /** A session running in WSL: its distribution, Claude's folder there, and its registry entry once found. */
@@ -83,7 +85,7 @@ export interface SessionManagerDeps {
   wsl?: WslLauncher;
 }
 
-export type IdentityPatch = Partial<Pick<SessionRecord, 'claudeSessionId' | 'cwd' | 'pid' | 'used'>>;
+export type IdentityPatch = Partial<Pick<SessionRecord, 'claudeSessionId' | 'cwd' | 'pid' | 'linuxPid' | 'used'>>;
 
 type Events = {
   /** Something visible changed (status, label, error). */
@@ -228,6 +230,12 @@ export class SessionManager extends EventEmitter<Events> {
     }
     const mode = launchMode(session, requested, transcript);
     if (mode === 'lost') return this.fail(session.id, 'transcriptMissing');
+    if (session.linuxPid) {
+      await this.endWslOrphan(session, session.linuxPid, where.distro, home);
+      if (this.runtimes.get(session.id) !== runtime || runtime.stopping || runtime.status !== 'starting') {
+        return runtime.markExited?.();
+      }
+    }
     runtime.mode = mode;
     runtime.startedAt = Date.now();
     runtime.wsl = { distro: where.distro, home, claudeSessionId: session.claudeSessionId };
@@ -320,6 +328,21 @@ export class SessionManager extends EventEmitter<Events> {
 
   dispose(): void {
     clearInterval(this.poller);
+  }
+
+  /**
+   * The claude reframe last ran for a WSL session may still run in the distribution: reframe crashed, and ending the
+   * wsl.exe in between does not reliably end what runs behind it. Resumed next to it, the conversation would run
+   * twice, so it is ended first. Only that very process (its Linux id, with this session in its entry): the session
+   * running in a terminal of its own is a takeover, which is asked about.
+   */
+  private async endWslOrphan(session: SessionRecord, linuxPid: number, distro: string, home: string): Promise<void> {
+    const wsl = this.deps.wsl!;
+    const entry = await withTimeout(readRegistryEntryAsync(home, linuxPid), SHARE_TIMEOUT_MS, null);
+    if (entry?.sessionId !== session.claudeSessionId) return;
+    if (!(await withTimeout(wsl.alive(distro, linuxPid), SHARE_TIMEOUT_MS, false))) return;
+    this.log('warn', 'ending orphaned claude in wsl from a previous run', { session: session.id, distro, linuxPid });
+    await wsl.stopClaude(distro, linuxPid);
   }
 
   /** Kills a session's process tree, and removes the registry entry the claude could not remove itself. */
@@ -459,6 +482,7 @@ export class SessionManager extends EventEmitter<Events> {
       claudeSessionId: entry.sessionId,
       ...(cwd ? { cwd } : {}),
       ...(entry.status === 'busy' ? { used: true } : {}),
+      ...(runtime.wsl ? { linuxPid: entry.pid } : {}),
     });
     if (entry.name !== runtime.registryName) {
       runtime.registryName = entry.name;

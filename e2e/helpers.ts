@@ -15,6 +15,7 @@ export interface SavedSession {
   claudeSessionId: string;
   lifecycle: string;
   used?: boolean;
+  linuxPid?: number;
   cwd: string;
   launch: { worktree?: boolean; worktreeName?: string; worktreeCreated?: boolean };
 }
