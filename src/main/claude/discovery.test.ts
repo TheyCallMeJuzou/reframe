@@ -84,8 +84,8 @@ describe('TranscriptIndex', () => {
     const ids = async () => (await index.list({ limit: 10, exclude: new Set() })).items.map((i) => i.sessionId);
     expect(await ids()).toEqual(['b', 'a']);
 
-    // Used again just now: its time changed, but nobody said so yet.
-    const later = new Date();
+    // Used again a moment ago: its time changed, but nobody said so yet.
+    const later = new Date(Date.now() - 10_000);
     fs.utimesSync(path.join(h, 'projects', 'p1', 'a.jsonl'), later, later);
     transcript(h, 'p2', 'c', user('third'));
     expect(await ids()).toEqual(['b', 'a']);
