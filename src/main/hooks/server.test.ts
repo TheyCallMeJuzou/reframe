@@ -33,4 +33,14 @@ describe('HookServer', () => {
     expect(await post('/other', {}, server.token)).toBe(404);
     expect(count).toBe(0);
   });
+
+  it('answers a broken escape in the path with 400 and keeps going', async () => {
+    server = new HookServer();
+    await server.start();
+    let count = 0;
+    server.on('hook', () => count++);
+    expect(await post('/hook/%E0%A4%A/Stop', {}, server.token)).toBe(400);
+    expect(await post('/hook/a/Stop', {}, server.token)).toBe(200);
+    await expect.poll(() => count).toBe(1);
+  });
 });

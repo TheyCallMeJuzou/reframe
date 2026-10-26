@@ -52,6 +52,13 @@ export class HookServer extends EventEmitter<{ hook: [HookMessage] }> {
     if (typeof token !== 'string' || !safeEqual(token, this.token)) return reply(403);
     const event = match[2] as HookEvent;
     if (!HOOK_EVENTS.includes(event)) return reply(404);
+    // A broken escape in the path would otherwise throw where nothing catches it.
+    let sessionId: string;
+    try {
+      sessionId = decodeURIComponent(match[1]!);
+    } catch {
+      return reply(400);
+    }
 
     let size = 0;
     const chunks: Buffer[] = [];
@@ -69,7 +76,7 @@ export class HookServer extends EventEmitter<{ hook: [HookMessage] }> {
       } catch {
         // an empty or broken body still tells us the event happened
       }
-      this.emit('hook', { sessionId: decodeURIComponent(match[1]!), event, payload });
+      this.emit('hook', { sessionId, event, payload });
     });
   }
 }
