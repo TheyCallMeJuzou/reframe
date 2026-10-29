@@ -238,13 +238,16 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
       window.reframe.onFocusTile((sessionId) => {
         // Another tile brought up (a notification, Ctrl+Shift+Space): all tiles show again.
         setZoom((z) => (z && z.sessionId !== sessionId ? null : z));
-        // The tile may only appear with the next view (when it was collapsed), so wait a frame.
-        requestAnimationFrame(() => {
-          terminals.focus(sessionId);
-          const el = document.querySelector(`.tile[data-session="${CSS.escape(sessionId)}"]`);
-          el?.classList.add('flash');
-          setTimeout(() => el?.classList.remove('flash'), 900);
-        });
+        // A collapsed tile only appears with a later view (it may take more than a frame), so wait for it.
+        const tile = `.tile[data-session="${CSS.escape(sessionId)}"]`;
+        requestAnimationFrame(() =>
+          whenShown(tile, () => {
+            terminals.focus(sessionId);
+            const el = document.querySelector(tile);
+            el?.classList.add('flash');
+            setTimeout(() => el?.classList.remove('flash'), 900);
+          }),
+        );
       }),
     [terminals],
   );
