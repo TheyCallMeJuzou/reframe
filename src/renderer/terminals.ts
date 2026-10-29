@@ -169,6 +169,8 @@ export class TerminalRegistry {
       cursorBlink: true,
       scrollback: 5000,
       theme: THEME,
+      // Right-click copies or pastes (below); on macOS xterm would select the word under the mouse first.
+      rightClickSelectsWord: false,
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -177,19 +179,19 @@ export class TerminalRegistry {
     term.loadAddon(new Unicode11Addon());
     term.unicode.activeVersion = '11';
     term.loadAddon(new WebLinksAddon((_event, uri) => window.reframe.openExternal(uri)));
-    term.attachCustomKeyEventHandler((event) =>
-      handleClipboardKeys(
-        term,
-        event,
-        (data) => this.send(entry, { type: 'input', data }),
-        () => this.wsl.get(sessionId),
-      ),
-    );
+    const input = (data: string) => this.send(entry, { type: 'input', data });
+    term.attachCustomKeyEventHandler((event) => handleClipboardKeys(term, event, input, () => this.wsl.get(sessionId)));
 
     const element = document.createElement('div');
     element.className = 'terminal-host';
     // Readable from outside (e.g. by tests): xterm measures its characters on a canvas, not in the page.
     element.dataset.fontSize = String(this.fontSize);
+    // Right-click copies the selection and, without one, pastes, as in Windows Terminal.
+    element.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      if (!copySelection(term)) pasteClipboard(term, input, this.wsl.get(sessionId));
+      term.focus();
+    });
     const entry: Entry = {
       sessionId,
       term,
@@ -248,11 +250,7 @@ export class TerminalRegistry {
   }
 }
 
-/**
- * Ctrl+C copies when text is selected (otherwise it interrupts claude). Ctrl+V pastes text; files copied in a
- * file manager come in as their paths, and an image is left to Claude Code, which reads it from the clipboard on
- * its own paste key. Claude Code in WSL cannot reach the clipboard: it gets the image as a file instead.
- */
+/** Ctrl+C copies when text is selected (otherwise it interrupts claude), Ctrl+V pastes. */
 function handleClipboardKeys(
   term: Terminal,
   event: KeyboardEvent,
@@ -262,24 +260,39 @@ function handleClipboardKeys(
   if (event.type !== 'keydown' || !event.ctrlKey || event.altKey || event.metaKey) return true;
   const key = event.key.toLowerCase();
   if (key === 'c' && (event.shiftKey || term.hasSelection())) {
-    if (term.hasSelection()) void navigator.clipboard.writeText(term.getSelection());
-    term.clearSelection();
+    copySelection(term);
     return false;
   }
-  // Everything pasted comes through here (not the browser's own paste), so text, files and images agree.
   if (key === 'v') {
     event.preventDefault();
-    const wsl = wslOf();
-    void window.reframe.readClipboard().then((clipboard) => {
-      if (clipboard.text) term.paste(clipboard.text);
-      else if (clipboard.files.length > 0) term.paste(formatPaths(clipboard.files, window.reframe.platform, wsl));
-      else if (clipboard.image && wsl) {
-        void window.reframe.saveClipboardImage().then((file) => {
-          if (file) term.paste(formatPaths([file], window.reframe.platform, wsl));
-        });
-      } else if (clipboard.image) input(imagePasteKey(window.reframe.platform));
-    });
+    pasteClipboard(term, input, wslOf());
     return false;
   }
   return true;
+}
+
+/** Copies the terminal's selection and clears it; false if nothing is selected. */
+function copySelection(term: Terminal): boolean {
+  if (!term.hasSelection()) return false;
+  void navigator.clipboard.writeText(term.getSelection());
+  term.clearSelection();
+  return true;
+}
+
+/**
+ * Pastes text; files copied in a file manager come in as their paths, and an image is left to Claude Code, which
+ * reads it from the clipboard on its own paste key. Claude Code in WSL cannot reach the clipboard: it gets the image
+ * as a file instead. Everything pasted comes through here (not the browser's own paste), so text, files and images
+ * agree.
+ */
+function pasteClipboard(term: Terminal, input: (data: string) => void, wsl: SessionView['wsl']): void {
+  void window.reframe.readClipboard().then((clipboard) => {
+    if (clipboard.text) term.paste(clipboard.text);
+    else if (clipboard.files.length > 0) term.paste(formatPaths(clipboard.files, window.reframe.platform, wsl));
+    else if (clipboard.image && wsl) {
+      void window.reframe.saveClipboardImage().then((file) => {
+        if (file) term.paste(formatPaths([file], window.reframe.platform, wsl));
+      });
+    } else if (clipboard.image) input(imagePasteKey(window.reframe.platform));
+  });
 }

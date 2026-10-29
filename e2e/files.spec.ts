@@ -1,7 +1,7 @@
 // End to end: files dropped onto a tile are typed in as their paths (one that exists only in memory is saved to
 // a temporary file first), and Ctrl+V pastes text, the paths of copied files, or leaves an image to Claude Code
-// (its paste key, which the fake answers with an "[Image #n]" chip). The clipboard is faked through a test hook,
-// so the real one is only read, never changed.
+// (its paste key, which the fake answers with an "[Image #n]" chip). Right-click copies the selection or, without
+// one, pastes. The clipboard is faked through a test hook, so the real one is only read, never changed.
 import fs from 'node:fs';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
@@ -73,6 +73,26 @@ test('dropping files and pasting text, files and images', async () => {
         .slice(1)
         .map((p) => p.trim()),
     ).toEqual(['pasted words', quoted, '[Image #1]']);
+
+    // Right-click copies the selection (the copy is caught, the real clipboard stays as it is) and clears it, so the
+    // next right-click pastes.
+    await page.evaluate(() => {
+      Object.defineProperty(navigator.clipboard, 'writeText', {
+        value: async (text: string) => void ((window as unknown as { copied: string }).copied = text),
+      });
+    });
+    const screen = await tileByLabel(page, 'alpha').locator('.xterm-screen').boundingBox();
+    // "FAKE CLAUDE" on the first line: a double click selects its first word.
+    const word = { x: screen!.x + 10, y: screen!.y + 8 };
+    await page.mouse.dblclick(word.x, word.y);
+    await page.mouse.click(word.x, word.y, { button: 'right' });
+    await expect.poll(() => page.evaluate(() => (window as unknown as { copied?: string }).copied)).toBe('FAKE');
+    await callMain(app, 'fakeClipboard', { text: 'right-clicked words', image: false, files: [] });
+    await page.mouse.click(word.x, word.y, { button: 'right' });
+    await page.waitForTimeout(300);
+    await send();
+    await expect.poll(prompts).toHaveLength(5);
+    expect(prompts()[4]!.trim()).toBe('right-clicked words');
 
     await callMain(app, 'fakeClipboard', null);
     await quit(app);
