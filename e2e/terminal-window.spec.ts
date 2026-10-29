@@ -121,6 +121,35 @@ test('a terminal window dropped onto reframe hands its claude over and closes', 
   });
 });
 
+test('a terminal window dropped where two reframe windows overlap goes into the one in front', async () => {
+  await withOutsideTerminal('terminal-window-front', async (s, started) => {
+    const { pid } = await outsideTerminal(s, started);
+    const { app, page } = await launch(s.env);
+    await newSession(page, s.project, 'alpha');
+    // A new, empty window (in front now), moved right over the first one.
+    const opened = app.waitForEvent('window');
+    await page.keyboard.press('ControlOrMeta+Shift+N');
+    const second = await opened;
+    await expect(second.getByText('No sessions yet')).toBeVisible();
+    const first = await (await app.browserWindow(page)).evaluate((win) => win.getBounds());
+    const secondWindow = await app.browserWindow(second);
+    await secondWindow.evaluate((win, bounds) => win.setBounds(bounds), first);
+    const bounds = await secondWindow.evaluate((win) => win.getContentBounds());
+    const point = { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
+
+    const hwnd = await callMain<string | null>(app, 'terminalWindowOf', pid);
+    expect(await callMain<boolean>(app, 'dropTerminalWindow', hwnd, point)).toBe(true);
+    const dialog = second.getByRole('dialog');
+    await expect(dialog).toContainText('outside');
+    await dialog.getByRole('button', { name: 'Take over' }).click();
+
+    await expect(tileByLabel(second, 'outside')).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('.tile')).toHaveCount(1);
+
+    await quit(app);
+  });
+});
+
 test('a terminal tab torn out over reframe (a new terminal window there) is taken over too', async () => {
   await withOutsideTerminal('terminal-tab', async (s, started) => {
     const { pid, shellPid } = await outsideTerminal(s, started);

@@ -24,6 +24,9 @@ const MAX_RELOADS = 3;
 
 export class WindowManager extends EventEmitter<Events> {
   private windows = new Map<string, BrowserWindow>();
+  /** When each window last got the focus (a running count): of our windows, the one focused last is in front. */
+  private focusedAt = new Map<string, number>();
+  private focusCount = 0;
   /** Set while the app shuts down, so closing really closes. */
   quitting = false;
 
@@ -88,8 +91,14 @@ export class WindowManager extends EventEmitter<Events> {
     win.on('unmaximize', report);
     win.on('enter-full-screen', () => this.emit('fullscreen', state.id, true));
     win.on('leave-full-screen', () => this.emit('fullscreen', state.id, false));
-    win.on('closed', () => this.windows.delete(state.id));
-    win.on('focus', () => win.flashFrame(false));
+    win.on('closed', () => {
+      this.windows.delete(state.id);
+      this.focusedAt.delete(state.id);
+    });
+    win.on('focus', () => {
+      win.flashFrame(false);
+      this.focusedAt.set(state.id, ++this.focusCount);
+    });
     win.on('query-session-end', () => this.emit('systemEnding'));
     win.on('session-end', () => this.emit('systemEnding'));
 
@@ -152,17 +161,20 @@ export class WindowManager extends EventEmitter<Events> {
   destroy(windowId: string): void {
     const win = this.windows.get(windowId);
     this.windows.delete(windowId);
+    this.focusedAt.delete(windowId);
     if (win && !win.isDestroyed()) win.destroy();
   }
 
-  /** The visible window under a screen point, if any. */
+  /** The visible window under a screen point, if any; where windows overlap, the one in front. */
   windowAt(point: { x: number; y: number }): string | undefined {
+    let front: string | undefined;
     for (const [id, win] of this.windows) {
       if (win.isDestroyed() || !win.isVisible() || win.isMinimized()) continue;
       const b = win.getBounds();
-      if (point.x >= b.x && point.x < b.x + b.width && point.y >= b.y && point.y < b.y + b.height) return id;
+      if (point.x < b.x || point.x >= b.x + b.width || point.y < b.y || point.y >= b.y + b.height) continue;
+      if (!front || (this.focusedAt.get(id) ?? 0) > (this.focusedAt.get(front) ?? 0)) front = id;
     }
-    return undefined;
+    return front;
   }
 
   /** Draws attention to a window: its taskbar button flashes until it is looked at (on macOS the Dock icon bounces). */
