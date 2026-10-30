@@ -1,6 +1,7 @@
 // Stand-in for the claude CLI in end-to-end tests. Behaves like the parts reframe relies on:
 // --session-id / --resume, HTTP hooks from --settings, the session registry file, transcripts that
-// only exist from the first prompt on, /clear (new session id, no hook) and Ctrl+C twice to exit.
+// only exist from the first prompt on, /clear (new session id, no hook), /mouse (mouse reporting, as in Claude
+// Code's fullscreen mode, with its own paste on a right-click) and Ctrl+C twice to exit.
 // Every launch is appended to REFRAME_FAKE_LOG. Started by the WSL stand-in, it has no hooks (no --settings) and
 // registers the Linux folder it was given (REFRAME_FAKE_CWD).
 import fs from 'node:fs';
@@ -85,8 +86,14 @@ let images = 0;
 if (process.stdin.isTTY) process.stdin.setRawMode(true);
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', async (input) => {
+  // After "/mouse", mouse reports come in: a plain right-button press stands for the paste Claude Code's fullscreen
+  // mode does on its own, the others are dropped.
+  // eslint-disable-next-line no-control-regex -- a mouse report starts with ESC
+  const typed = input.replace(/\x1b\[<(\d+);\d+;\d+([Mm])/g, (_report, button, end) =>
+    button === '2' && end === 'M' ? '[right click]' : '',
+  );
   // Claude Code pastes the clipboard's image on Alt+V (Windows) or Ctrl+V and shows a chip for it.
-  const chunk = ['\x1bv', '\x16'].reduce((text, key) => text.replaceAll(key, () => `[Image #${++images}]`), input);
+  const chunk = ['\x1bv', '\x16'].reduce((text, key) => text.replaceAll(key, () => `[Image #${++images}]`), typed);
   for (const ch of chunk) {
     if (ch === '\x03') {
       if (Date.now() - lastInterrupt < 2000) exit(0);
@@ -112,6 +119,11 @@ process.stdin.on('data', async (input) => {
         writeRegistry('waiting');
         await hook('Notification', { notification_type: 'permission_prompt', message: 'Claude needs your permission' });
         process.stdout.write('Allow? (Enter)\r\n');
+        continue;
+      }
+      if (prompt === '/mouse') {
+        // Mouse reporting (presses and releases, SGR), as Claude Code's fullscreen mode turns on.
+        process.stdout.write('\x1b[?1000h\x1b[?1006hmouse on\r\n> ');
         continue;
       }
       if (prompt === '/clear') {

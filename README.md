@@ -68,7 +68,7 @@ On macOS, use Cmd instead of Ctrl. Everything else goes to Claude Code as usual.
 | Ctrl+,                 | Settings                                                                                                 |
 | Ctrl+= (or +) / Ctrl+- | Larger / smaller text in all terminals (also Ctrl+mouse wheel over a tile); Ctrl+0: back to normal       |
 | Ctrl+C / Ctrl+V        | Copy the selection (otherwise Ctrl+C goes to Claude) / paste text, copied files or an image              |
-| Right-click            | Copy the selection; without one, paste (like Ctrl+V)                                                     |
+| Right-click            | Copy the selection, otherwise paste (like Ctrl+V); in Claude Code's fullscreen mode: Shift+right-click   |
 
 ## Install
 

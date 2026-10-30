@@ -1,7 +1,8 @@
 // End to end: files dropped onto a tile are typed in as their paths (one that exists only in memory is saved to
 // a temporary file first), and Ctrl+V pastes text, the paths of copied files, or leaves an image to Claude Code
 // (its paste key, which the fake answers with an "[Image #n]" chip). Right-click copies the selection or, without
-// one, pastes. The clipboard is faked through a test hook, so the real one is only read, never changed.
+// one, pastes, unless the program reads the mouse (then Shift+right-click does). The clipboard is faked through a
+// test hook, so the real one is only read, never changed.
 import fs from 'node:fs';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
@@ -93,6 +94,25 @@ test('dropping files and pasting text, files and images', async () => {
     await send();
     await expect.poll(prompts).toHaveLength(5);
     expect(prompts()[4]!.trim()).toBe('right-clicked words');
+
+    // A program that reads the mouse (Claude Code's fullscreen mode) gets the right-click and pastes on its own:
+    // reframe stays out of it, or the paste would come twice. Shift+right-click is reframe's again.
+    await page.keyboard.type('/mouse');
+    await send();
+    await callMain(app, 'fakeClipboard', { text: 'shift words', image: false, files: [] });
+    await page.waitForTimeout(300);
+    await page.mouse.click(word.x, word.y, { button: 'right' });
+    await page.waitForTimeout(300);
+    await send();
+    await expect.poll(prompts).toHaveLength(6);
+    expect(prompts()[5]!.trim()).toBe('[right click]');
+    await page.keyboard.down('Shift');
+    await page.mouse.click(word.x, word.y, { button: 'right' });
+    await page.keyboard.up('Shift');
+    await page.waitForTimeout(300);
+    await send();
+    await expect.poll(prompts).toHaveLength(7);
+    expect(prompts()[6]!.trim()).toBe('shift words');
 
     await callMain(app, 'fakeClipboard', null);
     await quit(app);

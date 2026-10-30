@@ -186,9 +186,12 @@ export class TerminalRegistry {
     element.className = 'terminal-host';
     // Readable from outside (e.g. by tests): xterm measures its characters on a canvas, not in the page.
     element.dataset.fontSize = String(this.fontSize);
-    // Right-click copies the selection and, without one, pastes, as in Windows Terminal.
+    // Right-click copies the selection and, without one, pastes, as in Windows Terminal. A program that reads the
+    // mouse (Claude Code's fullscreen mode) gets the right-click and does its own copy or paste; Shift keeps it here
+    // (xterm does not pass a Shift-click on).
     element.addEventListener('contextmenu', (event) => {
       event.preventDefault();
+      if (term.modes.mouseTrackingMode !== 'none' && !event.shiftKey) return;
       if (!copySelection(term)) pasteClipboard(term, input, this.wsl.get(sessionId));
       term.focus();
     });
