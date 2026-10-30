@@ -67,6 +67,25 @@ export function fontSizeAfter(size: number, change: TextSizeChange): number {
   return Math.min(FONT_SIZE.max, Math.max(FONT_SIZE.min, size + (change === 'bigger' ? 1 : -1)));
 }
 
+/** The terminals' font size as a window keeps it: changed at once, with the saved size coming back later. */
+export interface FontSizeState {
+  size: number;
+  /** A change sent to be saved whose echo is still to come; the echoes of earlier changes are passed over. */
+  awaited: number | null;
+}
+
+/** The state after a change, or null when the size stays (at the end of its range already). */
+export function changeFontSize(state: FontSizeState, change: TextSizeChange): FontSizeState | null {
+  const size = fontSizeAfter(state.size, change);
+  return size === state.size ? null : { size, awaited: size };
+}
+
+/** The state once a saved size comes back: taken, unless a later change of this window is still on its way. */
+export function echoFontSize(state: FontSizeState, saved: number): FontSizeState {
+  if (state.awaited !== null && saved !== state.awaited) return state;
+  return { size: saved, awaited: null };
+}
+
 /** How a shortcut is written in hints, e.g. "Ctrl+Shift+T" ("Strg+Umschalt+T"), or "⌘⇧T" on macOS. */
 export function shortcutLabel(key: string, words: { ctrl: string; shift: string }, mac: boolean, shift = true): string {
   if (mac) return `⌘${shift ? '⇧' : ''}${key}`;

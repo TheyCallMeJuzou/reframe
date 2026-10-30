@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { fontSizeAfter, shortcutFor, shortcutLabel } from './shortcuts';
+import {
+  changeFontSize,
+  echoFontSize,
+  fontSizeAfter,
+  shortcutFor,
+  shortcutLabel,
+  type FontSizeState,
+} from './shortcuts';
 
 /** A key press; `key` is the character it makes (by default the letter or digit of `code`). */
 const press = (
@@ -65,6 +72,26 @@ describe('shortcutFor', () => {
     expect(shortcutFor(press('Minus', { ctrl: true, shift: true }, '_'), false)).toBeNull();
     expect(shortcutFor(press('Digit0', { ctrl: true, shift: true }, '='), false)).toBeNull();
     expect(shortcutFor(press('Minus', {}, '-'), false)).toBeNull();
+  });
+});
+
+describe('changeFontSize and echoFontSize', () => {
+  it('changes at once and takes a saved size back only once no change of its own is on its way', () => {
+    // Ctrl+= twice, then Ctrl+-: the echo of the first press (14) arrives in between and must not set 15 back.
+    let state: FontSizeState = { size: 13, awaited: null };
+    state = changeFontSize(state, 'bigger')!;
+    state = changeFontSize(state, 'bigger')!;
+    expect(state).toEqual({ size: 15, awaited: 15 });
+    expect(echoFontSize(state, 14)).toBe(state);
+    state = changeFontSize(state, 'smaller')!;
+    expect(state.size).toBe(14);
+    expect(echoFontSize(echoFontSize(state, 15), 14)).toEqual({ size: 14, awaited: null });
+  });
+
+  it('takes another window’s change when nothing is on its way, and has no change at the end of the range', () => {
+    expect(echoFontSize({ size: 14, awaited: null }, 20)).toEqual({ size: 20, awaited: null });
+    expect(changeFontSize({ size: 32, awaited: null }, 'bigger')).toBeNull();
+    expect(changeFontSize({ size: 13, awaited: null }, 'reset')).toBeNull();
   });
 });
 

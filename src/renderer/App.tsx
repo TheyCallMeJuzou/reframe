@@ -14,7 +14,15 @@ import { AboutDialog } from './components/AboutDialog';
 import { SettingsDialog } from './components/SettingsDialog';
 import { neighbor, type Box } from './focus-nav';
 import { useSessionList } from './session-list';
-import { fontSizeAfter, shortcutFor, shortcutLabel, type Shortcut, type TextSizeChange } from './shortcuts';
+import {
+  changeFontSize,
+  echoFontSize,
+  shortcutFor,
+  shortcutLabel,
+  type FontSizeState,
+  type Shortcut,
+  type TextSizeChange,
+} from './shortcuts';
 import { SessionSidebar } from './components/SessionSidebar';
 import { TakeoverDialog } from './components/TakeoverDialog';
 
@@ -95,20 +103,23 @@ export function App({ terminals }: { terminals: TerminalRegistry }) {
   useLayoutEffect(() => {
     viewRef.current = view;
   }, [view]);
-  // The font size of the terminals, a preference: applied here at once (so quick presses add up), then saved.
-  const fontSize = useRef(view?.fontSize);
+  // The font size of the terminals, a preference: applied here at once (so quick presses add up), then saved. The
+  // saved size comes back with the view; one from before a change still on its way is passed over, or a quick
+  // Ctrl+= Ctrl+= Ctrl+- could land a step too low.
+  const fontSize = useRef<FontSizeState | null>(null);
   useEffect(() => {
     if (view?.fontSize === undefined) return;
-    fontSize.current = view.fontSize;
-    terminals.setFontSize(view.fontSize);
+    const next = echoFontSize(fontSize.current ?? { size: view.fontSize, awaited: null }, view.fontSize);
+    fontSize.current = next;
+    terminals.setFontSize(next.size);
   }, [view?.fontSize, terminals]);
   const changeTextSize = useCallback(
     (change: TextSizeChange) => {
-      if (fontSize.current === undefined) return;
-      const next = fontSizeAfter(fontSize.current, change);
+      const next = fontSize.current && changeFontSize(fontSize.current, change);
+      if (!next) return;
       fontSize.current = next;
-      terminals.setFontSize(next);
-      window.reframe.setPreferences({ fontSize: next });
+      terminals.setFontSize(next.size);
+      window.reframe.setPreferences({ fontSize: next.size });
     },
     [terminals],
   );
