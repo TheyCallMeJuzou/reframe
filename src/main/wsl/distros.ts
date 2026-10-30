@@ -5,7 +5,8 @@ import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
-import { WSL_SHARES } from '@shared/wsl';
+import { linuxPathOf, WSL_SHARES } from '@shared/wsl';
+import type { RegistryEntry } from '../claude/registry';
 import type { LogFn } from '../log';
 
 export interface WslInfo {
@@ -107,6 +108,52 @@ export function looksLikeClaude(cmdline: string): boolean {
     .some((arg) => /(^|\/)claude$|\/claude-code\/|\/\.local\/share\/claude\//.test(arg));
 }
 
+const SHELLS = new Set(['bash', 'sh', 'dash', 'zsh', 'fish', 'ksh', 'mksh', 'tcsh', 'csh', 'nu']);
+
+/** Whether a Linux command line (NUL-separated) is a shell's; a login shell's name starts with "-". */
+export function isShellCommand(cmdline: string): boolean {
+  const program = cmdline.split('\0')[0] ?? '';
+  return SHELLS.has(program.replace(/^-/, '').split('/').pop() ?? '');
+}
+
+/** The parent's pid in /proc/<pid>/stat, past the program's name (which may hold spaces and parentheses). */
+export function parentOf(stat: string): number | null {
+  const end = stat.lastIndexOf(')');
+  if (end < 0) return null;
+  const parent = Number(
+    stat
+      .slice(end + 1)
+      .trim()
+      .split(/\s+/)[1],
+  );
+  return Number.isInteger(parent) && parent > 0 ? parent : null;
+}
+
+/** The interop socket of a WSL session, from the environment of a process in it (/proc/<pid>/environ). */
+export function interopOf(environ: string): string | null {
+  const value = environ
+    .split('\0')
+    .find((variable) => variable.startsWith('WSL_INTEROP='))
+    ?.slice('WSL_INTEROP='.length);
+  return value?.startsWith('/') ? value : null;
+}
+
+/**
+ * What runs `program` (a Windows one, reframe's own executable) as node through the interop socket `interop`, to
+ * print the pid of its parent: the program that started that WSL session (the wsl.exe in its terminal tab).
+ */
+export function parentPidCommand(interop: string, program: string): string[] {
+  return [
+    'env',
+    `WSL_INTEROP=${interop}`,
+    'ELECTRON_RUN_AS_NODE=1',
+    'WSLENV=ELECTRON_RUN_AS_NODE',
+    program,
+    '-e',
+    'process.stdout.write(String(process.ppid))',
+  ];
+}
+
 type Events = {
   /** Claude Code was found in this distribution. */
   found: [distro: string];
@@ -122,6 +169,8 @@ export const SHARE_TIMEOUT_MS = 3_000;
 const NO_CLAUDE_MS = 30_000;
 /** How long the list of running distributions holds (the session list asks every few seconds). */
 const RUNNING_MS = 3_000;
+/** How long a claude whose terminal could not be told is left alone before it is asked again. */
+const NO_TERMINAL_MS = 5_000;
 
 export class WslDistros extends EventEmitter<Events> {
   readonly command = wslCommand();
@@ -193,10 +242,77 @@ export class WslDistros extends EventEmitter<Events> {
    * soon another program's, which must be neither listed as a claude nor ended as one.
    */
   async isClaude(distro: string, pid: number): Promise<boolean> {
-    const cmdline = await fs.promises
-      .readFile(path.win32.join(this.share, distro, 'proc', String(pid), 'cmdline'), 'utf8')
-      .catch(() => '');
-    return looksLikeClaude(cmdline);
+    return looksLikeClaude((await this.readProc(distro, pid, 'cmdline')) ?? '');
+  }
+
+  /**
+   * The Windows process whose console is the terminal of claude `entry` in `distro`: the program (wsl.exe) that
+   * started the WSL session it runs in. A Windows program started through that session's interop socket (claude's
+   * WSL_INTEROP) is that program's child, so reframe's own executable, run as node that way, tells which it is.
+   * Asked once per claude.
+   */
+  terminalOf(distro: string, entry: RegistryEntry): Promise<number | null> {
+    const key = [distro.toLowerCase(), entry.pid, entry.procStart ?? entry.startedAt].join(':');
+    let terminal = this.terminals.get(key);
+    if (!terminal) {
+      if (this.terminals.size > 200) this.terminals.clear();
+      terminal = this.askTerminal(distro, entry.pid);
+      this.terminals.set(key, terminal);
+      void terminal.then((pid) => {
+        if (!pid) setTimeout(() => this.terminals.delete(key), NO_TERMINAL_MS).unref();
+      });
+    }
+    return terminal;
+  }
+  private terminals = new Map<string, Promise<number | null>>();
+
+  private async askTerminal(distro: string, pid: number): Promise<number | null> {
+    const interop = interopOf((await this.readProc(distro, pid, 'environ')) ?? '');
+    const info = await this.info(distro);
+    const program = info && linuxPathOf(process.execPath, distro, info.mountRoot, this.share);
+    if (!interop || !program) {
+      this.log('warn', 'cannot tell the terminal of a claude in wsl', { distro, pid, interop, program });
+      return null;
+    }
+    const output = await this.run(['-d', distro, '-e', ...parentPidCommand(interop, program)], 10_000).catch(
+      (error: unknown) => String(error),
+    );
+    const terminal = /^\d+$/.test(output.trim()) ? Number(output.trim()) : null;
+    if (terminal) this.log('info', 'terminal of a claude in wsl found', { distro, pid, terminal });
+    else this.log('warn', 'cannot tell the terminal of a claude in wsl', { distro, pid, answer: output.slice(0, 300) });
+    return terminal;
+  }
+
+  /**
+   * The shells between Linux process `pid` and WSL's own process for its terminal, innermost first: the shell claude
+   * was typed into, the shell that one was started from, and so on. None when anything else is in between (tmux,
+   * say), where an "exit" typed into the terminal could reach another program.
+   */
+  async shellsOf(distro: string, pid: number): Promise<number[]> {
+    const shells: number[] = [];
+    let current = pid;
+    for (let depth = 0; depth < 6; depth++) {
+      const parent = parentOf((await this.readProc(distro, current, 'stat')) ?? '');
+      const cmdline = parent ? ((await this.readProc(distro, parent, 'cmdline')) ?? '') : '';
+      if (cmdline.split('\0')[0] === '/init') return shells;
+      if (!parent || !isShellCommand(cmdline)) return [];
+      shells.push(parent);
+      current = parent;
+    }
+    return [];
+  }
+
+  /** Whether Linux process `pid` runs with no program of its own running (a shell at its prompt). */
+  async idle(distro: string, pid: number): Promise<boolean> {
+    const children = await this.readProc(distro, pid, path.posix.join('task', String(pid), 'children'));
+    return children !== null && children.trim() === '';
+  }
+
+  /** A file in the folder /proc/<pid> of `distro`; null when it cannot be read (the process is gone, say). */
+  private readProc(distro: string, pid: number, file: string): Promise<string | null> {
+    return fs.promises
+      .readFile(path.win32.join(this.share, distro, 'proc', String(pid), ...file.split('/')), 'utf8')
+      .catch(() => null);
   }
 
   /**

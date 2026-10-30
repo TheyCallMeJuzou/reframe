@@ -1,6 +1,7 @@
 // Follows title-bar drags of other apps' windows (Windows). When a terminal window that hosts a claude
 // running outside reframe is dragged over one of our windows, it reports the pointer position (so the window
-// can show drop zones) and, on release, the drop with the sessions found in that terminal window.
+// can show drop zones) and, on release, the drop with the sessions found in that terminal window. A claude in
+// WSL is found by the wsl.exe of its terminal tab, whose console is the tab's.
 //
 // Dragging a tab out of Windows Terminal is no window move: the terminal only opens a new window for the tab
 // where it was released. A terminal window that appears over one of our windows, holding a claude that already
@@ -19,20 +20,29 @@ export interface Point {
   y: number;
 }
 
+/** A claude running outside reframe (from Claude Code's session registry). */
+export interface OutsideClaude {
+  entry: RegistryEntry;
+  /** Its WSL distribution; none for a claude on Windows itself. */
+  distro?: string;
+  /** The Windows process whose console is the claude's terminal: the claude, or in WSL its terminal's wsl.exe. */
+  consolePid: number;
+}
+
 export interface ForeignDrop {
   hwnd: string;
   title: string;
   windowId: string;
   point: Point;
-  sessions: RegistryEntry[];
+  sessions: OutsideClaude[];
 }
 
 export interface ForeignWatcherDeps {
   win32: Win32;
   /** Our visible window under a screen point. */
   windowAt: (point: Point) => string | undefined;
-  /** Claudes running outside reframe (Claude Code's session registry). */
-  externalSessions: () => RegistryEntry[];
+  /** Claudes running outside reframe. */
+  externalSessions: () => Promise<OutsideClaude[]>;
   log: LogFn;
 }
 
@@ -45,10 +55,11 @@ type Events = {
 interface Drag {
   hwnd: string;
   /** Sessions found in the window so far; null until the first lookup is done. */
-  sessions: RegistryEntry[] | null;
-  probing: Promise<RegistryEntry[]> | null;
+  sessions: OutsideClaude[] | null;
+  probing: Promise<OutsideClaude[]> | null;
   lastProbe: number;
-  timer: NodeJS.Timeout;
+  /** Follows the pointer once it is known that claudes run outside reframe. */
+  timer: NodeJS.Timeout | null;
   hovered: string | null;
 }
 
@@ -154,29 +165,32 @@ export class ForeignWindowWatcher extends EventEmitter<Events> {
     if (!isTerminalHost(host)) return;
     const rect = this.deps.win32.rect(hwnd);
     if (!rect || rect.width === 0 || rect.height === 0) return; // helper windows of shells, never seen
-    // Only claudes that already ran before the window appeared: one started in a new window was not dropped here.
-    const external = this.deps.externalSessions();
-    if (external.length === 0) return;
-    const recent = this.pointer && Date.now() - this.pointer.at <= POINTER_MS ? this.pointer.point : null;
+    const shownAt = Date.now();
+    const recent = this.pointer && shownAt - this.pointer.at <= POINTER_MS ? this.pointer.point : null;
     const at = point ?? recent ?? screen.getCursorScreenPoint();
     const windowId = this.deps.windowAt(at);
-    this.deps.log('info', 'new terminal window appeared', {
-      host,
-      overReframe: !!windowId,
-      point: at,
-      pointFrom: point ? 'test' : recent ? 'drag over reframe' : 'cursor',
-      window: process.platform === 'win32' ? screen.screenToDipRect(null, rect) : rect,
-    });
-    if (!windowId) return;
-    void this.probeAppeared(hwnd, external).then((sessions) => {
-      this.deps.log('info', 'claudes in the new terminal window', { sessions: sessions.length });
-      if (sessions.length > 0) {
-        this.emit('drop', { hwnd, title: this.deps.win32.title(hwnd), windowId, point: at, sessions });
-      }
+    void this.deps.externalSessions().then((all) => {
+      // Only claudes that already ran before the window appeared: one started in a new window was not dropped here.
+      const external = all.filter((c) => c.entry.startedAt === undefined || c.entry.startedAt < shownAt);
+      if (external.length === 0) return;
+      this.deps.log('info', 'new terminal window appeared', {
+        host,
+        overReframe: !!windowId,
+        point: at,
+        pointFrom: point ? 'test' : recent ? 'drag over reframe' : 'cursor',
+        window: process.platform === 'win32' ? screen.screenToDipRect(null, rect) : rect,
+      });
+      if (!windowId) return;
+      void this.probeAppeared(hwnd, external).then((sessions) => {
+        this.deps.log('info', 'claudes in the new terminal window', { sessions: sessions.length });
+        if (sessions.length > 0) {
+          this.emit('drop', { hwnd, title: this.deps.win32.title(hwnd), windowId, point: at, sessions });
+        }
+      });
     });
   }
 
-  private async probeAppeared(hwnd: string, external: RegistryEntry[]): Promise<RegistryEntry[]> {
+  private async probeAppeared(hwnd: string, external: OutsideClaude[]): Promise<OutsideClaude[]> {
     let waited = 0;
     for (const delay of APPEARED_PROBES_MS) {
       await new Promise((resolve) => setTimeout(resolve, delay - waited));
@@ -198,9 +212,10 @@ export class ForeignWindowWatcher extends EventEmitter<Events> {
   }
 
   /** Claude sessions whose console lives in terminal window `hwnd`. */
-  async sessionsIn(hwnd: string, external = this.deps.externalSessions()): Promise<RegistryEntry[]> {
+  async sessionsIn(hwnd: string, known?: OutsideClaude[]): Promise<OutsideClaude[]> {
+    const external = known ?? (await this.deps.externalSessions());
     if (external.length === 0) return [];
-    const result = await consoleHelper({ type: 'owners', pids: external.map((e) => e.pid) });
+    const result = await consoleHelper({ type: 'owners', pids: [...new Set(external.map((c) => c.consolePid))] });
     if (!result.ok) {
       this.deps.log('warn', 'could not map consoles to terminal windows', { error: result.error });
       return [];
@@ -210,33 +225,32 @@ export class ForeignWindowWatcher extends EventEmitter<Events> {
     if (pids.length > 0 && pidsInWindow(hwnd, owners).length === 0) {
       this.deps.log('info', 'matched a torn-out terminal tab by its vanished window', { pids });
     }
-    return external.filter((e) => pids.includes(e.pid));
+    return external.filter((c) => pids.includes(c.consolePid));
   }
 
   private begin(hwnd: string): void {
     this.cancel();
     // Moving windows is frequent: only terminals, and only while some claude runs outside reframe, cost more.
-    const external = this.deps.externalSessions();
-    if (external.length === 0) return;
     const host = this.hostOf(hwnd);
     if (!isTerminalHost(host)) return;
-    this.deps.log('info', 'terminal window drag started', { host, claudesElsewhere: external.length });
-    const drag: Drag = {
-      hwnd,
-      sessions: null,
-      probing: null,
-      lastProbe: 0,
-      hovered: null,
-      timer: setInterval(() => this.track(drag), TRACK_MS),
-    };
-    this.probe(drag);
+    const drag: Drag = { hwnd, sessions: null, probing: null, lastProbe: 0, hovered: null, timer: null };
     this.drag = drag;
+    void this.deps.externalSessions().then((external) => {
+      if (this.drag !== drag) return; // released (or another drag began) meanwhile: end() looked for itself
+      if (external.length === 0) {
+        this.drag = null;
+        return;
+      }
+      this.deps.log('info', 'terminal window drag started', { host, claudesElsewhere: external.length });
+      drag.timer = setInterval(() => this.track(drag), TRACK_MS);
+      void this.probe(drag, external);
+    });
   }
 
-  private probe(drag: Drag): Promise<RegistryEntry[]> {
+  private probe(drag: Drag, external?: OutsideClaude[]): Promise<OutsideClaude[]> {
     if (!drag.probing) {
       drag.lastProbe = Date.now();
-      drag.probing = this.sessionsIn(drag.hwnd).then((sessions) => {
+      drag.probing = this.sessionsIn(drag.hwnd, external).then((sessions) => {
         drag.sessions = sessions;
         drag.probing = null;
         return sessions;
@@ -267,7 +281,10 @@ export class ForeignWindowWatcher extends EventEmitter<Events> {
     let sessions = drag.sessions ?? (await this.probe(drag));
     // Dropped on us with nothing found yet: one more look, now that the window has settled.
     if (windowId && sessions.length === 0) sessions = await this.sessionsIn(hwnd);
-    this.deps.log('info', 'terminal window drag ended', { overReframe: !!windowId, sessions: sessions.length });
+    // A drag released before it was known whether claudes run outside reframe is worth a line only on us.
+    if (drag.timer || windowId) {
+      this.deps.log('info', 'terminal window drag ended', { overReframe: !!windowId, sessions: sessions.length });
+    }
     if (!windowId || sessions.length === 0) return;
     this.emit('drop', { hwnd, title: this.deps.win32.title(hwnd), windowId, point, sessions });
   }
@@ -276,7 +293,7 @@ export class ForeignWindowWatcher extends EventEmitter<Events> {
     const drag = this.drag;
     this.drag = null;
     if (!drag) return;
-    clearInterval(drag.timer);
+    if (drag.timer) clearInterval(drag.timer);
     if (drag.hovered) this.emit('hover', drag.hovered, null);
   }
 }

@@ -178,7 +178,6 @@ export interface OpenSessionsRequest {
 
 /** A claude found in a terminal window that was dropped onto reframe. */
 export interface ForeignCandidate {
-  pid: number;
   claudeSessionId: string;
   cwd: string;
   name?: string;
@@ -216,7 +215,8 @@ export interface ForeignPointerReport {
 }
 
 export interface ForeignDropAnswer {
-  pids: number[];
+  /** The sessions to take over (a pid alone could be a Windows claude's and, in WSL, a Linux one's). */
+  claudeSessionIds: string[];
   target: DropTarget | null;
 }
 

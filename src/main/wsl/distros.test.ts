@@ -1,5 +1,18 @@
-import { describe, expect, it } from 'vitest';
-import { decodeWslOutput, looksLikeClaude, parseDistroList, parseProbe } from './distros';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import {
+  decodeWslOutput,
+  interopOf,
+  isShellCommand,
+  looksLikeClaude,
+  parentOf,
+  parentPidCommand,
+  parseDistroList,
+  parseProbe,
+  WslDistros,
+} from './distros';
 
 describe('decodeWslOutput and parseDistroList', () => {
   it('reads the list in UTF-16 (older wsl.exe) and UTF-8', () => {
@@ -68,5 +81,95 @@ describe('parseProbe', () => {
 
   it('gives up without an answer', () => {
     expect(parseProbe('Ubuntu', 'command not found')).toBeNull();
+  });
+});
+
+describe('what a terminal tab in WSL holds', () => {
+  const argv = (...args: string[]) => args.join('\0');
+
+  it('knows shells by their command lines, login shells too', () => {
+    expect(isShellCommand(argv('-bash'))).toBe(true);
+    expect(isShellCommand(argv('/usr/bin/zsh', '-l'))).toBe(true);
+    expect(isShellCommand(argv('bash', '-lic', 'claude'))).toBe(true);
+    expect(isShellCommand(argv('fish'))).toBe(true);
+    expect(isShellCommand(argv('tmux', 'new'))).toBe(false);
+    expect(isShellCommand(argv('/init'))).toBe(false);
+    expect(isShellCommand('')).toBe(false);
+  });
+
+  it('reads the parent from /proc/<pid>/stat, whatever the program is called', () => {
+    expect(parentOf('29024 (claude) S 341 29024 341 34816 29024 4194304')).toBe(341);
+    expect(parentOf('77 (my (odd) prog) R 12 77 12 0')).toBe(12);
+    expect(parentOf('')).toBeNull();
+    expect(parentOf('1 (init) S 0 0')).toBeNull();
+  });
+
+  it('finds the interop socket in the environment', () => {
+    expect(interopOf(argv('HOME=/home/ann', 'WSL_INTEROP=/run/WSL/340_interop', 'TERM=xterm'))).toBe(
+      '/run/WSL/340_interop',
+    );
+    expect(interopOf(argv('HOME=/home/ann'))).toBeNull();
+    expect(interopOf('')).toBeNull();
+  });
+
+  it('runs the Windows program as node through the socket, which the Windows side must see in WSLENV', () => {
+    expect(parentPidCommand('/run/WSL/340_interop', '/mnt/c/reframe/reframe.exe')).toEqual([
+      'env',
+      'WSL_INTEROP=/run/WSL/340_interop',
+      'ELECTRON_RUN_AS_NODE=1',
+      'WSLENV=ELECTRON_RUN_AS_NODE',
+      '/mnt/c/reframe/reframe.exe',
+      '-e',
+      'process.stdout.write(String(process.ppid))',
+    ]);
+  });
+});
+
+describe('WslDistros: the shells around a claude', () => {
+  let share = '';
+  const before = process.env.REFRAME_WSL_SHARE;
+  afterEach(() => {
+    process.env.REFRAME_WSL_SHARE = before;
+    if (share) fs.rmSync(share, { recursive: true, force: true });
+  });
+
+  /** A distribution "Dist" whose /proc has these processes: pid → [parent, command line, children]. */
+  function distro(processes: Record<number, [number, string, number[]]>): WslDistros {
+    share = fs.mkdtempSync(path.join(os.tmpdir(), 'reframe-wsl-'));
+    for (const [pid, [parent, cmdline, children]] of Object.entries(processes)) {
+      const folder = path.join(share, 'Dist', 'proc', pid);
+      fs.mkdirSync(path.join(folder, 'task', pid), { recursive: true });
+      fs.writeFileSync(path.join(folder, 'stat'), `${pid} (${cmdline.split('\0')[0]}) S ${parent} ${pid}`);
+      fs.writeFileSync(path.join(folder, 'cmdline'), `${cmdline}\0`);
+      fs.writeFileSync(path.join(folder, 'task', pid, 'children'), children.map((c) => `${c} `).join(''));
+    }
+    process.env.REFRAME_WSL_SHARE = share;
+    return new WslDistros(() => {});
+  }
+
+  it("are the shells up to WSL's own process for the terminal, innermost first", async () => {
+    const wsl = distro({
+      10: [2, '/init', [20]],
+      20: [10, '-bash', [21]],
+      21: [20, 'bash', [30]],
+      30: [21, '/usr/local/bin/claude', []],
+    });
+    expect(await wsl.shellsOf('Dist', 30)).toEqual([21, 20]);
+    expect(await wsl.idle('Dist', 21)).toBe(false);
+    expect(await wsl.idle('Dist', 30)).toBe(true);
+    expect(await wsl.idle('Dist', 99)).toBe(false);
+  });
+
+  it("are none when claude is the terminal's own program, or anything else is in between", async () => {
+    const wsl = distro({
+      10: [2, '/init', [30, 15]],
+      30: [10, '/usr/local/bin/claude', []],
+      15: [10, 'tmux', [20]],
+      20: [15, '-bash', [31]],
+      31: [20, '/usr/local/bin/claude', []],
+    });
+    expect(await wsl.shellsOf('Dist', 30)).toEqual([]);
+    expect(await wsl.shellsOf('Dist', 31)).toEqual([]);
+    expect(await wsl.shellsOf('Dist', 99)).toEqual([]);
   });
 });

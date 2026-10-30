@@ -89,7 +89,7 @@ import {
   type WindowState,
   type Workspace,
 } from '@shared/state';
-import { listRunning, listRunningAsync, TranscriptIndex, type RunningExclusion } from './claude/discovery';
+import { listRunning, listRunningAsync, TranscriptIndex } from './claude/discovery';
 import { ClaudeWatcher } from './claude/watcher';
 import {
   claudeHome,
@@ -102,9 +102,10 @@ import {
 import { resolveClaude, type ClaudeBinary } from './claude/resolve';
 import { HookServer } from './hooks/server';
 import { consoleHelper } from './console';
-import { ForeignWindowWatcher, type ForeignDrop } from './foreign';
+import { ForeignWindowWatcher, type ForeignDrop, type OutsideClaude } from './foreign';
 import { activeByTitle, isShell, onlyShells } from './foreign-match';
 import { createLogger } from './log';
+import { isAlive } from './process';
 import { PtyHostClient } from './ptyhost-client';
 import { SessionManager, type IdentityPatch, type NotifyKind } from './sessions';
 import type { LaunchMode } from './claude/args';
@@ -1202,15 +1203,32 @@ export class ReframeApp {
   }
 
   /**
-   * The same for Windows' own claudes and other sessions only, for the window watcher, which asks while a window is
-   * dragged.
+   * The same for other sessions only, for the window watcher, which asks while a window is dragged: Windows' own
+   * claudes, and those in running WSL distributions with the wsl.exe of their terminal (one whose terminal cannot be
+   * told is left out).
    */
-  private externalRunningHere(): RegistryEntry[] {
-    const exclude: RunningExclusion = {
-      pids: this.ownProcesses(),
-      sessionIds: new Set(Object.values(this.state.sessions).map((r) => r.claudeSessionId)),
-    };
-    return listRunning(this.claudeHome, exclude).filter((entry) => entry.cwd);
+  private async outsideClaudes(): Promise<OutsideClaude[]> {
+    const ownIds = new Set(Object.values(this.state.sessions).map((r) => r.claudeSessionId));
+    const here = listRunning(this.claudeHome, { pids: this.ownProcesses(), sessionIds: ownIds })
+      .filter((entry) => entry.cwd)
+      .map((entry): OutsideClaude => ({ entry, consolePid: entry.pid }));
+    const wsl = this.wsl;
+    if (!wsl) return here;
+    const { sources } = await this.claudeSources();
+    const inWsl = await Promise.all(
+      sources
+        .filter((source) => source.distro)
+        .map(async (source) => {
+          const running = (await this.externalRunning(source)).filter((entry) => !ownIds.has(entry.sessionId));
+          return Promise.all(
+            running.map(async (entry): Promise<OutsideClaude | null> => {
+              const terminal = await wsl.terminalOf(source.distro!, entry);
+              return terminal ? { entry, distro: source.distro, consolePid: terminal } : null;
+            }),
+          );
+        }),
+    );
+    return [...here, ...inWsl.flat().filter((c): c is OutsideClaude => !!c)];
   }
 
   /** The processes of reframe's sessions (in a WSL distribution their Linux ids, as far as known). */
@@ -1642,7 +1660,7 @@ export class ReframeApp {
     this.foreign = new ForeignWindowWatcher({
       win32: api,
       windowAt: (point) => this.windows.windowAt(point),
-      externalSessions: () => this.externalRunningHere(),
+      externalSessions: () => this.outsideClaudes(),
       log: this.log,
     });
     this.foreign.on('hover', (windowId, point) => {
@@ -1680,13 +1698,15 @@ export class ReframeApp {
   private async takeOverWindowOnce(drop: ForeignDrop): Promise<void> {
     this.log('info', 'terminal window dropped on reframe', { title: drop.title, sessions: drop.sessions.length });
     this.windows.show(drop.windowId);
-    const active = activeByTitle(drop.title, drop.sessions);
-    const candidates: ForeignCandidate[] = drop.sessions.map((s) => ({
-      pid: s.pid,
-      claudeSessionId: s.sessionId,
-      cwd: s.cwd!,
-      name: s.name,
-      preselected: drop.sessions.length === 1 || s === active,
+    const active = activeByTitle(
+      drop.title,
+      drop.sessions.map((s) => s.entry),
+    );
+    const candidates: ForeignCandidate[] = drop.sessions.map(({ entry, distro }) => ({
+      claudeSessionId: entry.sessionId,
+      cwd: distro ? wslWindowsPath(distro, entry.cwd!, this.wsl!.share) : entry.cwd!,
+      name: entry.name,
+      preselected: drop.sessions.length === 1 || entry === active,
     }));
     const requestId = crypto.randomUUID();
     const answer = await new Promise<ForeignDropAnswer | null>((resolve) => {
@@ -1694,38 +1714,89 @@ export class ReframeApp {
       const { x, y } = this.toContent(drop.windowId, drop.point);
       this.windows.send(drop.windowId, IPC.foreignDrop, { requestId, x, y, candidates });
     });
-    const chosen = drop.sessions.filter((s) => answer?.pids.includes(s.pid));
+    const chosen = drop.sessions.filter((s) => answer?.claudeSessionIds.includes(s.entry.sessionId));
     if (chosen.length === 0) return this.log('info', 'terminal window takeover cancelled');
     this.log('info', 'terminal window takeover confirmed', {
       sessions: chosen.length,
+      wsl: chosen.filter((s) => s.distro).length,
       target: answer?.target ?? 'end of the window',
     });
 
     let target = answer?.target ?? null;
-    const shells: (number | undefined)[] = [];
-    for (const session of chosen) {
-      // Remember a shell in that console, to ask it afterwards what is left there.
-      const before = await consoleHelper({ type: 'console-processes', pid: session.pid });
-      shells.push(before.ok ? before.processes?.find((p) => isShell(p.name))?.pid : undefined);
+    const closeTabs: (() => Promise<void>)[] = [];
+    for (const { entry, distro, consolePid } of chosen) {
+      const source = distro ? await this.wslSource(distro) : this.ownSource();
+      if (!source) continue;
+      // Remember a shell in that console, to ask it afterwards what is left there. In WSL that is one on Windows
+      // that started wsl.exe, if any (not wsl.exe itself, nor the wsl.exe in System32 that starts the real one),
+      // and the shells in the distribution that claude was typed into.
+      const before = await consoleHelper({ type: 'console-processes', pid: consolePid });
+      const shell = before.ok
+        ? before.processes?.find(
+            (p) =>
+              isShell(p.name) &&
+              !(distro && (p.pid === consolePid || /^(wsl|conhost|openconsole)\.exe$/i.test(p.name ?? ''))),
+          )?.pid
+        : undefined;
+      const linuxShells = distro ? await this.wsl!.shellsOf(distro, entry.pid) : [];
       this.log(
         'info',
         'running in that terminal tab',
-        before.ok ? { processes: before.processes?.map((p) => p.name) } : { error: before.error },
+        before.ok
+          ? { processes: before.processes?.map((p) => p.name), ...(distro ? { shellsInWsl: linuxShells.length } : {}) }
+          : { error: before.error },
       );
-      const latest = readRegistryEntry(this.claudeHome, session.pid) ?? session;
-      const result = await stopExternalClaude(session.pid, this.log);
-      this.log(result === 'failed' ? 'warn' : 'info', 'other terminal stopped', { pid: session.pid, result });
-      if (result === 'failed') continue;
+      const latest =
+        (distro
+          ? await withTimeout(readRegistryEntryAsync(source.home, entry.pid), SHARE_TIMEOUT_MS, null)
+          : readRegistryEntry(this.claudeHome, entry.pid)) ?? entry;
+      if (!(await this.stopOutside(entry.pid, distro))) continue;
       const name = latest.nameSource === 'user' ? latest.name : undefined;
-      const record = await this.adopted(latest.sessionId, latest.cwd ?? session.cwd!, name);
+      const cwd = source.windowsPath(latest.cwd ?? entry.cwd!);
+      const record = await this.adopted(latest.sessionId, cwd, name, source.home);
       this.placeAndResume(drop.windowId, record, target);
       target = { key: tileKey(record.id), side: 'right' };
+      // Without a shell, the tab closed on its own together with claude.
+      if (distro) closeTabs.push(() => this.closeIdleWslTab(distro, consolePid, linuxShells, shell));
+      else if (shell !== undefined) closeTabs.push(() => this.closeIdleConsole(shell));
     }
 
-    for (const shell of shells) {
-      // Without a shell, the tab closed on its own together with claude.
-      if (shell !== undefined) await this.closeIdleConsole(shell);
+    for (const close of closeTabs) await close();
+  }
+
+  /**
+   * Closes the terminal tab of a claude taken over from WSL when nothing but shells is left there, as for a tab on
+   * Windows: each shell in the distribution that claude was typed into gets an "exit" (innermost first) once nothing
+   * runs in it, and nothing but shells besides wsl.exe (`wslPid`) on Windows; the last one ends wsl.exe. A shell on
+   * Windows that started wsl.exe is closeIdleConsole's then.
+   */
+  private async closeIdleWslTab(
+    distro: string,
+    wslPid: number,
+    linuxShells: number[],
+    windowsShell?: number,
+  ): Promise<void> {
+    const wsl = this.wsl!;
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    for (const shell of linuxShells) {
+      await sleep(500);
+      if (!(await wsl.idle(distro, shell))) {
+        return this.log('info', 'terminal tab stays open, something else runs there in wsl', { distro });
+      }
+      const left = await consoleHelper({ type: 'console-processes', pid: wslPid });
+      if (!left.ok) return this.log('info', 'terminal tab closed');
+      if (!onlyShells((left.processes ?? []).filter((p) => p.pid !== wslPid))) {
+        return this.log('info', 'terminal tab stays open, something else runs there', {
+          running: left.processes?.map((p) => p.name),
+        });
+      }
+      this.log('info', 'only a shell is left in the terminal tab, typing exit', { shell: 'wsl', distro });
+      await consoleHelper({ type: 'type', pid: wslPid, text: 'exit\r' });
+      for (let waited = 0; waited < 3000 && (await wsl.alive(distro, shell)); waited += 200) await sleep(200);
     }
+    if (windowsShell === undefined) return;
+    for (let waited = 0; waited < 3000 && isAlive(wslPid); waited += 200) await sleep(200);
+    if (!isAlive(wslPid)) await this.closeIdleConsole(windowsShell);
   }
 
   /**
@@ -2176,10 +2247,10 @@ export class ReframeApp {
       this.foreignRequests.delete(requestId as string);
       const valid =
         !!answer &&
-        Array.isArray(answer.pids) &&
-        answer.pids.every((p) => typeof p === 'number') &&
+        Array.isArray(answer.claudeSessionIds) &&
+        answer.claudeSessionIds.every((s) => typeof s === 'string') &&
         (answer.target === null || isDropTarget(answer.target));
-      request.resolve(valid ? { pids: answer.pids!, target: answer.target ?? null } : null);
+      request.resolve(valid ? { claudeSessionIds: answer.claudeSessionIds!, target: answer.target ?? null } : null);
     });
     on(IPC.removeSession, (_id, _event, sessionId: unknown) => {
       if (typeof sessionId === 'string') this.removeSession(sessionId);

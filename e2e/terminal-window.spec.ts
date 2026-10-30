@@ -2,7 +2,7 @@
 // a real console window (or a Windows Terminal tab, if that is the default terminal). The tests do what the
 // release of a dragged window, or a terminal tab torn out over reframe, does (REFRAME_E2E hooks), confirm the
 // dialog, and check that the session moved into reframe and that the console, with only cmd left, was closed
-// by typing "exit".
+// by typing "exit". One claude runs in WSL (the stand-in), in a shell that the stand-in wsl.exe plays.
 import { execFileSync, spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -20,6 +20,15 @@ const alive = (pid: number) => {
     return false;
   }
 };
+
+const parentOf = (pid: number) =>
+  Number(
+    execFileSync(
+      'powershell',
+      ['-NoProfile', '-Command', `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").ParentProcessId`],
+      { encoding: 'utf8' },
+    ).trim(),
+  );
 
 type Setup = ReturnType<typeof setup>;
 
@@ -52,16 +61,47 @@ async function outsideTerminal({ dir, project, env }: Setup, started: (shellPid:
   };
   await expect.poll(fakePid, { timeout: 20_000 }).toBeGreaterThan(0);
   const pid = fakePid();
-  const shellPid = Number(
-    execFileSync(
-      'powershell',
-      ['-NoProfile', '-Command', `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").ParentProcessId`],
-      { encoding: 'utf8' },
-    ).trim(),
-  );
+  const shellPid = parentOf(pid);
   expect(shellPid).toBeGreaterThan(0);
   started(shellPid);
   return { sessionId, pid, shellPid };
+}
+
+/**
+ * Starts claude (the fake) named "outside" in the distribution Fake of the WSL stand-in, as if typed into a shell
+ * there: in a console of its own, where cmd started the stand-in wsl.exe, which is that shell too. Resolves once
+ * claude is registered.
+ */
+async function wslTerminal({ dir, env }: Setup, started: (shellPid: number) => void) {
+  const share = env.REFRAME_WSL_SHARE!;
+  fs.mkdirSync(path.join(share, 'Fake', 'home', 'ann', 'proj'), { recursive: true });
+  const sessionId = crypto.randomUUID();
+  const command = `"${process.execPath}" "${env.REFRAME_WSL_EXE}" -d Fake --cd /home/ann/proj --exec env PATH=/usr/bin /usr/local/bin/claude --session-id ${sessionId} --name outside`;
+  spawn('cmd.exe', ['/c', 'start', '"reframe wsl test terminal"', 'cmd.exe', '/s', '/k', `"${command}"`], {
+    cwd: dir,
+    env: { ...env, REFRAME_FAKE_WSL_SHELL: '1' },
+    stdio: 'ignore',
+    windowsVerbatimArguments: true,
+  });
+  const registry = path.join(share, 'Fake', 'home', 'ann', '.claude', 'sessions');
+  const fakePid = () => {
+    try {
+      for (const file of fs.readdirSync(registry)) {
+        const entry = JSON.parse(fs.readFileSync(path.join(registry, file), 'utf8'));
+        if (entry.sessionId === sessionId) return entry.pid as number;
+      }
+    } catch {
+      // not there yet
+    }
+    return 0;
+  };
+  await expect.poll(fakePid, { timeout: 20_000 }).toBeGreaterThan(0);
+  const pid = fakePid();
+  const wslPid = parentOf(pid);
+  const shellPid = parentOf(wslPid);
+  expect(shellPid).toBeGreaterThan(0);
+  started(shellPid);
+  return { sessionId, pid, wslPid, shellPid };
 }
 
 /** Runs `run`; on failure keeps screenshots and prints the app log; always ends the outside terminal. */
@@ -116,6 +156,43 @@ test('a terminal window dropped onto reframe hands its claude over and closes', 
     await expect.poll(() => alive(shellPid), { timeout: 15_000 }).toBe(false);
     expect(readLog(s)).toContain('typing exit');
     expect(readLog(s)).toContain('repeated drop of the same terminal window ignored');
+
+    await quit(app);
+  });
+});
+
+test('a terminal window with a claude in WSL hands it over too, and its shells are left with "exit"', async () => {
+  await withOutsideTerminal('terminal-window-wsl', async (s, started) => {
+    const { sessionId, pid, wslPid, shellPid } = await wslTerminal(s, started);
+    const { app, page } = await launch(s.env);
+    await newSession(page, s.project, 'alpha');
+    const tile = (await tileByLabel(page, 'alpha').boundingBox())!;
+    const bounds = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.getContentBounds());
+    const point = { x: bounds.x + tile.x + tile.width / 2, y: bounds.y + tile.y + tile.height / 2 };
+
+    // The console of the claude in WSL is the one of the wsl.exe of its session.
+    const hwnd = await callMain<string | null>(app, 'terminalWindowOf', wslPid);
+    expect(hwnd).toBeTruthy();
+    expect(await callMain<boolean>(app, 'dropTerminalWindow', hwnd, point)).toBe(true);
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toContainText('outside');
+    await expect(dialog).toContainText(path.join(s.env.REFRAME_WSL_SHARE!, 'Fake', 'home', 'ann', 'proj'));
+    await dialog.getByRole('button', { name: 'Take over' }).click();
+
+    // claude ended in WSL (on a signal) and continues in reframe, in that distribution, under its name.
+    await expect.poll(() => alive(pid), { timeout: 15_000 }).toBe(false);
+    const outside = tileByLabel(page, 'outside');
+    await expect(outside).toBeVisible({ timeout: 15_000 });
+    await expect(outside.locator('.tile-cwd')).toHaveText('Fake ~/proj');
+    await expect
+      .poll(() => s.launches().filter((l) => l.event === 'start' && l.args.join(' ').includes(sessionId)).length)
+      .toBe(2);
+
+    // The shell claude was typed into got "exit", which ended wsl.exe; then cmd, which had started it, got one too.
+    await expect.poll(() => alive(wslPid), { timeout: 15_000 }).toBe(false);
+    await expect.poll(() => alive(shellPid), { timeout: 15_000 }).toBe(false);
+    expect(readLog(s)).toContain('"shell":"wsl"');
+    expect(readLog(s)).toContain('terminal of a claude in wsl found');
 
     await quit(app);
   });

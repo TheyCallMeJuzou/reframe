@@ -75,6 +75,10 @@ if (procFolder) {
   fs.mkdirSync(procFolder, { recursive: true });
   // As /proc/<pid>/cmdline has it: the distribution's claude and its arguments, NUL-separated.
   fs.writeFileSync(path.join(procFolder, 'cmdline'), ['/usr/local/bin/claude', ...args].join('\0'));
+  // Its parent (WSL's /init, or the shell it was typed into) and the interop socket of its WSL session.
+  fs.writeFileSync(path.join(procFolder, 'stat'), `${process.pid} (claude) S ${process.env.REFRAME_FAKE_PARENT ?? 1}`);
+  const interop = process.env.REFRAME_FAKE_INTEROP;
+  if (interop) fs.writeFileSync(path.join(procFolder, 'environ'), `HOME=/home/ann\0WSL_INTEROP=${interop}\0`);
 }
 process.stdout.write(`\x1b[1mFAKE CLAUDE\x1b[0m ${resumeId ? 'resumed' : 'new'} ${sessionId}\r\n> `);
 

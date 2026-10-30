@@ -17,7 +17,7 @@ export function TakeoverDialog({
 }) {
   const { t } = useApp();
   const [picked, setPicked] = useState(
-    () => new Set(request.candidates.filter((c) => c.preselected).map((c) => c.pid)),
+    () => new Set(request.candidates.filter((c) => c.preselected).map((c) => c.claudeSessionId)),
   );
   const confirmButton = useRef<HTMLButtonElement>(null);
   const single = request.candidates.length === 1;
@@ -25,7 +25,7 @@ export function TakeoverDialog({
   useEffect(() => confirmButton.current?.focus(), []);
 
   const answer = (confirmed: boolean) => {
-    window.reframe.answerForeignDrop(request.requestId, confirmed ? { pids: [...picked], target } : null);
+    window.reframe.answerForeignDrop(request.requestId, confirmed ? { claudeSessionIds: [...picked], target } : null);
     onDone();
   };
 
@@ -42,16 +42,16 @@ export function TakeoverDialog({
         <p className="modal-text">{single ? t('foreign.single') : t('foreign.multiple')}</p>
         <div className="takeover-list">
           {request.candidates.map((c) => (
-            <label key={c.pid} className="takeover-item">
+            <label key={c.claudeSessionId} className="takeover-item">
               {!single && (
                 <input
                   type="checkbox"
-                  checked={picked.has(c.pid)}
+                  checked={picked.has(c.claudeSessionId)}
                   onChange={(event) =>
                     setPicked((current) => {
                       const next = new Set(current);
-                      if (event.target.checked) next.add(c.pid);
-                      else next.delete(c.pid);
+                      if (event.target.checked) next.add(c.claudeSessionId);
+                      else next.delete(c.claudeSessionId);
                       return next;
                     })
                   }
