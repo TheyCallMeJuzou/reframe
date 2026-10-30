@@ -125,7 +125,8 @@ describe('what a terminal tab in WSL holds', () => {
   });
 });
 
-describe('WslDistros: the shells around a claude', () => {
+// The distributions' share is a Windows path (WSL is Windows only).
+describe.runIf(process.platform === 'win32')('WslDistros: the shells around a claude', () => {
   let share = '';
   const before = process.env.REFRAME_WSL_SHARE;
   afterEach(() => {
