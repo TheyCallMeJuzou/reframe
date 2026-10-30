@@ -28,6 +28,7 @@ import {
   isLayoutAction,
   isWindowEmpty,
   patchGroup,
+  windowsToRestore,
   putNode,
   takeNode,
   windowGroups,
@@ -209,10 +210,13 @@ export class ReframeApp {
     if (loaded.rejected) this.log('error', 'state file could not be used, set aside', loaded.rejected);
     this.state = loaded.state;
     if (this.state.windows.length === 0) this.state.windows.push(emptyWindow(crypto.randomUUID()));
-    // Closed empty windows that versions up to 0.6.1 kept (and showed again on a second launch) are of no use.
-    const leftovers = this.state.windows.filter((w, i) => i > 0 && w.hidden && isWindowEmpty(w));
-    if (leftovers.length > 0) {
-      this.state = { ...this.state, windows: this.state.windows.filter((w) => !leftovers.includes(w)) };
+    // Empty windows are not brought back (one stays when all are empty), and the first window with something in it
+    // is the first window from now on. Up to 0.6.1, closed empty windows were kept and shown again on a second launch.
+    const windows = windowsToRestore(this.state.windows);
+    const dropped = this.state.windows.length - windows.length;
+    if (dropped > 0) {
+      this.state = { ...this.state, windows };
+      this.store.save(this.state);
     }
     this.applyLanguage();
     this.log('info', 'reframe starting', {
@@ -223,7 +227,7 @@ export class ReframeApp {
       hidden,
       state: loaded.source,
       windows: this.state.windows.length,
-      ...(leftovers.length > 0 ? { closedEmptyWindowsDropped: leftovers.length } : {}),
+      ...(dropped > 0 ? { emptyWindowsDropped: dropped } : {}),
       sessions: Object.keys(this.state.sessions).length,
       claude: this.findClaude()?.source ?? 'not found',
       claudeHome: this.claudeHome,

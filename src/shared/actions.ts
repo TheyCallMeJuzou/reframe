@@ -177,6 +177,12 @@ export function isWindowEmpty(win: WindowState): boolean {
   return win.layout === null && win.dock.length === 0;
 }
 
+/** The windows a start brings back: the ones with something in them, or the first one when all are empty. */
+export function windowsToRestore(windows: WindowState[]): WindowState[] {
+  const kept = windows.filter((w) => !isWindowEmpty(w));
+  return kept.length > 0 ? kept : windows.slice(0, 1);
+}
+
 export function isDropTarget(value: unknown): value is DropTarget {
   if (!value || typeof value !== 'object') return false;
   const t = value as Record<string, unknown>;

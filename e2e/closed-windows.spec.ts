@@ -2,7 +2,7 @@
 // with sessions asks first: end them (the window goes; the first window stays, empty), keep them running in the
 // tray, or cancel; the answer can be kept. Kept in the tray, it does not come back when reframe is launched a second
 // time (only the windows that were open do); closed empty windows left over from older versions are dropped at the
-// start.
+// start. A restart brings no empty window back (unless all are empty): the first window with sessions is the first.
 import fs from 'node:fs';
 import path from 'node:path';
 import { expect, test, type ElectronApplication } from '@playwright/test';
@@ -18,6 +18,7 @@ import {
   pageOf,
   quit,
   setup,
+  tileByLabel,
   transferNode,
 } from './helpers';
 
@@ -91,6 +92,47 @@ test('closed windows stay closed: empty ones go, a second launch shows only the 
     await quit(app);
   } catch (error) {
     await captureWindows('closed-windows');
+    throw error;
+  } finally {
+    await cleanup(dir);
+  }
+});
+
+test('empty windows are not brought back by a restart; the window with sessions becomes the first', async () => {
+  const { dir, project, env, state, byName } = setup();
+  try {
+    let { app, page } = await launch(env);
+    await newSession(page, project, 'alpha');
+    const mainId = state().windows[0]!.id;
+    // alpha moves to a second window, which leaves the first one empty; a third window is opened and left empty.
+    let opened = app.waitForEvent('window');
+    const secondId = await callMain<string>(app, 'newWindow');
+    const second = await opened;
+    await transferNode(second, tileKey(byName('alpha').id), mainId, null);
+    await expect(second.locator('.tile')).toHaveCount(1);
+    await expect(page.getByText('No sessions yet')).toBeVisible();
+    opened = app.waitForEvent('window');
+    const thirdId = await callMain<string>(app, 'newWindow');
+    await expect((await opened).getByText('No sessions yet')).toBeVisible();
+    expect(state().windows.map((w) => w.id)).toEqual([mainId, secondId, thirdId]);
+    await quit(app);
+
+    // Only the window with alpha comes back, as the first window now.
+    ({ app, page } = await launch(env));
+    await expect.poll(() => state().windows.map((w) => w.id)).toEqual([secondId]);
+    await expect(tileByLabel(page, 'alpha').locator('.status-idle')).toBeVisible({ timeout: 15_000 });
+    expect(app.windows()).toHaveLength(1);
+
+    // Its session ends: the only window, empty now, comes back all the same (something has to).
+    await page.locator('.tile').getByRole('button', { name: 'End session' }).click();
+    await expect(page.getByText('No sessions yet')).toBeVisible();
+    await quit(app);
+    ({ app, page } = await launch(env));
+    await expect.poll(() => state().windows.map((w) => w.id)).toEqual([secondId]);
+    await expect(page.getByText('No sessions yet')).toBeVisible();
+    await quit(app);
+  } catch (error) {
+    await captureWindows('empty-windows');
     throw error;
   } finally {
     await cleanup(dir);

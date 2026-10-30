@@ -13,6 +13,7 @@ import {
   windowGroups,
   windowHasSession,
   windowSessions,
+  windowsToRestore,
 } from './actions';
 import { addToGroup, groupOf, groupTile, leaves, tileKey } from './layout';
 import { emptyWindow } from './state';
@@ -56,6 +57,18 @@ describe('isWindowEmpty', () => {
     expect(collapsed.layout).toBeNull();
     expect(isWindowEmpty(collapsed)).toBe(false);
     expect(isWindowEmpty(dropSession(collapsed, 'a'))).toBe(true);
+  });
+});
+
+describe('windowsToRestore', () => {
+  it('leaves empty windows out, and keeps the first one only when all are empty', () => {
+    const tiles = addTile(emptyWindow('tiles'), 'a');
+    const collapsed = applyLayoutAction(addTile(emptyWindow('collapsed'), 'b'), {
+      type: 'tile/collapse',
+      sessionId: 'b',
+    });
+    expect(windowsToRestore([emptyWindow('x'), tiles, emptyWindow('y'), collapsed])).toEqual([tiles, collapsed]);
+    expect(windowsToRestore([emptyWindow('x'), emptyWindow('y')])).toEqual([emptyWindow('x')]);
   });
 });
 

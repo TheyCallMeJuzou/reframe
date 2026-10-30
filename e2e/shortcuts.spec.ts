@@ -52,7 +52,7 @@ test('keyboard shortcuts and new windows', async () => {
     await page.keyboard.press('Escape');
     await expect(page.getByRole('dialog')).toHaveCount(0);
 
-    // Ctrl+Shift+N: a new, empty window, which comes back after a restart.
+    // Ctrl+Shift+N: a new, empty window. Still empty when reframe quits, it is not brought back.
     const opened = app.waitForEvent('window');
     await page.keyboard.press('ControlOrMeta+Shift+N');
     const second = await opened;
@@ -62,8 +62,9 @@ test('keyboard shortcuts and new windows', async () => {
 
     const mainId = state().windows[0]!.id;
     app = (await launch(env)).app;
-    await expect.poll(() => app.windows().length, { timeout: 10_000 }).toBe(2);
+    await expect.poll(() => state().windows.map((w) => w.id)).toEqual([mainId]);
     await expect((await pageOf(app, mainId)).locator('.tile')).toHaveCount(3);
+    expect(app.windows()).toHaveLength(1);
     await quit(app);
   } catch (error) {
     await captureWindows('shortcuts');
