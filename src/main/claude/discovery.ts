@@ -187,6 +187,11 @@ export class TranscriptIndex {
     return file ? this.info(file) : null;
   }
 
+  /** When each session's transcript was last written (without reading them), by session id. */
+  async modifiedTimes(): Promise<Map<string, number>> {
+    return new Map((await this.files()).map((f) => [f.sessionId, f.modifiedAt]));
+  }
+
   /** The transcripts, newest first; read without blocking (in WSL they are behind a network share). */
   private files(): Promise<TranscriptFile[]> {
     // Asked again while listing: the same answer (what changes meanwhile is listed next time).

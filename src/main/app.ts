@@ -97,7 +97,7 @@ import {
   isRunningEntry,
   readRegistryEntry,
   readRegistryEntryAsync,
-  transcriptExistsAsync,
+  transcriptModifiedAsync,
   type RegistryEntry,
 } from './claude/registry';
 import { resolveClaude, type ClaudeBinary } from './claude/resolve';
@@ -253,6 +253,7 @@ export class ReframeApp {
     });
     this.sessions.on('identity', (id, patch) => this.updateIdentity(id, patch));
     this.sessions.on('notify', (id, kind) => this.notify(id, kind));
+    this.sessions.on('used', (id) => this.sessionUsed(id));
     this.sessions.on('ended', (id) => this.sessionEnded(id));
     // Distributions with Claude Code are remembered, so the list can tell when one is not running.
     this.wsl?.on('found', (distro) => {
@@ -729,8 +730,18 @@ export class ReframeApp {
     this.updateSession(sessionId, {
       ...next,
       ...(intoWorktree ? { launch: { ...record.launch, worktreeCreated: true } } : {}),
-      lastActiveAt: Date.now(),
     });
+  }
+
+  /** A session was used (see countsAsUse): the list shows it as just used, and puts it first. */
+  private sessionUsed(sessionId: string): void {
+    const record = this.state.sessions[sessionId];
+    if (!record) return;
+    const next = { ...record, lastActiveAt: Date.now() };
+    this.state = { ...this.state, sessions: { ...this.state.sessions, [sessionId]: next } };
+    // Every prompt and answer: written with the next save, or in a moment.
+    this.store.saveSoon(this.state);
+    this.listChanged();
   }
 
   private async createSession(windowId: string, request: NewSessionRequest): Promise<NewSessionResult> {
@@ -772,10 +783,10 @@ export class ReframeApp {
     if (!record || this.sessions.isRunning(sessionId)) return;
     const next: SessionRecord = {
       ...record,
-      // A fresh start has had no prompt yet, whatever the session before it had.
-      ...(fresh ? { claudeSessionId: crypto.randomUUID(), used: false } : {}),
+      // A fresh start has had no prompt yet, whatever the session before it had; it is a new conversation, as new
+      // as a new session. Resumed, it was last used when it was last used.
+      ...(fresh ? { claudeSessionId: crypto.randomUUID(), used: false, lastActiveAt: Date.now() } : {}),
       lifecycle: 'open',
-      lastActiveAt: Date.now(),
     };
     this.state = { ...this.state, sessions: { ...this.state.sessions, [sessionId]: next } };
     this.save();
@@ -804,8 +815,17 @@ export class ReframeApp {
           await this.showError(windowId!, this.t('takeover.failed'));
           return this.sessions.refuse(sessionId, 'runningElsewhere');
         }
-        // Resumed in another folder, the conversation went on there; so it does here.
-        if (outside.entry.cwd) this.updateSession(sessionId, { cwd: outside.source.windowsPath(outside.entry.cwd) });
+        // Resumed in another folder, the conversation went on there; so it does here. It was used there, too.
+        const usedThere = await withTimeout(
+          transcriptModifiedAsync(outside.source.home, record.claudeSessionId),
+          SHARE_TIMEOUT_MS,
+          null,
+        );
+        const latest = this.state.sessions[sessionId];
+        this.updateSession(sessionId, {
+          ...(outside.entry.cwd ? { cwd: outside.source.windowsPath(outside.entry.cwd) } : {}),
+          ...(latest && usedThere && usedThere > latest.lastActiveAt ? { lastActiveAt: usedThere } : {}),
+        });
       }
     } catch (error) {
       this.log('error', 'could not tell whether a session runs elsewhere, starting it', { error: String(error) });
@@ -1009,11 +1029,26 @@ export class ReframeApp {
     const sources = scanned.map(({ source }) => source);
     const ownIds = new Set(records.map((r) => r.claudeSessionId));
     const resumedElsewhere = new Set(scanned.flatMap(({ running }) => running.map((e) => e.sessionId)));
+    // When what runs outside reframe was last used: when its transcript was last written. Sources where nothing
+    // runs are not asked.
+    const usedOutside = new Map<string, number>();
+    await Promise.all(
+      scanned
+        .filter(({ running }) => running.length > 0)
+        .map(async ({ source, running: entries }) => {
+          const times = await source.transcripts.modifiedTimes();
+          for (const entry of entries) {
+            const time = times.get(entry.sessionId) ?? entry.startedAt;
+            if (time) usedOutside.set(entry.sessionId, time);
+          }
+        }),
+    );
 
     const app: AppListItem[] = records
       .map((record): AppListItem => {
         const view = this.sessionView(record);
         const win = this.windowOf(record.id);
+        const elsewhere = resumedElsewhere.has(record.claudeSessionId) && !this.sessions.keepsRunning(record.id);
         return {
           kind: 'app',
           id: record.id,
@@ -1023,8 +1058,9 @@ export class ReframeApp {
           lifecycle: record.lifecycle,
           windowId: win?.id ?? null,
           windowNumber: win ? this.state.windows.indexOf(win) + 1 : null,
-          lastActiveAt: record.lastActiveAt,
-          elsewhere: resumedElsewhere.has(record.claudeSessionId) && !this.sessions.keepsRunning(record.id),
+          // Resumed in another terminal, it may have been used there since.
+          lastActiveAt: Math.max(record.lastActiveAt, (elsewhere && usedOutside.get(record.claudeSessionId)) || 0),
+          elsewhere,
         };
       })
       .filter((item) => matches(item.label, item.cwd))
@@ -1041,6 +1077,7 @@ export class ReframeApp {
             claudeSessionId: entry.sessionId,
             cwd: source.windowsPath(entry.cwd!),
             name: entry.name,
+            ...(usedOutside.has(entry.sessionId) ? { lastActiveAt: usedOutside.get(entry.sessionId) } : {}),
             ...(source.distro ? { distro: source.distro } : {}),
           })),
       )
@@ -1446,7 +1483,8 @@ export class ReframeApp {
   ): Promise<SessionRecord> {
     // Without a transcript (no prompt yet) it starts fresh under the same id instead of failing to resume. A
     // distribution whose share does not answer in time is taken to have one (a resume without one says so).
-    const used = await withTimeout(transcriptExistsAsync(claudeHome, claudeSessionId), SHARE_TIMEOUT_MS, true);
+    // Its last use is when its transcript was last written: opening it here is not using it.
+    const modifiedAt = await withTimeout(transcriptModifiedAsync(claudeHome, claudeSessionId), SHARE_TIMEOUT_MS, 0);
     const now = Date.now();
     return {
       id: crypto.randomUUID(),
@@ -1456,8 +1494,8 @@ export class ReframeApp {
       launch: {},
       lifecycle: 'open',
       createdAt: now,
-      lastActiveAt: now,
-      used,
+      lastActiveAt: modifiedAt || now,
+      used: modifiedAt !== null,
     };
   }
 

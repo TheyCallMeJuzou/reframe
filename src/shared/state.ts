@@ -86,6 +86,7 @@ export const sessionRecordSchema = z.object({
   /** open: should run (resumed on start). ended: kept in the list but not running. */
   lifecycle: z.enum(['open', 'ended']),
   createdAt: z.number(),
+  /** When it was last used (see countsAsUse): a prompt, or Claude done or asking. Not when it was started. */
   lastActiveAt: z.number(),
   /** Last known process id, used to clean up orphans after a crash. */
   pid: z.number().optional(),

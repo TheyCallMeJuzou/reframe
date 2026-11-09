@@ -108,6 +108,7 @@ export interface AppListItem {
   /** Window that shows it (1-based number for display), or null when it is in no window. */
   windowId: string | null;
   windowNumber: number | null;
+  /** When it was last used: a prompt, or Claude done or asking (in another terminal: its transcript written). */
   lastActiveAt: number;
   /** Not running in reframe, but someone resumed its conversation in another terminal (or in WSL). */
   elsewhere: boolean;
@@ -120,6 +121,8 @@ export interface RunningListItem {
   claudeSessionId: string;
   cwd: string;
   name?: string;
+  /** When it was last used (its transcript written); without a transcript yet, when it started. */
+  lastActiveAt?: number;
   /** Runs in this WSL distribution (`pid` is a Linux one there). */
   distro?: string;
 }

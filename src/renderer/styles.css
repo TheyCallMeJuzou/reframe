@@ -1066,13 +1066,18 @@ select {
   background: var(--surface-2);
 }
 
-.sidebar-row-wrap .sidebar-row {
-  padding-right: 28px;
-}
-
 .sidebar-text {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+/* The name, and when the session was last used at its right end. */
+.sidebar-title-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   min-width: 0;
 }
 
@@ -1083,6 +1088,29 @@ select {
   text-overflow: ellipsis;
 }
 
+.sidebar-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.sidebar-used {
+  flex: none;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* A row that can be removed: the remove button takes the time's place while the mouse is on it. */
+.sidebar-row-wrap:has(.sidebar-remove) .sidebar-used {
+  min-width: 22px;
+}
+
+.sidebar-row-wrap:has(.sidebar-remove):hover .sidebar-used,
+.sidebar-row-wrap:has(.sidebar-remove:focus-visible) .sidebar-used {
+  visibility: hidden;
+}
+
 .sidebar-meta {
   color: var(--muted);
   font-size: 12px;
@@ -1090,9 +1118,9 @@ select {
 
 .sidebar-remove {
   position: absolute;
-  top: 50%;
+  /* On the name line, where the time is. */
+  top: 4px;
   right: 4px;
-  transform: translateY(-50%);
   opacity: 0;
 }
 

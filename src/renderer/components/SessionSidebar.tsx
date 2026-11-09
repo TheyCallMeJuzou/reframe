@@ -5,6 +5,7 @@ import { parseWslPath } from '@shared/wsl';
 import { useApp } from '../context';
 import { dragKind, setListDrag, setNodeDrag } from '../dnd';
 import { PAGE, type SessionListState } from '../session-list';
+import { exactTime, shortTime } from '../time';
 import { CloseIcon, LayersIcon } from './icons';
 import { NameInput } from './NameInput';
 import { StatusDot } from './StatusDot';
@@ -41,10 +42,10 @@ export function SessionSidebar({ sessionList }: { sessionList: SessionListState 
   const anchor = useRef<string | null>(null);
   const [renamingWorkspace, setRenamingWorkspace] = useState<string | null>(null);
   useEffect(() => window.reframe.onRenameWorkspace(setRenamingWorkspace), []);
-  // "5 minutes ago" moves on while the list stays the same.
-  const [, setMinute] = useState(0);
+  // "5 minutes ago" moves on while the list stays the same. A time newer than `now` (used since) shows as now.
+  const [now, setNow] = useState(Date.now);
   useEffect(() => {
-    const timer = setInterval(() => setMinute((n) => n + 1), 60_000);
+    const timer = setInterval(() => setNow(Date.now()), 30_000);
     return () => clearInterval(timer);
   }, []);
 
@@ -58,6 +59,14 @@ export function SessionSidebar({ sessionList }: { sessionList: SessionListState 
       return format.format(Math.round(hours / 24), 'day');
     };
   }, [locale]);
+  /** When a session was last used, short for its row and exact for hovering it. */
+  const used = (time: number | undefined): UsedTime | undefined =>
+    time === undefined
+      ? undefined
+      : {
+          short: shortTime(time, now, t, locale),
+          exact: t('list.usedAt', { when: exactTime(time, locale) }),
+        };
 
   const rows = useMemo<Row[]>(
     () =>
@@ -220,6 +229,7 @@ export function SessionSidebar({ sessionList }: { sessionList: SessionListState 
                 }
                 mark={<StatusDot status={item.status} />}
                 label={item.label}
+                used={used(item.lastActiveAt)}
                 meta={[
                   folderName(item.cwd),
                   parseWslPath(item.cwd)?.distro,
@@ -279,6 +289,7 @@ export function SessionSidebar({ sessionList }: { sessionList: SessionListState 
                 </span>
               }
               label={item.name ?? folderName(item.cwd)}
+              used={used(item.lastActiveAt)}
               meta={[folderName(item.cwd), item.distro, t('list.running')].filter(Boolean).join(' · ')}
             />
           );
@@ -294,7 +305,8 @@ export function SessionSidebar({ sessionList }: { sessionList: SessionListState 
               onDragStart={(event) => onRowDrag(row, event, () => setListDrag(event, [row.ref]))}
               mark={<StatusDot status="ended" />}
               label={item.title ?? folderName(item.cwd)}
-              meta={[folderName(item.cwd), item.distro, ago(item.modifiedAt)].filter(Boolean).join(' · ')}
+              used={used(item.modifiedAt)}
+              meta={[folderName(item.cwd), item.distro].filter(Boolean).join(' · ')}
             />
           );
         })}
@@ -308,6 +320,11 @@ export function SessionSidebar({ sessionList }: { sessionList: SessionListState 
   );
 }
 
+interface UsedTime {
+  short: string;
+  exact: string;
+}
+
 interface ListRowProps {
   selected: boolean;
   isNew?: boolean;
@@ -315,6 +332,8 @@ interface ListRowProps {
   title: string;
   mark: ReactNode;
   label: string;
+  /** When it was last used, at the end of the name line. */
+  used?: UsedTime;
   meta: string;
   onClick: (event: MouseEvent) => void;
   onContextMenu: (event: MouseEvent) => void;
@@ -327,7 +346,8 @@ function ListRow(p: ListRowProps) {
       className={`sidebar-row${p.selected ? ' is-selected' : ''}${p.isNew ? ' is-new' : ''}`}
       data-session={p.session}
       aria-pressed={p.selected}
-      title={p.title}
+      // The exact time of the last use, below the hint.
+      title={p.used ? `${p.title}\n${p.used.exact}` : p.title}
       draggable
       // Shift+click selects entries, not text.
       onMouseDown={(event) => event.shiftKey && event.preventDefault()}
@@ -337,7 +357,10 @@ function ListRow(p: ListRowProps) {
     >
       {p.mark}
       <span className="sidebar-text">
-        <span className="sidebar-title">{p.label}</span>
+        <span className="sidebar-title-line">
+          <span className="sidebar-title">{p.label}</span>
+          {p.used && <span className="sidebar-used">{p.used.short}</span>}
+        </span>
         <span className="sidebar-meta">{p.meta}</span>
       </span>
     </button>

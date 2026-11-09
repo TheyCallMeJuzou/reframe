@@ -7,6 +7,7 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import type { SessionStatus, SessionView } from '@shared/ipc';
+import { countsAsUse } from '@shared/last-used';
 import type { SessionRecord } from '@shared/state';
 import { parseWslPath, wslWindowsPath, type WslPath } from '@shared/wsl';
 import { claudeArgs, type LaunchMode } from './claude/args';
@@ -97,6 +98,8 @@ type Events = {
   /** Persisted identity changed: claude session id (after /clear), folder (worktrees), pid, or first use. */
   identity: [sessionId: string, patch: IdentityPatch];
   notify: [sessionId: string, kind: NotifyKind];
+  /** The session was just used: a prompt sent, or Claude done or asking something (see countsAsUse). */
+  used: [sessionId: string];
   /** The process ended on its own (not because reframe stopped it). */
   ended: [sessionId: string];
 };
@@ -581,7 +584,9 @@ export class SessionManager extends EventEmitter<Events> {
 
   private setStatus(sessionId: string, runtime: Runtime, status: SessionStatus): void {
     if (runtime.status === status) return;
+    const used = countsAsUse(runtime.status, status);
     runtime.status = status;
+    if (used) this.emit('used', sessionId);
     this.emit('changed', sessionId);
   }
 }

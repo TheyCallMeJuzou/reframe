@@ -115,20 +115,25 @@ export function transcriptExists(home: string, sessionId: string): boolean {
 }
 
 export async function transcriptExistsAsync(home: string, sessionId: string): Promise<boolean> {
+  return (await transcriptModifiedAsync(home, sessionId)) !== null;
+}
+
+/** When a session's transcript was last written (its last use), or null when it has none. */
+export async function transcriptModifiedAsync(home: string, sessionId: string): Promise<number | null> {
   const projects = path.join(home, 'projects');
   let dirs: string[];
   try {
     dirs = await fs.promises.readdir(projects);
   } catch {
-    return false;
+    return null;
   }
   // One after the other: a share does better with that than with hundreds of requests at once.
   for (const dir of dirs) {
-    const found = await fs.promises.access(path.join(projects, dir, `${sessionId}.jsonl`)).then(
-      () => true,
-      () => false,
+    const modifiedAt = await fs.promises.stat(path.join(projects, dir, `${sessionId}.jsonl`)).then(
+      (s) => s.mtimeMs,
+      () => null,
     );
-    if (found) return true;
+    if (modifiedAt !== null) return modifiedAt;
   }
-  return false;
+  return null;
 }
