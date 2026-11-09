@@ -14,6 +14,7 @@ export interface SavedSession {
   name?: string;
   claudeSessionId: string;
   lifecycle: string;
+  lastActiveAt: number;
   used?: boolean;
   pid?: number;
   linuxPid?: number;
