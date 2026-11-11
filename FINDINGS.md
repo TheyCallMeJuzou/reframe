@@ -89,7 +89,7 @@ Both sent Claude Code's image-paste key (Alt+V) and let it read the clipboard it
 to be the route Claude Code uses on Windows, which was not confirmed in its code.
 
 The prototype now reads the image itself (under 1 ms), writes it to
-`%TEMP%eframe-native-paste\` as PNG and pastes the path, which Claude Code turns into
+`%TEMP%\reframe-native-paste\` as PNG and pastes the path, which Claude Code turns into
 `[Image #1]` (checked with a real session, nothing submitted). The Electron version already does
 this for WSL sessions (`src/renderer/paste.ts`), so the same change there is small. The saved
 files are not cleaned up yet.
