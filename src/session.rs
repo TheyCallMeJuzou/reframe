@@ -179,6 +179,19 @@ impl Session {
         let _ = self.pty.send(Msg::Shutdown);
     }
 
+    /// How many visible characters use each colour pair; for checking what the program sent.
+    pub fn color_summary(&self) -> String {
+        let term = self.term.lock();
+        let mut seen = std::collections::BTreeMap::new();
+        for cell in term.grid().display_iter() {
+            if cell.c != ' ' {
+                *seen.entry(format!("{:?} on {:?}", cell.fg, cell.bg)).or_insert(0usize) += 1;
+            }
+        }
+        seen.into_iter().map(|(colors, count)| format!("{count:5}  {colors}
+")).collect()
+    }
+
     /// The visible screen as text, one line per row, trailing blanks removed.
     pub fn screen_text(&self) -> String {
         let term = self.term.lock();
