@@ -81,6 +81,19 @@ Layout-dependent input (AltGr, dead keys) is therefore untested.
 - GPUI is pre-1.0 and its packaging is confusing: the crates.io `gpui` is a year old, current
   snapshots come through `gpui-kit`. A rewrite ties itself to that project's releases.
 
+## Image paste (found during the hands-on test)
+
+Pasting an image "takes forever" in the Electron version and did so in the prototype at first.
+Both sent Claude Code's image-paste key (Alt+V) and let it read the clipboard itself. Reading a
+189x311 picture from the clipboard through PowerShell took 10.6 s on this machine; that is taken
+to be the route Claude Code uses on Windows, which was not confirmed in its code.
+
+The prototype now reads the image itself (under 1 ms), writes it to
+`%TEMP%eframe-native-paste\` as PNG and pastes the path, which Claude Code turns into
+`[Image #1]` (checked with a real session, nothing submitted). The Electron version already does
+this for WSL sessions (`src/renderer/paste.ts`), so the same change there is small. The saved
+files are not cleaned up yet.
+
 ## Not covered by the prototype
 
 Status dots and the hooks server, session list, takeover of external terminals, tray, settings,
@@ -100,7 +113,7 @@ target\release\reframe-native.exe --tile <folder> --tile \\wsl.localhost\Ubuntu\
 - [ ] Right-click pastes exactly once with mouse mode on; Shift+right-click pastes once;
       right-click copies a selection with mouse mode off.
 - [ ] German layout: `@ { } [ ] \ | ~ €` with AltGr, dead keys, umlauts, emoji from Win+.
-- [ ] Ctrl+C with and without a selection, Ctrl+V text, multi-line paste, image paste,
+- [ ] Ctrl+C with and without a selection, Ctrl+V text, multi-line paste, image paste (now fast?),
       Shift+Enter, Ctrl+Shift+- (undo), Esc, arrow keys in menus, Tab completion.
 - [ ] Dragging the splitter fast while claude is streaming: no garbage, no lost lines, no crash.
 - [ ] A long streaming answer: smooth, spinner and box characters aligned.

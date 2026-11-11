@@ -5217,6 +5217,7 @@ dependencies = [
  "alacritty_terminal",
  "futures",
  "gpui-kit",
+ "image",
  "uuid",
 ]
 

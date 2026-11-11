@@ -60,6 +60,8 @@ pub struct Launch {
     pub program: String,
     pub args: Vec<String>,
     pub cwd: PathBuf,
+    /// The session runs inside WSL: Windows paths handed to it are written as `/mnt/<drive>/...`.
+    pub wsl: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

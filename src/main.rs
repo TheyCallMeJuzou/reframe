@@ -26,16 +26,19 @@ struct Args {
     selftest: bool,
     /// For measurements: end the sessions and quit after this many seconds.
     hold: Option<u64>,
+    /// Times reading the clipboard and saving its image, prints the result and quits.
+    clip_test: bool,
 }
 
 fn parse_args() -> Args {
     let mut args =
-        Args { claude: None, wsl_claude: None, wsl_path: None, tiles: Vec::new(), dump: false, selftest: false, hold: None };
+        Args { claude: None, wsl_claude: None, wsl_path: None, tiles: Vec::new(), dump: false, selftest: false, hold: None, clip_test: false };
     let mut input = std::env::args().skip(1);
     while let Some(arg) = input.next() {
         match arg.as_str() {
             "--dump" => args.dump = true,
             "--selftest" => args.selftest = true,
+            "--clip-test" => args.clip_test = true,
             "--hold" => args.hold = input.next().and_then(|seconds| seconds.parse().ok()),
             "--claude" => args.claude = input.next(),
             "--wsl-claude" => args.wsl_claude = input.next(),
@@ -71,7 +74,7 @@ fn wsl_folder(folder: &Path) -> Option<(String, String)> {
 fn launch_for(args: &Args, claude: &str, folder: &Path) -> Launch {
     let session = vec!["--session-id".to_owned(), uuid::Uuid::new_v4().to_string()];
     let Some((distro, linux_path)) = wsl_folder(folder) else {
-        return Launch { program: claude.to_owned(), args: session, cwd: folder.to_owned() };
+        return Launch { program: claude.to_owned(), args: session, cwd: folder.to_owned(), wsl: false };
     };
     // No shell in between, so nothing the startup files print gets into the terminal.
     let wsl_claude = args.wsl_claude.clone().expect("a WSL tile needs --wsl-claude <path of claude in the distro>");
@@ -86,6 +89,7 @@ fn launch_for(args: &Args, claude: &str, folder: &Path) -> Launch {
         program: format!("{system_root}\\System32\\wsl.exe"),
         args: wsl_args,
         cwd: std::env::var_os("USERPROFILE").map(PathBuf::from).unwrap_or_else(|| folder.to_owned()),
+        wsl: true,
     }
 }
 
@@ -104,6 +108,15 @@ fn dump(launch: &Launch) {
     std::thread::sleep(Duration::from_secs(8));
     println!("{}", session.screen_text());
     print!("{}", session.color_summary());
+    // RFN_PASTE=<text>: paste it the way the tile does and show what the prompt makes of it.
+    if let Ok(text) = std::env::var("RFN_PASTE") {
+        session.write(input::paste_bytes(&text, true));
+        std::thread::sleep(Duration::from_secs(4));
+        println!("--- after pasting {text:?}");
+        for line in session.screen_text().lines().filter(|line| line.contains('❯') || line.contains("Image")) {
+            println!("{line}");
+        }
+    }
 
     let pid = session.pid.expect("no pid");
     let registry = registry_entry(pid);
@@ -324,6 +337,31 @@ fn main() {
 
     if args.dump {
         dump(&launches[0]);
+        return;
+    }
+
+    if args.clip_test {
+        gpui_kit::application().run(|cx| {
+            let started = std::time::Instant::now();
+            let item = cx.read_from_clipboard();
+            println!("read clipboard: {} ms", started.elapsed().as_millis());
+            for entry in item.iter().flat_map(|item| item.entries()) {
+                match entry {
+                    ClipboardEntry::String(_) => println!("entry: text"),
+                    ClipboardEntry::ExternalPaths(_) => println!("entry: files"),
+                    ClipboardEntry::Image(image) => {
+                        println!("entry: image {:?}, {} bytes", image.format, image.bytes.len());
+                        let started = std::time::Instant::now();
+                        let file = terminal_view::save_clipboard_image(image);
+                        println!("saved in {} ms: {file:?}", started.elapsed().as_millis());
+                        if let Some(file) = file {
+                            let _ = std::fs::remove_file(file);
+                        }
+                    }
+                }
+            }
+            cx.quit();
+        });
         return;
     }
 

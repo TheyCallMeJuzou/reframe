@@ -37,6 +37,7 @@ struct Layout {
 
 pub struct TerminalView {
     pub session: Session,
+    wsl: bool,
     pub focus: FocusHandle,
     pub title: Option<String>,
     pub exited: bool,
@@ -75,6 +76,7 @@ impl TerminalView {
         });
         Self {
             session,
+            wsl: launch.wsl,
             focus: cx.focus_handle(),
             title: None,
             exited: false,
@@ -200,12 +202,33 @@ impl TerminalView {
                     self.type_bytes(input::paste_bytes(&text, bracketed), cx);
                     return;
                 }
-                ClipboardEntry::Image(_) => {
-                    self.type_bytes(b"\x1bv".to_vec(), cx);
+                // An image is saved to a file here and pasted as its path, which Claude Code
+                // attaches as an image. Its own clipboard reader (Alt+V) starts PowerShell and
+                // took about ten seconds for a small picture; it stays as the fallback.
+                ClipboardEntry::Image(image) => {
+                    match save_clipboard_image(image) {
+                        Some(file) => {
+                            let path = self.path_for_session(&file);
+                            self.type_bytes(input::paste_bytes(&format!("{path} "), bracketed), cx);
+                        }
+                        None => self.type_bytes(b"\x1bv".to_vec(), cx),
+                    }
                     return;
                 }
                 _ => {}
             }
+        }
+    }
+
+    /// A Windows path as the session's program sees it.
+    fn path_for_session(&self, file: &std::path::Path) -> String {
+        let text = file.to_string_lossy();
+        let bytes = text.as_bytes();
+        if self.wsl && bytes.len() > 2 && bytes[1] == b':' {
+            let drive = (bytes[0] as char).to_ascii_lowercase();
+            format!("/mnt/{drive}{}", text[2..].replace('\\', "/"))
+        } else {
+            text.into_owned()
         }
     }
 
@@ -493,6 +516,30 @@ impl Render for TerminalView {
             .p(px(PADDING))
             .child(TerminalElement { view: cx.entity() })
     }
+}
+
+/// Writes a clipboard image into the temp folder and returns the file. PNG, JPEG, GIF and WebP
+/// are written as they are; the bitmap Windows hands out for most copies is converted to PNG.
+pub fn save_clipboard_image(image: &Image) -> Option<std::path::PathBuf> {
+    let folder = std::env::temp_dir().join("reframe-native-paste");
+    std::fs::create_dir_all(&folder).ok()?;
+    let name = uuid::Uuid::new_v4().simple().to_string();
+    let (extension, bytes) = match image.format {
+        ImageFormat::Png => ("png", image.bytes.clone()),
+        ImageFormat::Jpeg => ("jpg", image.bytes.clone()),
+        ImageFormat::Gif => ("gif", image.bytes.clone()),
+        ImageFormat::Webp => ("webp", image.bytes.clone()),
+        ImageFormat::Bmp | ImageFormat::Tiff => {
+            let decoded = image::load_from_memory(&image.bytes).ok()?;
+            let mut png = Vec::new();
+            decoded.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
+            ("png", png)
+        }
+        _ => return None,
+    };
+    let file = folder.join(format!("paste-{}.{extension}", &name[..8]));
+    std::fs::write(&file, bytes).ok()?;
+    Some(file)
 }
 
 fn to_hsla(color: Rgb) -> Hsla {
