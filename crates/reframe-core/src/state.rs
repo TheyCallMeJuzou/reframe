@@ -456,10 +456,11 @@ impl AppState {
     pub fn parse(text: &str) -> Result<AppState, StateError> {
         let invalid = |err: serde_json::Error| StateError::Invalid(err.to_string());
         let value: serde_json::Value = serde_json::from_str(text).map_err(invalid)?;
-        if let Some(version) = value.get("version").and_then(serde_json::Value::as_u64)
-            && version > u64::from(STATE_VERSION)
+        // Any number above this version counts as newer, as in reframe 0.x (also 1.5 or 2.0).
+        if let Some(version) = value.get("version").and_then(serde_json::Value::as_f64)
+            && version > f64::from(STATE_VERSION)
         {
-            return Err(StateError::Newer(version));
+            return Err(StateError::Newer(version.ceil() as u64));
         }
         let state: AppState = serde_json::from_value(value).map_err(invalid)?;
         if state.version != STATE_VERSION {

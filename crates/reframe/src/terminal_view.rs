@@ -355,10 +355,8 @@ impl TerminalView {
                 self.selecting = true;
             }
             // Right-click copies the selection, or pastes when there is none.
-            MouseButton::Right => {
-                if !self.copy_selection(cx) {
-                    self.paste(cx);
-                }
+            MouseButton::Right if !self.copy_selection(cx) => {
+                self.paste(cx);
             }
             _ => {}
         }
@@ -412,12 +410,12 @@ impl TerminalView {
             drop(term);
             cx.notify();
         }
-        if let Some(button) = self.reported_button.take() {
-            if let Some((col, row, _)) = self.cell_at(event.position) {
-                let mode = self.mode();
-                if let Some(report) = input::mouse_report(button, col, row, false, &event.modifiers, mode) {
-                    self.session.write(report);
-                }
+        if let Some(button) = self.reported_button.take()
+            && let Some((col, row, _)) = self.cell_at(event.position)
+        {
+            let mode = self.mode();
+            if let Some(report) = input::mouse_report(button, col, row, false, &event.modifiers, mode) {
+                self.session.write(report);
             }
         }
     }
@@ -783,7 +781,7 @@ impl Element for TerminalElement {
         let cursor_row = content.cursor.point.line.0 + offset;
         let cursor =
             (content.cursor.shape != CursorShape::Hidden && cursor_row >= 0 && (cursor_row as usize) < layout.rows)
-                .then(|| CursorPaint {
+                .then_some(CursorPaint {
                     col: content.cursor.point.column.0,
                     row: cursor_row as usize,
                     shape: content.cursor.shape,
@@ -922,18 +920,19 @@ impl Element for TerminalElement {
                         _ => {
                             window.paint_quad(fill(cell_bounds, color));
                             // The character under a block cursor is drawn again in the background colour.
-                            if let Some(cell) = frame.rows.get(cursor.row).and_then(|cells| cells.get(cursor.col)) {
-                                if cell.c != ' ' && !cell.spacer {
-                                    let inverted = CellPaint {
-                                        c: cell.c,
-                                        extra: None,
-                                        fg: to_hsla(colors::BACKGROUND),
-                                        bg: None,
-                                        flags: cell.flags,
-                                        spacer: false,
-                                    };
-                                    paint_text(cell.c.to_string(), origin, &inverted, cell_h, window, cx);
-                                }
+                            if let Some(cell) = frame.rows.get(cursor.row).and_then(|cells| cells.get(cursor.col))
+                                && cell.c != ' '
+                                && !cell.spacer
+                            {
+                                let inverted = CellPaint {
+                                    c: cell.c,
+                                    extra: None,
+                                    fg: to_hsla(colors::BACKGROUND),
+                                    bg: None,
+                                    flags: cell.flags,
+                                    spacer: false,
+                                };
+                                paint_text(cell.c.to_string(), origin, &inverted, cell_h, window, cx);
                             }
                         }
                     }
