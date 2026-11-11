@@ -13,13 +13,13 @@ Nothing here is meant to ship.
 
 ```
 cargo build --release
-targeteleaseeframe-native.exe --tile <folder> --tile <folder>
+target\release\reframe-native.exe --tile <folder> --tile <folder>
 ```
 
 Needs the stable MSVC Rust toolchain and the Visual Studio C++ build tools. `claude.exe` is taken
 from the PATH, or from `--claude <path>`.
 
-A tile under `\wsl.localhost\<distro>\...` runs claude inside that distro. It needs two more
+A tile under `\\wsl.localhost\<distro>\...` runs claude inside that distro. It needs two more
 values, which the Electron version probes by itself: `--wsl-claude <path of claude in the distro>`
 and `--wsl-path <the login shell's PATH there>`.
 
@@ -33,7 +33,7 @@ follow the Electron version.
 - `scripts\selftest.ps1 <folder>`: two real sessions; types, selects with the mouse and tears a
   tile out through the window's own input path, captures the windows, ends the sessions.
 - `scripts\measure.ps1 -RootPid <pid> -Label <name>`: memory and idle CPU of a running app.
-  `scriptsun-electron.mjs` starts the Electron version with an empty profile for the same
+  `scripts\run-electron.mjs` starts the Electron version with an empty profile for the same
   measurement; `--hold <seconds>` keeps the prototype idle and then ends it.
 
 No check sends a prompt to Claude.
