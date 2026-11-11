@@ -18,3 +18,18 @@ pub mod wsl;
 pub mod store;
 
 pub mod claude;
+
+// Being ported side by side: each group builds on its own until they are done.
+#[cfg(feature = "infra")]
+pub mod cleanup;
+#[cfg(feature = "infra")]
+pub mod hooks;
+#[cfg(feature = "infra")]
+pub mod log;
+#[cfg(feature = "infra")]
+pub mod paths;
+
+#[cfg(feature = "discovery")]
+pub mod discovery;
+
+pub mod session_logic;

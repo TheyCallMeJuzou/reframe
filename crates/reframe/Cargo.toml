@@ -16,3 +16,6 @@ gpui-kit = "0.9.1"
 image = { version = "0.25.10", default-features = false, features = ["png", "bmp", "tiff"] }
 uuid = { version = "1.29.2", features = ["v4"] }
 reframe-core = { path = "../reframe-core" }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+serde = { workspace = true, features = ["derive"] }

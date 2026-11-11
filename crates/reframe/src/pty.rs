@@ -1,9 +1,11 @@
-//! One claude process on a ConPTY, with its terminal state.
+//! A process on a pseudo console, with its terminal state.
 //!
-//! The terminal state (`Term`) lives once per session; any number of views in any window can draw
-//! it. That replaces the Electron version's headless mirror and its serialized snapshots.
+//! The terminal state (`Term`) lives once per process; any number of views in any window can
+//! draw it. That replaces the Electron version's PTY host with its headless mirror and the
+//! serialized snapshots sent to each view (`src/ptyhost/`).
 
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -20,32 +22,20 @@ use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use crate::colors;
 
 pub const SCROLLBACK: usize = 5000;
+/// The size a process starts with, before any view has measured itself (as in the Electron
+/// version).
 pub const INITIAL_COLS: u16 = 120;
 pub const INITIAL_ROWS: u16 = 32;
 
-/// Markers a parent Claude Code session leaves in the environment. A claude that inherits them
-/// runs as a "child session": no transcript, no registry entry. Same list as the Electron
-/// version's `src/main/claude/env.ts`.
-const PARENT_SESSION_VARS: &[&str] = &[
-    "CLAUDECODE",
-    "CLAUDE_PID",
-    "CLAUDE_CODE_CHILD_SESSION",
-    "CLAUDE_CODE_SESSION_ID",
-    "CLAUDE_CODE_SESSION_ATTENDED",
-    "CLAUDE_CODE_BRIDGE_SESSION_ID",
-    "CLAUDE_CODE_MESSAGING_SOCKET",
-    "CLAUDE_CODE_MESSAGING_TOKEN",
-    "CLAUDE_CODE_ENTRYPOINT",
-];
-
-/// Prepares this process's environment, which every session inherits. Call once, before any
-/// thread is started.
+/// Prepares this process's environment, which every child inherits: the terminal type, and none
+/// of the markers of a parent Claude Code session (see `reframe_core::claude::env`). Call once,
+/// before any thread is started.
 pub fn prepare_environment() {
-    let names: Vec<String> = std::env::vars_os()
+    let markers: Vec<String> = std::env::vars_os()
         .filter_map(|(name, _)| name.into_string().ok())
-        .filter(|name| PARENT_SESSION_VARS.iter().any(|v| v.eq_ignore_ascii_case(name)))
+        .filter(|name| reframe_core::claude::env::is_parent_session_marker(name))
         .collect();
-    for name in names {
+    for name in markers {
         unsafe { std::env::remove_var(name) };
     }
     unsafe {
@@ -54,14 +44,16 @@ pub fn prepare_environment() {
     }
 }
 
-/// What to run for a session.
-#[derive(Clone, Debug)]
+/// What to run.
+#[derive(Clone, Debug, Default)]
 pub struct Launch {
     pub program: String,
     pub args: Vec<String>,
+    /// The arguments are one ready-made command line (for cmd.exe) and must not be quoted again.
+    pub raw_args: bool,
     pub cwd: PathBuf,
-    /// The session runs inside WSL: Windows paths handed to it are written as `/mnt/<drive>/...`.
-    pub wsl: bool,
+    /// Variables on top of this process's environment.
+    pub env: HashMap<String, String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -105,8 +97,10 @@ impl EventListener for Listener {
             Event::PtyWrite(text) => self.reply(text),
             Event::ColorRequest(index, format) => self.reply(format(colors::indexed(index))),
             Event::TextAreaSizeRequest(format) => {
-                let size = *self.size.lock().unwrap();
-                self.reply(format(size));
+                let size = self.size.lock().map(|size| *size);
+                if let Ok(size) = size {
+                    self.reply(format(size));
+                }
             }
             other => {
                 let _ = self.ui.unbounded_send(other);
@@ -115,42 +109,30 @@ impl EventListener for Listener {
     }
 }
 
-pub struct Session {
+/// A handle to a running process and its terminal state. Cheap to clone; the process ends when
+/// [`Pty::shutdown`] is called (or when it exits by itself), not when a handle is dropped.
+#[derive(Clone)]
+pub struct Pty {
     pub term: Arc<FairMutex<Term<Listener>>>,
     pub pid: Option<u32>,
-    pty: EventLoopSender,
+    sender: EventLoopSender,
     size: Arc<Mutex<WindowSize>>,
 }
 
 fn window_size(size: TermSize, cell_width: u16, cell_height: u16) -> WindowSize {
-    WindowSize {
-        num_lines: size.rows,
-        num_cols: size.cols,
-        cell_width,
-        cell_height,
-    }
+    WindowSize { num_lines: size.rows, num_cols: size.cols, cell_width, cell_height }
 }
 
-impl Session {
+impl Pty {
     /// Starts the process. The receiver yields the events the UI has to act on (wakeups, title,
     /// bell, exit).
-    pub fn spawn(launch: &Launch) -> std::io::Result<(Session, UnboundedReceiver<Event>)> {
-        let size = TermSize {
-            cols: INITIAL_COLS,
-            rows: INITIAL_ROWS,
-        };
+    pub fn spawn(launch: &Launch) -> std::io::Result<(Pty, UnboundedReceiver<Event>)> {
+        let size = TermSize { cols: INITIAL_COLS, rows: INITIAL_ROWS };
         let initial = window_size(size, 8, 17);
         let (ui, events) = unbounded();
-        let listener = Listener {
-            ui,
-            pty: Arc::new(OnceLock::new()),
-            size: Arc::new(Mutex::new(initial)),
-        };
+        let listener = Listener { ui, pty: Arc::new(OnceLock::new()), size: Arc::new(Mutex::new(initial)) };
 
-        let config = Config {
-            scrolling_history: SCROLLBACK,
-            ..Config::default()
-        };
+        let config = Config { scrolling_history: SCROLLBACK, ..Config::default() };
         let term = Arc::new(FairMutex::new(Term::new(config, &size, listener.clone())));
 
         let program = if launch.program.contains(' ') && !launch.program.starts_with('"') {
@@ -162,8 +144,8 @@ impl Session {
             shell: Some(Shell::new(program, launch.args.clone())),
             working_directory: Some(launch.cwd.clone()),
             drain_on_exit: false,
-            env: Default::default(),
-            escape_args: true,
+            env: launch.env.clone(),
+            escape_args: !launch.raw_args,
         };
         let pty = tty::new(&options, initial, 0)?;
         let pid = pty.child_watcher().pid().map(|pid| pid.get());
@@ -173,50 +155,26 @@ impl Session {
         let _ = listener.pty.set(sender.clone());
         event_loop.spawn();
 
-        Ok((
-            Session {
-                term,
-                pid,
-                pty: sender,
-                size: listener.size,
-            },
-            events,
-        ))
+        Ok((Pty { term, pid, sender, size: listener.size }, events))
     }
 
     pub fn write(&self, bytes: impl Into<Cow<'static, [u8]>>) {
-        let _ = self.pty.send(Msg::Input(bytes.into()));
+        let _ = self.sender.send(Msg::Input(bytes.into()));
     }
 
     /// Resizes the terminal state and the pty together.
     pub fn resize(&self, size: TermSize, cell_width: u16, cell_height: u16) {
         let window = window_size(size, cell_width, cell_height);
-        *self.size.lock().unwrap() = window;
-        self.term.lock().resize(size);
-        let _ = self.pty.send(Msg::Resize(window));
-    }
-
-    pub fn shutdown(&self) {
-        let _ = self.pty.send(Msg::Shutdown);
-    }
-
-    /// How many visible characters use each colour pair; for checking what the program sent.
-    pub fn color_summary(&self) -> String {
-        let term = self.term.lock();
-        let mut seen = std::collections::BTreeMap::new();
-        for cell in term.grid().display_iter() {
-            if cell.c != ' ' {
-                *seen.entry(format!("{:?} on {:?}", cell.fg, cell.bg)).or_insert(0usize) += 1;
-            }
+        if let Ok(mut current) = self.size.lock() {
+            *current = window;
         }
-        seen.into_iter()
-            .map(|(colors, count)| {
-                format!(
-                    "{count:5}  {colors}
-"
-                )
-            })
-            .collect()
+        self.term.lock().resize(size);
+        let _ = self.sender.send(Msg::Resize(window));
+    }
+
+    /// Closes the pseudo console, which ends what still runs on it.
+    pub fn shutdown(&self) {
+        let _ = self.sender.send(Msg::Shutdown);
     }
 
     /// The visible screen as text, one line per row, trailing blanks removed.
@@ -228,10 +186,7 @@ impl Session {
             let mut line = String::new();
             for col in 0..grid.columns() {
                 let cell = &grid[Line(row as i32)][Column(col)];
-                if cell
-                    .flags
-                    .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
-                {
+                if cell.flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER) {
                     continue;
                 }
                 line.push(cell.c);
@@ -243,11 +198,5 @@ impl Session {
             text.push('\n');
         }
         text
-    }
-}
-
-impl Drop for Session {
-    fn drop(&mut self) {
-        self.shutdown();
     }
 }

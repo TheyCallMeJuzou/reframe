@@ -5219,7 +5219,10 @@ dependencies = [
  "gpui-kit",
  "image",
  "reframe-core",
+ "serde",
+ "serde_json",
  "uuid",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
