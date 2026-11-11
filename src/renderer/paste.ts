@@ -21,3 +21,12 @@ export function formatPaths(paths: string[], platform: string, wsl?: { distro: s
 export function imagePasteKey(platform: string): string {
   return platform === 'win32' ? '\x1bv' : '\x16';
 }
+
+/**
+ * Whether reframe saves the clipboard's image to a file and types its path, instead of sending Claude Code its
+ * image-paste key. In WSL Claude Code cannot reach the clipboard at all. On Windows it can, but reads it through
+ * PowerShell, which took about ten seconds for a small picture; a path it attaches at once.
+ */
+export function pastesImageAsFile(platform: string, wsl: boolean): boolean {
+  return wsl || platform === 'win32';
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatPaths, imagePasteKey } from './paste';
+import { formatPaths, imagePasteKey, pastesImageAsFile } from './paste';
 
 describe('formatPaths', () => {
   it('quotes Windows paths only where cmd and PowerShell would need it', () => {
@@ -30,5 +30,15 @@ describe('imagePasteKey', () => {
   it('is Alt+V on Windows and Ctrl+V elsewhere', () => {
     expect(imagePasteKey('win32')).toBe('\x1bv');
     expect(imagePasteKey('darwin')).toBe('\x16');
+  });
+});
+
+describe('pastesImageAsFile', () => {
+  it('saves the image on Windows and for any session in WSL, and leaves it to Claude Code elsewhere', () => {
+    expect(pastesImageAsFile('win32', false)).toBe(true);
+    expect(pastesImageAsFile('win32', true)).toBe(true);
+    expect(pastesImageAsFile('linux', true)).toBe(true);
+    expect(pastesImageAsFile('darwin', false)).toBe(false);
+    expect(pastesImageAsFile('linux', false)).toBe(false);
   });
 });

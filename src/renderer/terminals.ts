@@ -13,7 +13,7 @@ import {
   type TerminalViewMessage,
 } from '@shared/ipc';
 import { FONT_SIZE } from '@shared/state';
-import { formatPaths, imagePasteKey } from './paste';
+import { formatPaths, imagePasteKey, pastesImageAsFile } from './paste';
 
 interface Entry {
   sessionId: string;
@@ -283,19 +283,22 @@ function copySelection(term: Terminal): boolean {
 }
 
 /**
- * Pastes text; files copied in a file manager come in as their paths, and an image is left to Claude Code, which
- * reads it from the clipboard on its own paste key. Claude Code in WSL cannot reach the clipboard: it gets the image
- * as a file instead. Everything pasted comes through here (not the browser's own paste), so text, files and images
- * agree.
+ * Pastes text; files copied in a file manager come in as their paths. An image is saved to a file and comes in as
+ * its path where Claude Code cannot read the clipboard (WSL) or is slow to (Windows); elsewhere it is left to
+ * Claude Code, which reads it from the clipboard on its own paste key. Everything pasted comes through here (not
+ * the browser's own paste), so text, files and images agree.
  */
 function pasteClipboard(term: Terminal, input: (data: string) => void, wsl: SessionView['wsl']): void {
+  const { platform } = window.reframe;
   void window.reframe.readClipboard().then((clipboard) => {
     if (clipboard.text) term.paste(clipboard.text);
-    else if (clipboard.files.length > 0) term.paste(formatPaths(clipboard.files, window.reframe.platform, wsl));
-    else if (clipboard.image && wsl) {
+    else if (clipboard.files.length > 0) term.paste(formatPaths(clipboard.files, platform, wsl));
+    else if (clipboard.image && pastesImageAsFile(platform, wsl !== undefined)) {
       void window.reframe.saveClipboardImage().then((file) => {
-        if (file) term.paste(formatPaths([file], window.reframe.platform, wsl));
+        if (file) term.paste(formatPaths([file], platform, wsl));
+        // Saving failed: Claude Code's own way still works where it can reach the clipboard.
+        else if (!wsl) input(imagePasteKey(platform));
       });
-    } else if (clipboard.image) input(imagePasteKey(window.reframe.platform));
+    } else if (clipboard.image) input(imagePasteKey(platform));
   });
 }

@@ -1,8 +1,9 @@
 // End to end: files dropped onto a tile are typed in as their paths (one that exists only in memory is saved to
-// a temporary file first), and Ctrl+V pastes text, the paths of copied files, or leaves an image to Claude Code
-// (its paste key, which the fake answers with an "[Image #n]" chip). Right-click copies the selection or, without
-// one, pastes, unless the program reads the mouse (then Shift+right-click does). The clipboard is faked through a
-// test hook, so the real one is only read, never changed.
+// a temporary file first), and Ctrl+V pastes text, the paths of copied files, or an image: on Windows saved to a
+// file and typed in as its path, elsewhere left to Claude Code (its paste key, which the fake answers with an
+// "[Image #n]" chip). Right-click copies the selection or, without one, pastes, unless the program reads the mouse
+// (then Shift+right-click does). The clipboard is faked through a test hook, so the real one is only read, never
+// changed.
 import fs from 'node:fs';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
@@ -69,11 +70,18 @@ test('dropping files and pasting text, files and images', async () => {
     await paste({ text: '', image: false, files: [copied] });
     await paste({ text: '', image: true, files: [] });
     await expect.poll(prompts).toHaveLength(4);
-    expect(
-      prompts()
-        .slice(1)
-        .map((p) => p.trim()),
-    ).toEqual(['pasted words', quoted, '[Image #1]']);
+    const pasted = prompts()
+      .slice(1)
+      .map((p) => p.trim());
+    expect(pasted.slice(0, 2)).toEqual(['pasted words', quoted]);
+    if (process.platform === 'win32') {
+      // Claude Code reads the clipboard slowly there: the image arrives as a file it can attach at once.
+      const image = pasted[2]!.replace(/^"|"$/g, '');
+      expect(path.basename(image)).toBe('clipboard.png');
+      expect(fs.readFileSync(image).subarray(1, 4).toString()).toBe('PNG');
+    } else {
+      expect(pasted[2]).toBe('[Image #1]');
+    }
 
     // Right-click copies the selection (the copy is caught, the real clipboard stays as it is) and clears it, so the
     // next right-click pastes.
