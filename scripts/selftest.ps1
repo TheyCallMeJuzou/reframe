@@ -1,4 +1,4 @@
-# Runs the self-test (two real claude sessions, tear-out, clean exit) and captures the windows
+﻿# Runs the self-test (two real claude sessions, tear-out, clean exit) and captures the windows
 # before and after the tear-out.
 # Usage: powershell -File scripts\selftest.ps1 <folder for tile 1> [<folder for tile 2>] [-Release]
 param(
@@ -23,7 +23,7 @@ $process = Start-Process -FilePath $exe -ArgumentList $arguments -PassThru `
     -RedirectStandardOutput "$out\stdout.log" -RedirectStandardError "$out\stderr.log"
 Start-Sleep 8
 & powershell -NoProfile -File "$PSScriptRoot\capture.ps1" "$out\before"
-Start-Sleep 5
+Start-Sleep 9
 & powershell -NoProfile -File "$PSScriptRoot\capture.ps1" "$out\after"
 $process.WaitForExit(30000) | Out-Null
 "exited: $($process.HasExited)"

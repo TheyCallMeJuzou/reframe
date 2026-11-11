@@ -100,7 +100,25 @@ impl TerminalView {
         cx.notify();
     }
 
-    fn mode(&self) -> TermMode {
+    /// The middle of a cell in window coordinates, as of the last frame.
+    pub fn cell_center(&self, col: usize, row: usize) -> Option<Point<Pixels>> {
+        let layout = self.layout?;
+        Some(point(
+            layout.origin.x + layout.cell.width * (col as f32 + 0.5),
+            layout.origin.y + layout.cell.height * (row as f32 + 0.5),
+        ))
+    }
+
+    /// Columns and rows as of the last frame.
+    pub fn grid_size(&self) -> Option<(usize, usize)> {
+        self.layout.map(|layout| (layout.cols, layout.rows))
+    }
+
+    pub fn selection_text(&self) -> Option<String> {
+        self.session.term.lock().selection_to_string()
+    }
+
+    pub fn mode(&self) -> TermMode {
         *self.session.term.lock().mode()
     }
 
@@ -523,6 +541,8 @@ impl IntoElement for TerminalElement {
 
 fn terminal_font(flags: Flags) -> Font {
     let mut font = font(FONT_FAMILY);
+    // Symbols the terminal font lacks come from the monochrome symbol font before the colour emoji font.
+    font.fallbacks = Some(FontFallbacks::from_fonts(vec!["Segoe UI Symbol".into()]));
     if flags.contains(Flags::BOLD) {
         font.weight = FontWeight::BOLD;
     }

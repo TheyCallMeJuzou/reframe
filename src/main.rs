@@ -1,3 +1,6 @@
+// Release builds are a window application: no console window opens next to it.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod colors;
 mod glyphs;
 mod input;
@@ -21,16 +24,19 @@ struct Args {
     tiles: Vec<PathBuf>,
     dump: bool,
     selftest: bool,
+    /// For measurements: end the sessions and quit after this many seconds.
+    hold: Option<u64>,
 }
 
 fn parse_args() -> Args {
     let mut args =
-        Args { claude: None, wsl_claude: None, wsl_path: None, tiles: Vec::new(), dump: false, selftest: false };
+        Args { claude: None, wsl_claude: None, wsl_path: None, tiles: Vec::new(), dump: false, selftest: false, hold: None };
     let mut input = std::env::args().skip(1);
     while let Some(arg) = input.next() {
         match arg.as_str() {
             "--dump" => args.dump = true,
             "--selftest" => args.selftest = true,
+            "--hold" => args.hold = input.next().and_then(|seconds| seconds.parse().ok()),
             "--claude" => args.claude = input.next(),
             "--wsl-claude" => args.wsl_claude = input.next(),
             "--wsl-path" => args.wsl_path = input.next(),
@@ -115,12 +121,14 @@ fn dump(launch: &Launch) {
 struct Shell {
     tiles: Vec<Entity<TerminalView>>,
     subscriptions: Vec<Subscription>,
+    /// A tile that gets the keyboard focus with the next frame.
+    focus_next: Option<Entity<TerminalView>>,
 }
 
 impl Shell {
     fn new(tiles: Vec<Entity<TerminalView>>, cx: &mut Context<Self>) -> Self {
         let subscriptions = tiles.iter().map(|tile| cx.subscribe(tile, Self::on_tile_event)).collect();
-        Self { tiles, subscriptions }
+        Self { tiles, subscriptions, focus_next: None }
     }
 
     fn on_tile_event(&mut self, tile: Entity<TerminalView>, event: &TileEvent, cx: &mut Context<Self>) {
@@ -138,6 +146,8 @@ impl Shell {
         let Some(index) = self.tiles.iter().position(|other| other == tile) else { return };
         self.tiles.remove(index);
         drop(self.subscriptions.remove(index));
+        // The window keeps a focused tile: the one that moved up into the gap.
+        self.focus_next = self.tiles.get(index.min(self.tiles.len() - 1)).cloned();
         cx.notify();
         let tile = tile.clone();
         cx.defer(move |cx| {
@@ -147,7 +157,11 @@ impl Shell {
 }
 
 impl Render for Shell {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(tile) = self.focus_next.take() {
+            let focus = tile.read(cx).focus.clone();
+            window.focus(&focus, cx);
+        }
         let mut group = h_resizable("tiles");
         for tile in &self.tiles {
             group = group.child(resizable_panel().child(tile.clone()));
@@ -170,8 +184,9 @@ fn open_shell(tiles: Vec<Entity<TerminalView>>, cx: &mut App) -> Entity<Shell> {
     shell
 }
 
-/// Runs without anyone at the keyboard: waits for the sessions to draw, tears the first tile out
-/// into its own window, and reports whether each session survived with its screen.
+/// Runs without anyone at the keyboard: lets the sessions draw, types and selects through the
+/// window's real input path, tears the first tile out into its own window, and ends the sessions.
+/// It prints what it found; nothing is sent to Claude as a prompt.
 async fn selftest(shell: Entity<Shell>, tiles: Vec<Entity<TerminalView>>, cx: &mut AsyncApp) {
     let report = |label: &str, cx: &mut AsyncApp| {
         println!("=== {label}");
@@ -182,32 +197,117 @@ async fn selftest(shell: Entity<Shell>, tiles: Vec<Entity<TerminalView>>, cx: &m
             println!(
                 "pid {pid}: registry entry {}, {lines} non-empty lines, banner: {}",
                 registry_entry(pid).is_file(),
-                banner.chars().take(60).collect::<String>()
+                banner.chars().take(40).collect::<String>()
             );
         }
     };
-
-    cx.background_executor().timer(Duration::from_secs(10)).await;
-    report("before tear-out", cx);
+    let pause = |millis: u64, cx: &mut AsyncApp| cx.background_executor().timer(Duration::from_millis(millis));
     let first = tiles[0].clone();
-    shell.update(cx, |shell, cx| shell.tear_out(&first, cx));
-    cx.background_executor().timer(Duration::from_secs(4)).await;
-    report("after tear-out", cx);
-    let windows = cx.update(|cx| cx.windows().len());
-    println!("windows: {windows}");
-    print!("{}", first.read_with(cx, |tile, _| tile.session.color_summary()));
-    println!("--- screen of the torn-out tile");
-    println!("{}", first.read_with(cx, |tile, _| tile.session.screen_text()));
+    let window = cx.update(|cx| cx.windows()[0]);
+    let prompt_line = |cx: &mut AsyncApp| {
+        let text = first.read_with(cx, |tile, _| tile.session.screen_text());
+        text.lines().find(|line| line.starts_with('❯')).unwrap_or("(no prompt line)").to_owned()
+    };
 
-    for tile in &tiles {
-        tile.read_with(cx, |tile, _| tile.session.write(&b"\x03"[..]));
+    pause(10_000, cx).await;
+    report("after start", cx);
+    print!("{}", first.read_with(cx, |tile, _| tile.session.color_summary()));
+    println!("mode: {:?}", first.read_with(cx, |tile, _| tile.mode()));
+
+    // Typing: letters go through the text-input path, Backspace through the key path.
+    for key in ["h", "e", "l", "l", "o"] {
+        let _ = window.update(cx, |_, window, cx| window.dispatch_keystroke(Keystroke::parse(key).unwrap(), cx));
     }
-    cx.background_executor().timer(Duration::from_millis(400)).await;
+    pause(800, cx).await;
+    println!("typed 'hello'      -> {}", prompt_line(cx));
+    for _ in 0..2 {
+        let _ = window.update(cx, |_, window, cx| window.dispatch_keystroke(Keystroke::parse("backspace").unwrap(), cx));
+    }
+    pause(800, cx).await;
+    println!("two backspaces     -> {}", prompt_line(cx));
+
+    // Selecting with the mouse: drag across the first eight characters of the prompt line.
+    let row = first.read_with(cx, |tile, _| {
+        tile.session.screen_text().lines().position(|line| line.starts_with('❯')).unwrap_or(0)
+    });
+    let shift = first.read_with(cx, |tile, _| tile.mode().intersects(alacritty_terminal::term::TermMode::MOUSE_MODE));
+    let modifiers = Modifiers { shift, ..Default::default() };
+    let at = |col: usize, cx: &mut AsyncApp| first.read_with(cx, |tile, _| tile.cell_center(col, row).unwrap());
+    let (from, to) = (at(0, cx), at(7, cx));
+    let _ = window.update(cx, |_, window, cx| {
+        window.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position: from, modifiers, ..Default::default() }), cx);
+        window.dispatch_event(
+            PlatformInput::MouseDown(MouseDownEvent {
+                button: MouseButton::Left,
+                position: from,
+                modifiers,
+                click_count: 1,
+                ..Default::default()
+            }),
+            cx,
+        );
+        window.dispatch_event(
+            PlatformInput::MouseMove(MouseMoveEvent {
+                position: to,
+                pressed_button: Some(MouseButton::Left),
+                modifiers,
+                ..Default::default()
+            }),
+            cx,
+        );
+        window.dispatch_event(
+            PlatformInput::MouseUp(MouseUpEvent {
+                button: MouseButton::Left,
+                position: to,
+                modifiers,
+                click_count: 1,
+                ..Default::default()
+            }),
+            cx,
+        );
+    });
+    println!("mouse drag selects -> {:?}", first.read_with(cx, |tile, _| tile.selection_text()));
+    let _ = window.update(cx, |_, window, cx| window.dispatch_keystroke(Keystroke::parse("backspace").unwrap(), cx));
+
+    // Tear-out.
+    let size_before = first.read_with(cx, |tile, _| tile.grid_size());
+    shell.update(cx, |shell, cx| shell.tear_out(&first, cx));
+    pause(4_000, cx).await;
+    report("after tear-out", cx);
+    println!(
+        "windows: {}, torn-out tile {:?} -> {:?} cells, prompt: {}",
+        cx.update(|cx| cx.windows().len()),
+        size_before,
+        first.read_with(cx, |tile, _| tile.grid_size()),
+        prompt_line(cx)
+    );
+    pause(3_000, cx).await;
+
+    // Two Ctrl+C end claude; sent as keys to whichever tile has the focus in each window.
+    for _ in 0..2 {
+        for window in cx.update(|cx| cx.windows()) {
+            let _ = window.update(cx, |_, window, cx| window.dispatch_keystroke(Keystroke::parse("ctrl-c").unwrap(), cx));
+        }
+        pause(400, cx).await;
+    }
+    pause(3_000, cx).await;
+    report("after two Ctrl+C in each window", cx);
     for tile in &tiles {
-        tile.read_with(cx, |tile, _| tile.session.write(&b"\x03"[..]));
+        println!("exited: {}", tile.read_with(cx, |tile, _| tile.exited));
+    }
+    cx.update(|cx| cx.quit());
+}
+
+/// Leaves the app idle for a while, then ends the sessions the way a user would and quits.
+async fn hold(seconds: u64, tiles: Vec<Entity<TerminalView>>, cx: &mut AsyncApp) {
+    cx.background_executor().timer(Duration::from_secs(seconds)).await;
+    for _ in 0..2 {
+        for tile in &tiles {
+            tile.read_with(cx, |tile, _| tile.session.write(&b""[..]));
+        }
+        cx.background_executor().timer(Duration::from_millis(400)).await;
     }
     cx.background_executor().timer(Duration::from_secs(3)).await;
-    report("after two Ctrl+C", cx);
     cx.update(|cx| cx.quit());
 }
 
@@ -228,6 +328,7 @@ fn main() {
     }
 
     let run_selftest = args.selftest;
+    let hold_seconds = args.hold;
     gpui_kit::application().run(move |cx| {
         gpui_kit::init(cx);
         cx.on_window_closed(|cx, _| {
@@ -242,6 +343,8 @@ fn main() {
         let shell = open_shell(tiles.clone(), cx);
         if run_selftest {
             cx.spawn(async move |cx| selftest(shell, tiles, cx).await).detach();
+        } else if let Some(seconds) = hold_seconds {
+            cx.spawn(async move |cx| hold(seconds, tiles, cx).await).detach();
         }
     });
 }
