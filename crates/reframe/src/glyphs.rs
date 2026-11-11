@@ -36,13 +36,24 @@ pub fn paint(c: char, cell: Bounds<Pixels>, color: Hsla, window: &mut Window) ->
         0x2590 => rect(fx(0.5), y0, x1, y1, color),
         0x2591..=0x2593 => {
             let alpha = (code - 0x2590) as f32 * 0.25;
-            rect(x0, y0, x1, y1, Hsla { a: color.a * alpha, ..color });
+            rect(
+                x0,
+                y0,
+                x1,
+                y1,
+                Hsla {
+                    a: color.a * alpha,
+                    ..color
+                },
+            );
         }
         0x2594 => rect(x0, y0, x1, fy(0.125), color),
         0x2595 => rect(fx(0.875), y0, x1, y1, color),
         0x2596..=0x259f => {
             // Quadrants: bit 0 upper left, 1 upper right, 2 lower left, 3 lower right.
-            const MASKS: [u8; 10] = [0b0100, 0b1000, 0b0001, 0b1101, 0b1001, 0b0111, 0b1011, 0b0010, 0b0110, 0b1110];
+            const MASKS: [u8; 10] = [
+                0b0100, 0b1000, 0b0001, 0b1101, 0b1001, 0b0111, 0b1011, 0b0010, 0b0110, 0b1110,
+            ];
             let mask = MASKS[(code - 0x2596) as usize];
             let (mx, my) = (fx(0.5), fy(0.5));
             if mask & 0b0001 != 0 {

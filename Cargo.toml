@@ -1,11 +1,12 @@
-[package]
-name = "reframe-native"
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
 
-[dependencies]
-alacritty_terminal = "0.26.0"
-futures = "0.3.34"
-gpui-kit = "0.9.1"
-image = { version = "0.25.10", default-features = false, features = ["png", "bmp", "tiff"] }
-uuid = { version = "1.29.2", features = ["v4"] }
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }

@@ -5211,13 +5211,25 @@ dependencies = [
 ]
 
 [[package]]
-name = "reframe-native"
+name = "reframe"
 version = "0.1.0"
 dependencies = [
  "alacritty_terminal",
  "futures",
  "gpui-kit",
  "image",
+ "reframe-core",
+ "uuid",
+]
+
+[[package]]
+name = "reframe-core"
+version = "0.1.0"
+dependencies = [
+ "indexmap",
+ "serde",
+ "serde_json",
+ "tempfile",
  "uuid",
 ]
 

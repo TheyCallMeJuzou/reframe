@@ -1,0 +1,18 @@
+[package]
+name = "reframe"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Keep your Claude Code sessions side by side in one window"
+
+[[bin]]
+name = "reframe-native"
+path = "src/main.rs"
+
+[dependencies]
+alacritty_terminal = "0.26.0"
+futures = "0.3.34"
+gpui-kit = "0.9.1"
+image = { version = "0.25.10", default-features = false, features = ["png", "bmp", "tiff"] }
+uuid = { version = "1.29.2", features = ["v4"] }
+reframe-core = { path = "../reframe-core" }

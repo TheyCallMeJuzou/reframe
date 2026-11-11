@@ -3,9 +3,21 @@
 
 use alacritty_terminal::vte::ansi::Rgb;
 
-pub const BACKGROUND: Rgb = Rgb { r: 0x17, g: 0x18, b: 0x1c };
-pub const FOREGROUND: Rgb = Rgb { r: 0xd7, g: 0xda, b: 0xe0 };
-pub const SELECTION: Rgb = Rgb { r: 0x3a, g: 0x3f, b: 0x4b };
+pub const BACKGROUND: Rgb = Rgb {
+    r: 0x17,
+    g: 0x18,
+    b: 0x1c,
+};
+pub const FOREGROUND: Rgb = Rgb {
+    r: 0xd7,
+    g: 0xda,
+    b: 0xe0,
+};
+pub const SELECTION: Rgb = Rgb {
+    r: 0x3a,
+    g: 0x3f,
+    b: 0x4b,
+};
 
 /// xterm's default 16 colours (what xterm.js uses when the theme sets none).
 const ANSI: [(u8, u8, u8); 16] = [
@@ -38,7 +50,11 @@ pub fn indexed(index: usize) -> Rgb {
         16..=231 => {
             let i = index - 16;
             let level = |n: usize| if n == 0 { 0 } else { (55 + 40 * n) as u8 };
-            Rgb { r: level(i / 36), g: level(i / 6 % 6), b: level(i % 6) }
+            Rgb {
+                r: level(i / 36),
+                g: level(i / 6 % 6),
+                b: level(i % 6),
+            }
         }
         232..=255 => {
             let v = (8 + 10 * (index - 232)) as u8;

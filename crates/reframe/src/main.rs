@@ -31,8 +31,16 @@ struct Args {
 }
 
 fn parse_args() -> Args {
-    let mut args =
-        Args { claude: None, wsl_claude: None, wsl_path: None, tiles: Vec::new(), dump: false, selftest: false, hold: None, clip_test: false };
+    let mut args = Args {
+        claude: None,
+        wsl_claude: None,
+        wsl_path: None,
+        tiles: Vec::new(),
+        dump: false,
+        selftest: false,
+        hold: None,
+        clip_test: false,
+    };
     let mut input = std::env::args().skip(1);
     while let Some(arg) = input.next() {
         match arg.as_str() {
@@ -66,7 +74,9 @@ fn find_claude() -> Option<String> {
 /// `\\wsl.localhost\<distro>\home\me` or `\\wsl$\<distro>\...` as (distro, `/home/me`).
 fn wsl_folder(folder: &Path) -> Option<(String, String)> {
     let text = folder.to_string_lossy().replace('/', "\\");
-    let rest = text.strip_prefix("\\\\wsl.localhost\\").or_else(|| text.strip_prefix("\\\\wsl$\\"))?;
+    let rest = text
+        .strip_prefix("\\\\wsl.localhost\\")
+        .or_else(|| text.strip_prefix("\\\\wsl$\\"))?;
     let (distro, path) = rest.split_once('\\').unwrap_or((rest, ""));
     Some((distro.to_owned(), format!("/{}", path.replace('\\', "/"))))
 }
@@ -74,21 +84,42 @@ fn wsl_folder(folder: &Path) -> Option<(String, String)> {
 fn launch_for(args: &Args, claude: &str, folder: &Path) -> Launch {
     let session = vec!["--session-id".to_owned(), uuid::Uuid::new_v4().to_string()];
     let Some((distro, linux_path)) = wsl_folder(folder) else {
-        return Launch { program: claude.to_owned(), args: session, cwd: folder.to_owned(), wsl: false };
+        return Launch {
+            program: claude.to_owned(),
+            args: session,
+            cwd: folder.to_owned(),
+            wsl: false,
+        };
     };
     // No shell in between, so nothing the startup files print gets into the terminal.
-    let wsl_claude = args.wsl_claude.clone().expect("a WSL tile needs --wsl-claude <path of claude in the distro>");
-    let wsl_path = args.wsl_path.clone().expect("a WSL tile needs --wsl-path <the login shell's PATH>");
+    let wsl_claude = args
+        .wsl_claude
+        .clone()
+        .expect("a WSL tile needs --wsl-claude <path of claude in the distro>");
+    let wsl_path = args
+        .wsl_path
+        .clone()
+        .expect("a WSL tile needs --wsl-path <the login shell's PATH>");
     let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into());
-    let mut wsl_args: Vec<String> =
-        ["-d", &distro, "--cd", &linux_path, "--exec", "env", &format!("PATH={wsl_path}"), &wsl_claude]
-            .map(String::from)
-            .to_vec();
+    let mut wsl_args: Vec<String> = [
+        "-d",
+        &distro,
+        "--cd",
+        &linux_path,
+        "--exec",
+        "env",
+        &format!("PATH={wsl_path}"),
+        &wsl_claude,
+    ]
+    .map(String::from)
+    .to_vec();
     wsl_args.extend(session);
     Launch {
         program: format!("{system_root}\\System32\\wsl.exe"),
         args: wsl_args,
-        cwd: std::env::var_os("USERPROFILE").map(PathBuf::from).unwrap_or_else(|| folder.to_owned()),
+        cwd: std::env::var_os("USERPROFILE")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| folder.to_owned()),
         wsl: true,
     }
 }
@@ -113,14 +144,22 @@ fn dump(launch: &Launch) {
         session.write(input::paste_bytes(&text, true));
         std::thread::sleep(Duration::from_secs(4));
         println!("--- after pasting {text:?}");
-        for line in session.screen_text().lines().filter(|line| line.contains('❯') || line.contains("Image")) {
+        for line in session
+            .screen_text()
+            .lines()
+            .filter(|line| line.contains('❯') || line.contains("Image"))
+        {
             println!("{line}");
         }
     }
 
     let pid = session.pid.expect("no pid");
     let registry = registry_entry(pid);
-    println!("--- pid {pid}, registry entry {}: {}", registry.display(), registry.is_file());
+    println!(
+        "--- pid {pid}, registry entry {}: {}",
+        registry.display(),
+        registry.is_file()
+    );
 
     // Two Ctrl+C end claude cleanly.
     session.write(&b"\x03"[..]);
@@ -140,8 +179,15 @@ struct Shell {
 
 impl Shell {
     fn new(tiles: Vec<Entity<TerminalView>>, cx: &mut Context<Self>) -> Self {
-        let subscriptions = tiles.iter().map(|tile| cx.subscribe(tile, Self::on_tile_event)).collect();
-        Self { tiles, subscriptions, focus_next: None }
+        let subscriptions = tiles
+            .iter()
+            .map(|tile| cx.subscribe(tile, Self::on_tile_event))
+            .collect();
+        Self {
+            tiles,
+            subscriptions,
+            focus_next: None,
+        }
     }
 
     fn on_tile_event(&mut self, tile: Entity<TerminalView>, event: &TileEvent, cx: &mut Context<Self>) {
@@ -156,7 +202,9 @@ impl Shell {
         if self.tiles.len() < 2 {
             return;
         }
-        let Some(index) = self.tiles.iter().position(|other| other == tile) else { return };
+        let Some(index) = self.tiles.iter().position(|other| other == tile) else {
+            return;
+        };
         self.tiles.remove(index);
         drop(self.subscriptions.remove(index));
         // The window keeps a focused tile: the one that moved up into the gap.
@@ -204,8 +252,14 @@ async fn selftest(shell: Entity<Shell>, tiles: Vec<Entity<TerminalView>>, cx: &m
     let report = |label: &str, cx: &mut AsyncApp| {
         println!("=== {label}");
         for tile in &tiles {
-            let (pid, text) = tile.read_with(cx, |tile, _| (tile.session.pid.unwrap_or(0), tile.session.screen_text()));
-            let banner = text.lines().find(|line| line.contains("Claude Code")).unwrap_or("(no banner)").trim();
+            let (pid, text) = tile.read_with(cx, |tile, _| {
+                (tile.session.pid.unwrap_or(0), tile.session.screen_text())
+            });
+            let banner = text
+                .lines()
+                .find(|line| line.contains("Claude Code"))
+                .unwrap_or("(no banner)")
+                .trim();
             let lines = text.lines().filter(|line| !line.trim().is_empty()).count();
             println!(
                 "pid {pid}: registry entry {}, {lines} non-empty lines, banner: {}",
@@ -219,7 +273,10 @@ async fn selftest(shell: Entity<Shell>, tiles: Vec<Entity<TerminalView>>, cx: &m
     let window = cx.update(|cx| cx.windows()[0]);
     let prompt_line = |cx: &mut AsyncApp| {
         let text = first.read_with(cx, |tile, _| tile.session.screen_text());
-        text.lines().find(|line| line.starts_with('❯')).unwrap_or("(no prompt line)").to_owned()
+        text.lines()
+            .find(|line| line.starts_with('❯'))
+            .unwrap_or("(no prompt line)")
+            .to_owned()
     };
 
     pause(10_000, cx).await;
@@ -229,26 +286,46 @@ async fn selftest(shell: Entity<Shell>, tiles: Vec<Entity<TerminalView>>, cx: &m
 
     // Typing: letters go through the text-input path, Backspace through the key path.
     for key in ["h", "e", "l", "l", "o"] {
-        let _ = window.update(cx, |_, window, cx| window.dispatch_keystroke(Keystroke::parse(key).unwrap(), cx));
+        let _ = window.update(cx, |_, window, cx| {
+            window.dispatch_keystroke(Keystroke::parse(key).unwrap(), cx)
+        });
     }
     pause(800, cx).await;
     println!("typed 'hello'      -> {}", prompt_line(cx));
     for _ in 0..2 {
-        let _ = window.update(cx, |_, window, cx| window.dispatch_keystroke(Keystroke::parse("backspace").unwrap(), cx));
+        let _ = window.update(cx, |_, window, cx| {
+            window.dispatch_keystroke(Keystroke::parse("backspace").unwrap(), cx)
+        });
     }
     pause(800, cx).await;
     println!("two backspaces     -> {}", prompt_line(cx));
 
     // Selecting with the mouse: drag across the first eight characters of the prompt line.
     let row = first.read_with(cx, |tile, _| {
-        tile.session.screen_text().lines().position(|line| line.starts_with('❯')).unwrap_or(0)
+        tile.session
+            .screen_text()
+            .lines()
+            .position(|line| line.starts_with('❯'))
+            .unwrap_or(0)
     });
-    let shift = first.read_with(cx, |tile, _| tile.mode().intersects(alacritty_terminal::term::TermMode::MOUSE_MODE));
-    let modifiers = Modifiers { shift, ..Default::default() };
+    let shift = first.read_with(cx, |tile, _| {
+        tile.mode().intersects(alacritty_terminal::term::TermMode::MOUSE_MODE)
+    });
+    let modifiers = Modifiers {
+        shift,
+        ..Default::default()
+    };
     let at = |col: usize, cx: &mut AsyncApp| first.read_with(cx, |tile, _| tile.cell_center(col, row).unwrap());
     let (from, to) = (at(0, cx), at(7, cx));
     let _ = window.update(cx, |_, window, cx| {
-        window.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position: from, modifiers, ..Default::default() }), cx);
+        window.dispatch_event(
+            PlatformInput::MouseMove(MouseMoveEvent {
+                position: from,
+                modifiers,
+                ..Default::default()
+            }),
+            cx,
+        );
         window.dispatch_event(
             PlatformInput::MouseDown(MouseDownEvent {
                 button: MouseButton::Left,
@@ -279,8 +356,13 @@ async fn selftest(shell: Entity<Shell>, tiles: Vec<Entity<TerminalView>>, cx: &m
             cx,
         );
     });
-    println!("mouse drag selects -> {:?}", first.read_with(cx, |tile, _| tile.selection_text()));
-    let _ = window.update(cx, |_, window, cx| window.dispatch_keystroke(Keystroke::parse("backspace").unwrap(), cx));
+    println!(
+        "mouse drag selects -> {:?}",
+        first.read_with(cx, |tile, _| tile.selection_text())
+    );
+    let _ = window.update(cx, |_, window, cx| {
+        window.dispatch_keystroke(Keystroke::parse("backspace").unwrap(), cx)
+    });
 
     // Tear-out.
     let size_before = first.read_with(cx, |tile, _| tile.grid_size());
@@ -299,7 +381,9 @@ async fn selftest(shell: Entity<Shell>, tiles: Vec<Entity<TerminalView>>, cx: &m
     // Two Ctrl+C end claude; sent as keys to whichever tile has the focus in each window.
     for _ in 0..2 {
         for window in cx.update(|cx| cx.windows()) {
-            let _ = window.update(cx, |_, window, cx| window.dispatch_keystroke(Keystroke::parse("ctrl-c").unwrap(), cx));
+            let _ = window.update(cx, |_, window, cx| {
+                window.dispatch_keystroke(Keystroke::parse("ctrl-c").unwrap(), cx)
+            });
         }
         pause(400, cx).await;
     }
@@ -331,9 +415,15 @@ fn main() {
         eprintln!("claude.exe is not on the PATH; pass --claude <path>");
         std::process::exit(1);
     });
-    let folders =
-        if args.tiles.is_empty() { vec![std::env::current_dir().unwrap()] } else { args.tiles.clone() };
-    let launches: Vec<Launch> = folders.iter().map(|folder| launch_for(&args, &claude, folder)).collect();
+    let folders = if args.tiles.is_empty() {
+        vec![std::env::current_dir().unwrap()]
+    } else {
+        args.tiles.clone()
+    };
+    let launches: Vec<Launch> = folders
+        .iter()
+        .map(|folder| launch_for(&args, &claude, folder))
+        .collect();
 
     if args.dump {
         dump(&launches[0]);
@@ -376,8 +466,10 @@ fn main() {
         })
         .detach();
 
-        let tiles: Vec<Entity<TerminalView>> =
-            launches.iter().map(|launch| cx.new(|cx| TerminalView::new(launch, cx))).collect();
+        let tiles: Vec<Entity<TerminalView>> = launches
+            .iter()
+            .map(|launch| cx.new(|cx| TerminalView::new(launch, cx)))
+            .collect();
         let shell = open_shell(tiles.clone(), cx);
         if run_selftest {
             cx.spawn(async move |cx| selftest(shell, tiles, cx).await).detach();

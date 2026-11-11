@@ -138,11 +138,16 @@ impl TerminalView {
     /// Called while a frame is prepared: keeps the session's size and focus state in step with
     /// what is on screen.
     fn sync(&mut self, layout: Layout, focused: bool) {
-        let resized = self.layout.is_none_or(|old| old.cols != layout.cols || old.rows != layout.rows);
+        let resized = self
+            .layout
+            .is_none_or(|old| old.cols != layout.cols || old.rows != layout.rows);
         self.layout = Some(layout);
         if resized {
             self.session.resize(
-                TermSize { cols: layout.cols as u16, rows: layout.rows as u16 },
+                TermSize {
+                    cols: layout.cols as u16,
+                    rows: layout.rows as u16,
+                },
                 f32::from(layout.cell.width) as u16,
                 f32::from(layout.cell.height) as u16,
             );
@@ -150,7 +155,8 @@ impl TerminalView {
         if focused != self.focused {
             self.focused = focused;
             if self.mode().contains(TermMode::FOCUS_IN_OUT) {
-                self.session.write(if focused { &b"\x1b[I"[..] } else { &b"\x1b[O"[..] });
+                self.session
+                    .write(if focused { &b"\x1b[I"[..] } else { &b"\x1b[O"[..] });
             }
         }
     }
@@ -175,7 +181,12 @@ impl TerminalView {
     }
 
     fn has_selection(&self) -> bool {
-        self.session.term.lock().selection.as_ref().is_some_and(|selection| !selection.is_empty())
+        self.session
+            .term
+            .lock()
+            .selection
+            .as_ref()
+            .is_some_and(|selection| !selection.is_empty())
     }
 
     /// Text is pasted as text and copied files as their paths. For an image, Claude Code's own
@@ -294,7 +305,11 @@ impl TerminalView {
         let y = f32::from(position.y - layout.origin.y) / f32::from(layout.cell.height);
         let col = (x.max(0.0) as usize).min(layout.cols.saturating_sub(1));
         let row = (y.max(0.0) as usize).min(layout.rows.saturating_sub(1));
-        let side = if x.fract() < 0.5 || x < 0.0 { Side::Left } else { Side::Right };
+        let side = if x.fract() < 0.5 || x < 0.0 {
+            Side::Left
+        } else {
+            Side::Right
+        };
         Some((col, row, side))
     }
 
@@ -306,7 +321,9 @@ impl TerminalView {
 
     fn on_mouse_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus, cx);
-        let Some((col, row, side)) = self.cell_at(event.position) else { return };
+        let Some((col, row, side)) = self.cell_at(event.position) else {
+            return;
+        };
         let button = match event.button {
             MouseButton::Left => input::BUTTON_LEFT,
             MouseButton::Middle => input::BUTTON_MIDDLE,
@@ -349,7 +366,9 @@ impl TerminalView {
     }
 
     fn on_mouse_move(&mut self, event: &MouseMoveEvent, hovered: bool, cx: &mut Context<Self>) {
-        let Some((col, row, side)) = self.cell_at(event.position) else { return };
+        let Some((col, row, side)) = self.cell_at(event.position) else {
+            return;
+        };
 
         if self.selecting {
             if event.pressed_button != Some(MouseButton::Left) {
@@ -369,7 +388,11 @@ impl TerminalView {
         let mode = self.mode();
         let wanted = mode.contains(TermMode::MOUSE_MOTION)
             || (mode.contains(TermMode::MOUSE_DRAG) && self.reported_button.is_some());
-        if wanted && (hovered || self.reported_button.is_some()) && !event.modifiers.shift && self.reported_cell != Some((col, row)) {
+        if wanted
+            && (hovered || self.reported_button.is_some())
+            && !event.modifiers.shift
+            && self.reported_cell != Some((col, row))
+        {
             self.reported_cell = Some((col, row));
             let button = self.reported_button.unwrap_or(input::BUTTON_NONE) + input::MOTION;
             if let Some(report) = input::mouse_report(button, col, row, true, &event.modifiers, mode) {
@@ -416,7 +439,9 @@ impl TerminalView {
         let mode = self.mode();
 
         if self.reports_mouse(&event.modifiers) {
-            let Some((col, row, _)) = self.cell_at(event.position) else { return };
+            let Some((col, row, _)) = self.cell_at(event.position) else {
+                return;
+            };
             let button = if up { input::WHEEL_UP } else { input::WHEEL_DOWN };
             for _ in 0..count {
                 if let Some(report) = input::mouse_report(button, col, row, true, &event.modifiers, mode) {
@@ -447,7 +472,10 @@ impl EntityInputHandler for TerminalView {
     }
 
     fn selected_text_range(&mut self, _: bool, _: &mut Window, _: &mut Context<Self>) -> Option<UTF16Selection> {
-        Some(UTF16Selection { range: 0..0, reversed: false })
+        Some(UTF16Selection {
+            range: 0..0,
+            reversed: false,
+        })
     }
 
     fn marked_text_range(&self, _: &mut Window, _: &mut Context<Self>) -> Option<Range<usize>> {
@@ -532,7 +560,9 @@ pub fn save_clipboard_image(image: &Image) -> Option<std::path::PathBuf> {
         ImageFormat::Bmp | ImageFormat::Tiff => {
             let decoded = image::load_from_memory(&image.bytes).ok()?;
             let mut png = Vec::new();
-            decoded.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
+            decoded
+                .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+                .ok()?;
             ("png", png)
         }
         _ => return None,
@@ -543,7 +573,13 @@ pub fn save_clipboard_image(image: &Image) -> Option<std::path::PathBuf> {
 }
 
 fn to_hsla(color: Rgb) -> Hsla {
-    Rgba { r: color.r as f32 / 255.0, g: color.g as f32 / 255.0, b: color.b as f32 / 255.0, a: 1.0 }.into()
+    Rgba {
+        r: color.r as f32 / 255.0,
+        g: color.g as f32 / 255.0,
+        b: color.b as f32 / 255.0,
+        a: 1.0,
+    }
+    .into()
 }
 
 // ---- drawing ----
@@ -604,16 +640,23 @@ fn style_flags(flags: Flags) -> Flags {
     flags & (Flags::BOLD | Flags::ITALIC | Flags::ALL_UNDERLINES | Flags::STRIKEOUT | Flags::DIM)
 }
 
-fn paint_text(text: String, origin: Point<Pixels>, cell: &CellPaint, line_height: Pixels, window: &mut Window, cx: &mut App) {
+fn paint_text(
+    text: String,
+    origin: Point<Pixels>,
+    cell: &CellPaint,
+    line_height: Pixels,
+    window: &mut Window,
+    cx: &mut App,
+) {
     let underline = cell.flags.intersects(Flags::ALL_UNDERLINES).then(|| UnderlineStyle {
         thickness: px(1.0),
         color: Some(cell.fg),
         wavy: cell.flags.contains(Flags::UNDERCURL),
     });
-    let strikethrough = cell
-        .flags
-        .contains(Flags::STRIKEOUT)
-        .then(|| StrikethroughStyle { thickness: px(1.0), color: Some(cell.fg) });
+    let strikethrough = cell.flags.contains(Flags::STRIKEOUT).then(|| StrikethroughStyle {
+        thickness: px(1.0),
+        color: Some(cell.fg),
+    });
     let run = TextRun {
         len: text.len(),
         font: terminal_font(cell.flags),
@@ -622,7 +665,9 @@ fn paint_text(text: String, origin: Point<Pixels>, cell: &CellPaint, line_height
         underline,
         strikethrough,
     };
-    let line = window.text_system().shape_line(text.into(), px(FONT_SIZE), &[run], None);
+    let line = window
+        .text_system()
+        .shape_line(text.into(), px(FONT_SIZE), &[run], None);
     let _ = line.paint(origin, line_height, TextAlign::Left, None, window, cx);
 }
 
@@ -664,7 +709,10 @@ impl Element for TerminalElement {
         let text_system = window.text_system().clone();
         let font_id = text_system.resolve_font(&font(FONT_FAMILY));
         let font_size = px(FONT_SIZE);
-        let cell_width = text_system.advance(font_id, font_size, 'm').map(|size| size.width).unwrap_or(px(8.0));
+        let cell_width = text_system
+            .advance(font_id, font_size, 'm')
+            .map(|size| size.width)
+            .unwrap_or(px(8.0));
         let glyph_height = f32::from(text_system.ascent(font_id, font_size))
             + f32::from(text_system.descent(font_id, font_size)).abs();
         let cell_height = px((glyph_height * LINE_HEIGHT).ceil());
@@ -726,13 +774,20 @@ impl Element for TerminalElement {
                 fg,
                 bg,
                 flags: cell.flags,
-                spacer: cell.flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER),
+                spacer: cell
+                    .flags
+                    .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER),
             });
         }
 
         let cursor_row = content.cursor.point.line.0 + offset;
-        let cursor = (content.cursor.shape != CursorShape::Hidden && cursor_row >= 0 && (cursor_row as usize) < layout.rows)
-            .then(|| CursorPaint { col: content.cursor.point.column.0, row: cursor_row as usize, shape: content.cursor.shape });
+        let cursor =
+            (content.cursor.shape != CursorShape::Hidden && cursor_row >= 0 && (cursor_row as usize) < layout.rows)
+                .then(|| CursorPaint {
+                    col: content.cursor.point.column.0,
+                    row: cursor_row as usize,
+                    shape: content.cursor.shape,
+                });
         let mouse_mode = content.mode.intersects(TermMode::MOUSE_MODE);
         drop(term);
 
@@ -760,8 +815,12 @@ impl Element for TerminalElement {
         let Some(frame) = frame.take() else { return };
         let layout = frame.layout;
         let (cell_w, cell_h) = (layout.cell.width, layout.cell.height);
-        let cell_origin =
-            |col: usize, row: usize| point(layout.origin.x + cell_w * col as f32, layout.origin.y + cell_h * row as f32);
+        let cell_origin = |col: usize, row: usize| {
+            point(
+                layout.origin.x + cell_w * col as f32,
+                layout.origin.y + cell_h * row as f32,
+            )
+        };
 
         let focus = self.view.read(cx).focus.clone();
         window.handle_input(&focus, ElementInputHandler::new(bounds, self.view.clone()), cx);
@@ -783,7 +842,10 @@ impl Element for TerminalElement {
                         col += 1;
                     }
                     let origin = cell_origin(start, row);
-                    window.paint_quad(fill(Bounds::new(origin, size(cell_w * (col - start) as f32, cell_h)), bg));
+                    window.paint_quad(fill(
+                        Bounds::new(origin, size(cell_w * (col - start) as f32, cell_h)),
+                        bg,
+                    ));
                 }
 
                 // Text. Runs of plain ASCII in one style are shaped together; every other character
@@ -792,12 +854,16 @@ impl Element for TerminalElement {
                 while col < cells.len() {
                     let cell = &cells[col];
                     let decorated = cell.flags.intersects(Flags::ALL_UNDERLINES | Flags::STRIKEOUT);
-                    if cell.spacer || cell.flags.contains(Flags::HIDDEN) || (cell.c == ' ' && cell.extra.is_none() && !decorated) {
+                    if cell.spacer
+                        || cell.flags.contains(Flags::HIDDEN)
+                        || (cell.c == ' ' && cell.extra.is_none() && !decorated)
+                    {
                         col += 1;
                         continue;
                     }
                     let origin = cell_origin(col, row);
-                    if cell.extra.is_none() && glyphs::paint(cell.c, Bounds::new(origin, layout.cell), cell.fg, window) {
+                    if cell.extra.is_none() && glyphs::paint(cell.c, Bounds::new(origin, layout.cell), cell.fg, window)
+                    {
                         col += 1;
                         continue;
                     }
@@ -838,7 +904,14 @@ impl Element for TerminalElement {
                 let origin = cell_origin(cursor.col, cursor.row);
                 let cell_bounds = Bounds::new(origin, layout.cell);
                 if !frame.focused || cursor.shape == CursorShape::HollowBlock {
-                    window.paint_quad(quad(cell_bounds, px(0.0), transparent_black(), px(1.0), color, BorderStyle::default()));
+                    window.paint_quad(quad(
+                        cell_bounds,
+                        px(0.0),
+                        transparent_black(),
+                        px(1.0),
+                        color,
+                        BorderStyle::default(),
+                    ));
                 } else {
                     match cursor.shape {
                         CursorShape::Beam => window.paint_quad(fill(Bounds::new(origin, size(px(2.0), cell_h)), color)),
@@ -869,7 +942,10 @@ impl Element for TerminalElement {
                 // Text the IME is composing, underlined at the cursor.
                 if let Some(text) = &frame.composing {
                     let width = cell_w * text.chars().count() as f32;
-                    window.paint_quad(fill(Bounds::new(origin, size(width, cell_h)), to_hsla(colors::BACKGROUND)));
+                    window.paint_quad(fill(
+                        Bounds::new(origin, size(width, cell_h)),
+                        to_hsla(colors::BACKGROUND),
+                    ));
                     let composing = CellPaint {
                         c: ' ',
                         extra: None,

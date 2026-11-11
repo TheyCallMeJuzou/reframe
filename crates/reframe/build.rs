@@ -15,7 +15,6 @@ fn main() {
         .unwrap()
         .to_path_buf();
     for name in ["conpty.dll", "OpenConsole.exe"] {
-        std::fs::copy(source.join(name), target.join(name))
-            .unwrap_or_else(|err| panic!("copying {name}: {err}"));
+        std::fs::copy(source.join(name), target.join(name)).unwrap_or_else(|err| panic!("copying {name}: {err}"));
     }
 }
