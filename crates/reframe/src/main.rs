@@ -3,9 +3,12 @@
 
 mod app;
 mod colors;
+mod dialogs;
 mod e2e;
+mod find;
 mod glyphs;
 mod input;
+mod keys;
 mod process;
 mod pty;
 mod sessions;
@@ -46,6 +49,7 @@ fn main() {
 
     gpui_kit::application().run(move |cx| {
         gpui_kit::init(cx);
+        dialogs::apply_theme(cx);
         // reframe says when it quits: after its sessions were ended, not when a window goes.
         cx.set_quit_mode(QuitMode::Explicit);
         let e2e = config.e2e;

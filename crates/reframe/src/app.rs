@@ -22,17 +22,22 @@ use reframe_core::claude::registry::claude_home;
 use reframe_core::claude::resolve::{self, ClaudeBinary, NodeRunner, Platform, ResolveOptions, resolve_claude};
 use reframe_core::cleanup::{clean_up, drops_dir};
 use reframe_core::hooks::HookServer;
+use reframe_core::i18n::{Locale, locale_of, resolve_locale};
 use reframe_core::layout::DropTarget;
 use reframe_core::log::Logger;
 use reframe_core::paths::home_relative;
 use reframe_core::session_logic::{IdentityPatch, SessionError, SessionStatus};
-use reframe_core::state::{AppState, LaunchOptions, Lifecycle, PermissionMode, SessionRecord, WindowState};
+use reframe_core::shortcuts::{TextSizeChange, font_size_after};
+use reframe_core::state::{
+    AppState, LaunchOptions, Lifecycle, PermissionMode, Preferences, SessionRecord, WindowState,
+};
 use reframe_core::store::{LoadSource, SAVE_DELAY, StateStore};
 use reframe_core::wsl::parse_wsl_path;
 use serde_json::json;
 use uuid::Uuid;
 
 use crate::sessions::{SessionEvent, SessionManager, SessionManagerDeps};
+use crate::terminal_view::TerminalFontSize;
 
 const MAX_RECENT_FOLDERS: usize = 8;
 /// How long a session gets to end on Ctrl+C before its process tree is killed.
@@ -50,6 +55,19 @@ pub struct Config {
     pub home: PathBuf,
     /// Driven by a test (`REFRAME_E2E`): no dialogs, windows stay hidden.
     pub e2e: bool,
+    /// The language Windows shows itself in (`REFRAME_LOCALE` in its place, for tests), as
+    /// "de-AT".
+    pub system_locale: String,
+}
+
+/// The name of the user's language in Windows, as "de-AT".
+fn windows_locale() -> String {
+    use windows_sys::Win32::Globalization::GetUserDefaultLocaleName;
+    let mut name = [0u16; 85];
+    // SAFETY: the buffer is as long as the length says.
+    let length = unsafe { GetUserDefaultLocaleName(name.as_mut_ptr(), name.len() as i32) };
+    // The length counts the terminating zero.
+    String::from_utf16_lossy(&name[..usize::try_from(length - 1).unwrap_or(0)])
 }
 
 impl Config {
@@ -66,11 +84,13 @@ impl Config {
                 .join("reframe-native"),
         };
         let e2e = set("REFRAME_E2E").is_some();
+        let system_locale = set("REFRAME_LOCALE").unwrap_or_else(windows_locale);
         Config {
             user_data,
             env,
             home,
             e2e,
+            system_locale,
         }
     }
 }
@@ -97,6 +117,8 @@ pub enum AppEvent {
     Window(String),
     /// A window is gone.
     WindowClosed(String),
+    /// A preference changed that windows show (the language, the text size, …).
+    Preferences,
 }
 
 /// Why reframe does not start.
@@ -205,6 +227,7 @@ impl Controller {
         }
 
         let claude_home = claude_home(&config.env, &config.home);
+        cx.set_global(TerminalFontSize(f32::from(state.preferences.font_size)));
         let claude_bin = Rc::new(RefCell::new(state.preferences.claude_bin.clone()));
         let found = find_claude(&config, claude_bin.borrow().as_deref());
         let mut starting = json!({
@@ -277,6 +300,83 @@ impl Controller {
 
     pub fn config(&self) -> &Config {
         &self.config
+    }
+
+    /// The language reframe speaks: the one chosen in Settings, else the system's.
+    pub fn locale(&self) -> Locale {
+        locale_of(
+            self.state.preferences.language,
+            resolve_locale(&self.config.system_locale),
+        )
+    }
+
+    /// Where the claude is that sessions run, if there is one.
+    pub fn claude_source(&self) -> Option<String> {
+        find_claude(&self.config, self.claude_bin.borrow().as_deref()).map(|claude| claude.source)
+    }
+
+    /// The folders sessions were started in last, without those that are gone.
+    pub fn recent_folders(&self) -> Vec<String> {
+        let there = |folder: &&String| parse_wsl_path(folder, None).is_some() || Path::new(folder.as_str()).is_dir();
+        self.state.recent_folders.iter().filter(there).cloned().collect()
+    }
+
+    /// Changes preferences (Settings, the text size keys); every window shows them at once.
+    pub fn update_preferences(&mut self, cx: &mut Context<Self>, change: impl FnOnce(&mut Preferences)) {
+        let was = self.state.preferences.clone();
+        change(&mut self.state.preferences);
+        let now = &self.state.preferences;
+        if *now == was {
+            return;
+        }
+        if now.claude_bin != was.claude_bin {
+            let claude = now
+                .claude_bin
+                .clone()
+                .unwrap_or_else(|| "the one on the PATH".to_owned());
+            self.log
+                .info("claude to run changed", Some(json!({ "claude": claude })));
+            *self.claude_bin.borrow_mut() = now.claude_bin.clone();
+        }
+        if now.language != was.language {
+            let language = serde_json::to_value(now.language).unwrap_or_default();
+            self.log.info(
+                "language changed",
+                Some(json!({ "language": language, "locale": self.locale().as_str() })),
+            );
+        }
+        if now.font_size != was.font_size {
+            cx.set_global(TerminalFontSize(f32::from(now.font_size)));
+            cx.refresh_windows();
+        }
+        self.save(cx);
+        cx.emit(AppEvent::Preferences);
+    }
+
+    /// The terminals' text a step bigger or smaller, or back to normal.
+    pub fn change_text_size(&mut self, change: TextSizeChange, cx: &mut Context<Self>) {
+        self.update_preferences(cx, |preferences| {
+            preferences.font_size = font_size_after(preferences.font_size, change);
+        });
+    }
+
+    /// A name the user gives a session (in reframe only); an empty one goes back to the
+    /// automatic name.
+    pub fn rename_session(&mut self, session_id: &str, name: &str, cx: &mut Context<Self>) {
+        let trimmed: String = name.trim().chars().take(100).collect();
+        let automatic = trimmed.is_empty();
+        self.update_session(session_id, true, cx, |record| {
+            // Claude Code keeps the name it was started with; renaming is reframe's own (shown
+            // instead of it).
+            if record.claude_name.is_none() {
+                record.claude_name = Some(record.name.clone());
+            }
+            record.name = (!automatic).then_some(trimmed);
+        });
+        self.log.info(
+            "session renamed",
+            Some(json!({ "session": session_id, "automatic": automatic })),
+        );
     }
 
     fn find_window(&self, window_id: &str) -> Option<&WindowState> {

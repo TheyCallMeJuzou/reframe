@@ -19,6 +19,7 @@ pub const DANGER: u32 = 0xe06060;
 
 pub const RADIUS: f32 = 6.0;
 pub const TILE_HEADER: f32 = 30.0;
+pub const TOOLBAR: f32 = 40.0;
 /// The space around the layout.
 pub const LAYOUT_PADDING: f32 = 6.0;
 
@@ -32,6 +33,11 @@ pub mod icon {
     pub const ZOOM: &str = "\u{E922}";
     pub const UNZOOM: &str = "\u{E923}";
     pub const CLOSE: &str = "\u{E8BB}";
+    pub const UP: &str = "\u{E70E}";
+    pub const DOWN: &str = "\u{E70D}";
+    pub const SETTINGS: &str = "\u{E713}";
+    pub const INFO: &str = "\u{E946}";
+    pub const EXIT_FULLSCREEN: &str = "\u{E73F}";
 }
 
 /// The colour of a status dot.

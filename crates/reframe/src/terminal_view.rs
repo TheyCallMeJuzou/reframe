@@ -4,20 +4,29 @@
 use std::ops::Range;
 use std::panic::Location;
 
-use alacritty_terminal::grid::Scroll;
+use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::index::{Column, Point as GridPoint, Side};
 use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::term::cell::Flags;
+use alacritty_terminal::term::search::Match;
 use alacritty_terminal::term::{TermMode, viewport_to_point};
 use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor, Rgb};
 use gpui_kit::*;
 
+use crate::find::{self, Step};
 use crate::pty::{Pty, TermSize};
 use crate::terminal::Terminal;
 use crate::{colors, glyphs, input};
 
 const FONT_FAMILY: &str = "Cascadia Mono";
-const FONT_SIZE: f32 = 13.0;
+/// The terminals' font size, the same in every window (a preference).
+pub struct TerminalFontSize(pub f32);
+
+impl Global for TerminalFontSize {}
+
+fn font_size(cx: &App) -> Pixels {
+    px(cx.try_global::<TerminalFontSize>().map_or(13.0, |size| size.0))
+}
 const LINE_HEIGHT: f32 = 1.1;
 const PADDING: f32 = 4.0;
 
@@ -29,6 +38,33 @@ struct Layout {
     cols: usize,
     rows: usize,
 }
+
+/// A search in the terminal: what is looked for, where it is, and which place is the current
+/// one.
+struct Finding {
+    text: String,
+    matches: Vec<Match>,
+    current: Option<usize>,
+}
+
+/// Where the current match is among how many. No index: too many to count them all.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FindResult {
+    pub index: Option<usize>,
+    pub count: usize,
+}
+
+/// A web link on screen: its row and columns as shown.
+#[derive(Clone, Debug, PartialEq)]
+struct Link {
+    row: usize,
+    columns: Range<usize>,
+    url: String,
+}
+
+/// How found text is marked: every match, and the current one.
+const MATCH: u32 = 0x3d4250;
+const CURRENT_MATCH: u32 = 0x7a5f24;
 
 pub struct TerminalView {
     pub terminal: Entity<Terminal>,
@@ -45,6 +81,10 @@ pub struct TerminalView {
     reported_cell: Option<(usize, usize)>,
     scroll_remainder: f32,
     focused: bool,
+    find: Option<Finding>,
+    /// The link under the pointer, and the one the button went down on.
+    link: Option<Link>,
+    pressed_link: Option<String>,
     _terminal: Subscription,
 }
 
@@ -52,7 +92,10 @@ impl TerminalView {
     pub fn new(terminal: Entity<Terminal>, wsl: bool, cx: &mut Context<Self>) -> Self {
         let pty = terminal.read(cx).pty().clone();
         // Whatever the terminal reports (new output, its title, its exit) is drawn.
-        let subscription = cx.observe(&terminal, |_, _, cx| cx.notify());
+        let subscription = cx.observe(&terminal, |this, _, cx| {
+            this.refresh_find();
+            cx.notify();
+        });
         Self {
             terminal,
             pty,
@@ -65,6 +108,9 @@ impl TerminalView {
             reported_cell: None,
             scroll_remainder: 0.0,
             focused: false,
+            find: None,
+            link: None,
+            pressed_link: None,
             _terminal: subscription,
         }
     }
@@ -128,6 +174,92 @@ impl TerminalView {
                 self.pty.write(if focused { &b"\x1b[I"[..] } else { &b"\x1b[O"[..] });
             }
         }
+    }
+
+    // ---- finding text ----
+
+    /// Looks for text in the terminal, its scrollback too, marks every place and goes to one.
+    pub fn find(&mut self, text: &str, step: Step, cx: &mut Context<Self>) -> Option<FindResult> {
+        let mut term = self.pty.term.lock();
+        let matches = find::matches(&term, text);
+        let starts: Vec<GridPoint> = matches.iter().map(|found| *found.start()).collect();
+        let from = self
+            .find
+            .as_ref()
+            .and_then(|finding| finding.matches.get(finding.current?))
+            .map_or_else(
+                || viewport_to_point(term.grid().display_offset(), GridPoint::new(0, Column(0))),
+                |found| *found.start(),
+            );
+        let current = find::pick(&starts, from, step);
+        if let Some(found) = current.and_then(|current| matches.get(current)) {
+            term.scroll_to_point(*found.start());
+        }
+        drop(term);
+        self.find = (!text.is_empty()).then(|| Finding {
+            text: text.to_owned(),
+            matches,
+            current,
+        });
+        cx.notify();
+        self.find_result()
+    }
+
+    /// New output: what was found may have moved or gone.
+    fn refresh_find(&mut self) {
+        let Some(finding) = &mut self.find else { return };
+        let term = self.pty.term.lock();
+        let from = finding
+            .current
+            .and_then(|current| finding.matches.get(current))
+            .map(|found| *found.start());
+        finding.matches = find::matches(&term, &finding.text);
+        let starts: Vec<GridPoint> = finding.matches.iter().map(|found| *found.start()).collect();
+        finding.current = from.and_then(|from| find::pick(&starts, from, Step::Stay));
+    }
+
+    pub fn find_result(&self) -> Option<FindResult> {
+        let finding = self.find.as_ref()?;
+        let many = finding.matches.len() > find::MAX_MATCHES;
+        Some(FindResult {
+            index: finding.current.filter(|_| !many),
+            count: finding.matches.len().min(find::MAX_MATCHES),
+        })
+    }
+
+    /// Takes the marks of the last find off.
+    pub fn clear_find(&mut self, cx: &mut Context<Self>) {
+        self.find = None;
+        cx.notify();
+    }
+
+    // ---- web links ----
+
+    /// The web link at a cell: one the program marked as a link, or an address in the text.
+    fn link_under(&self, col: usize, row: usize) -> Option<Link> {
+        let term = self.pty.term.lock();
+        let line = viewport_to_point(term.grid().display_offset(), GridPoint::new(row, Column(0))).line;
+        let cells = &term.grid()[line];
+        let columns = term.grid().columns();
+        if let Some(link) = cells[Column(col.min(columns.saturating_sub(1)))].hyperlink() {
+            let same = |at: usize| cells[Column(at)].hyperlink().is_some_and(|other| other == link);
+            let (mut start, mut end) = (col, col + 1);
+            while start > 0 && same(start - 1) {
+                start -= 1;
+            }
+            while end < columns && same(end) {
+                end += 1;
+            }
+            let url = link.uri().to_owned();
+            let web = url.starts_with("https://") || url.starts_with("http://");
+            return web.then_some(Link {
+                row,
+                columns: start..end,
+                url,
+            });
+        }
+        let text: Vec<char> = (0..columns).map(|at| cells[Column(at)].c).collect();
+        find::link_at(&text, col).map(|(columns, url)| Link { row, columns, url })
     }
 
     // ---- clipboard ----
@@ -318,6 +450,7 @@ impl TerminalView {
                 term.selection = Some(Selection::new(kind, point, side));
                 drop(term);
                 self.selecting = true;
+                self.pressed_link = self.link_under(col, row).map(|link| link.url);
             }
             // Right-click copies the selection, or pastes when there is none.
             MouseButton::Right if !self.copy_selection(cx) => {
@@ -348,6 +481,15 @@ impl TerminalView {
             return;
         }
 
+        // A link under the pointer is underlined, unless the program has the mouse.
+        let link = (hovered && !self.reports_mouse(&event.modifiers))
+            .then(|| self.link_under(col, row))
+            .flatten();
+        if link != self.link {
+            self.link = link;
+            cx.notify();
+        }
+
         let mode = self.mode();
         let wanted = mode.contains(TermMode::MOUSE_MOTION)
             || (mode.contains(TermMode::MOUSE_DRAG) && self.reported_button.is_some());
@@ -369,10 +511,18 @@ impl TerminalView {
             self.selecting = false;
             // A click without a drag selects nothing.
             let mut term = self.pty.term.lock();
-            if term.selection.as_ref().is_some_and(|selection| selection.is_empty()) {
+            let clicked = term.selection.as_ref().is_some_and(|selection| selection.is_empty());
+            if clicked {
                 term.selection = None;
             }
             drop(term);
+            // On a link, it opens the link.
+            if let Some(url) = self.pressed_link.take().filter(|_| clicked)
+                && let Some((col, row, _)) = self.cell_at(event.position)
+                && self.link_under(col, row).is_some_and(|link| link.url == url)
+            {
+                cx.open_url(&url);
+            }
             cx.notify();
         }
         if let Some(button) = self.reported_button.take()
@@ -387,6 +537,10 @@ impl TerminalView {
 
     fn on_scroll(&mut self, event: &ScrollEvent, cx: &mut Context<Self>) {
         let Some(layout) = self.layout else { return };
+        // With Ctrl the wheel changes the text size; the window sees to that.
+        if event.modifiers.control {
+            return;
+        }
         let lines = match event.delta {
             ScrollDelta::Lines(delta) => delta.y,
             ScrollDelta::Pixels(delta) => f32::from(delta.y) / f32::from(layout.cell.height),
@@ -571,6 +725,7 @@ pub struct Frame {
     focused: bool,
     mouse_mode: bool,
     composing: Option<String>,
+    link: Option<Link>,
 }
 
 struct TerminalElement {
@@ -630,7 +785,7 @@ fn paint_text(
     };
     let line = window
         .text_system()
-        .shape_line(text.into(), px(FONT_SIZE), &[run], None);
+        .shape_line(text.into(), font_size(cx), &[run], None);
     let _ = line.paint(origin, line_height, TextAlign::Left, None, window, cx);
 }
 
@@ -671,7 +826,7 @@ impl Element for TerminalElement {
         // Cell size from the font: the advance of a character, and its height times the line height.
         let text_system = window.text_system().clone();
         let font_id = text_system.resolve_font(&font(FONT_FAMILY));
-        let font_size = px(FONT_SIZE);
+        let font_size = font_size(cx);
         let cell_width = text_system
             .advance(font_id, font_size, 'm')
             .map(|size| size.width)
@@ -701,6 +856,21 @@ impl Element for TerminalElement {
         let offset = content.display_offset as i32;
         let background = to_hsla(colors::BACKGROUND);
         let selection_color = to_hsla(colors::SELECTION);
+        // What the search found, as far as it is on screen.
+        let shown = GridPoint::new(alacritty_terminal::index::Line(-offset), Column(0))
+            ..=GridPoint::new(
+                alacritty_terminal::index::Line(-offset + layout.rows as i32 - 1),
+                Column(layout.cols),
+            );
+        let found: Vec<(&Match, bool)> = view.find.as_ref().map_or_else(Vec::new, |finding| {
+            finding
+                .matches
+                .iter()
+                .enumerate()
+                .filter(|(_, found)| found.start() <= shown.end() && found.end() >= shown.start())
+                .map(|(index, found)| (found, finding.current == Some(index)))
+                .collect()
+        });
         let resolve = |color: Color| -> Rgb {
             match color {
                 Color::Spec(rgb) => rgb,
@@ -730,6 +900,9 @@ impl Element for TerminalElement {
             }
             if content.selection.is_some_and(|range| range.contains(indexed.point)) {
                 bg = Some(selection_color);
+            }
+            if let Some((_, current)) = found.iter().find(|(found, _)| found.contains(&indexed.point)) {
+                bg = Some(rgb(if *current { CURRENT_MATCH } else { MATCH }).into());
             }
             grid[row as usize].push(CellPaint {
                 c: cell.c,
@@ -762,6 +935,7 @@ impl Element for TerminalElement {
             focused,
             mouse_mode,
             composing: view.composing.clone(),
+            link: view.link.clone(),
         })
     }
 
@@ -787,7 +961,9 @@ impl Element for TerminalElement {
 
         let focus = self.view.read(cx).focus.clone();
         window.handle_input(&focus, ElementInputHandler::new(bounds, self.view.clone()), cx);
-        if !frame.mouse_mode {
+        if frame.link.is_some() {
+            window.set_cursor_style(CursorStyle::PointingHand, &frame.hitbox);
+        } else if !frame.mouse_mode {
             window.set_cursor_style(CursorStyle::IBeam, &frame.hitbox);
         }
 
@@ -859,6 +1035,18 @@ impl Element for TerminalElement {
                         col += 1;
                     }
                 }
+            }
+
+            // The link under the pointer is underlined.
+            if let Some(link) = &frame.link {
+                let origin = cell_origin(link.columns.start, link.row);
+                window.paint_quad(fill(
+                    Bounds::new(
+                        point(origin.x, origin.y + cell_h - px(1.0)),
+                        size(cell_w * link.columns.len() as f32, px(1.0)),
+                    ),
+                    to_hsla(colors::FOREGROUND),
+                ));
             }
 
             // Cursor: a solid shape while the tile has the focus, an outline otherwise.

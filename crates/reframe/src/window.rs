@@ -8,19 +8,26 @@
 
 use std::collections::HashMap;
 
+use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::tooltip::Tooltip;
+use gpui_kit::component::{Sizable as _, WindowExt as _};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use reframe_core::actions::LayoutAction;
+use reframe_core::focus_nav::{TileBox, neighbor};
 use reframe_core::geometry::{Metrics, Placement, Rect, drag_sizes, place, shares};
-use reframe_core::i18n::{Locale, locale_of, resolve_locale, t};
+use reframe_core::i18n::{Locale, t};
 use reframe_core::layout::{find_node, leaves, set_split_sizes, tile, tile_key};
 use reframe_core::session_logic::{SessionError, SessionStatus, is_running};
+use reframe_core::shortcuts::{Shortcut, TextSizeChange};
 use reframe_core::snap::{GRID_STEPS, GridAxis, SplitAxis, snap_sizes};
 use reframe_core::state::{DockEntry, LayoutNode, SplitDir, WindowState};
 use reframe_core::wsl::parse_wsl_path;
 
 use crate::app::{AppEvent, Controller, SessionView};
+use crate::dialogs;
+use crate::find::Step;
+use crate::keys;
 use crate::terminal_view::TerminalView;
 use crate::theme::{self, icon};
 
@@ -39,16 +46,42 @@ struct SeparatorDrag {
     area: Rect,
 }
 
+/// The field a name is edited in, in place: Enter or leaving the field keeps it, Escape drops
+/// the change.
+struct Renaming {
+    session_id: String,
+    initial: String,
+    input: Entity<InputState>,
+    _events: Subscription,
+}
+
+/// The find bar of a tile.
+struct FindBar {
+    session_id: String,
+    input: Entity<InputState>,
+    _events: Subscription,
+}
+
 pub struct Shell {
     controller: Entity<Controller>,
     window_id: String,
+    /// The window this is drawn in.
+    handle: AnyWindowHandle,
+    /// Has the keyboard while no tile does, so that the shortcuts still arrive.
+    focus: FocusHandle,
     /// The view of each session's current start.
     views: HashMap<String, Entity<TerminalView>>,
     /// A session whose terminal gets the keyboard focus with the next frame.
     focus_next: Option<String>,
+    /// The session whose terminal had the keyboard last; it gets it back when a dialog closes.
+    last_active: Option<String>,
     /// The tile that fills the window for now.
     zoomed: Option<String>,
     drag: Option<SeparatorDrag>,
+    renaming: Option<Renaming>,
+    find: Option<FindBar>,
+    /// What the wheel turned with Ctrl held that did not make a whole step of text size yet.
+    wheel: f32,
     /// Where things were placed in the last frame, and the area they were placed in.
     placement: Placement,
     area: Rect,
@@ -80,19 +113,31 @@ fn along(dir: SplitDir, position: Point<Pixels>) -> f64 {
 }
 
 impl Shell {
-    fn new(controller: Entity<Controller>, window_id: String, cx: &mut Context<Self>) -> Self {
+    fn new(controller: Entity<Controller>, window_id: String, handle: AnyWindowHandle, cx: &mut Context<Self>) -> Self {
         let events = cx.subscribe(&controller, |this, _, event, cx| match event {
             AppEvent::Session(_) => this.sync(cx),
-            AppEvent::Window(id) if *id == this.window_id => this.sync(cx),
+            AppEvent::Window(id) if *id == this.window_id => {
+                // A zoom is over as soon as the layout changes (a tile added, moved, brought back
+                // or closed).
+                this.zoomed = None;
+                this.sync(cx);
+            }
+            AppEvent::Preferences => cx.notify(),
             _ => {}
         });
         let mut shell = Self {
             controller,
             window_id,
+            handle,
+            focus: cx.focus_handle(),
             views: HashMap::new(),
             focus_next: None,
+            last_active: None,
             zoomed: None,
             drag: None,
+            renaming: None,
+            find: None,
+            wheel: 0.0,
             placement: Placement::default(),
             area: Rect::default(),
             _events: events,
@@ -111,13 +156,7 @@ impl Shell {
     }
 
     fn locale(&self, cx: &App) -> Locale {
-        let controller = self.controller.read(cx);
-        let system = controller
-            .config()
-            .env
-            .get("REFRAME_LOCALE")
-            .map_or(Locale::En, |locale| resolve_locale(locale));
-        locale_of(controller.state().preferences.language, system)
+        self.controller.read(cx).locale()
     }
 
     fn text(&self, key: &str, cx: &App) -> String {
@@ -132,6 +171,17 @@ impl Shell {
             .map(|window| leaves(window.layout.as_ref()))
             .unwrap_or_default();
         self.views.retain(|id, _| tiles.contains(id));
+        // A find bar and a name being edited go with their tile.
+        if self.find.as_ref().is_some_and(|find| !tiles.contains(&find.session_id)) {
+            self.find = None;
+        }
+        if self
+            .renaming
+            .as_ref()
+            .is_some_and(|renaming| !tiles.contains(&renaming.session_id))
+        {
+            self.renaming = None;
+        }
         if self.zoomed.as_ref().is_some_and(|id| !tiles.contains(id)) {
             self.zoomed = None;
         }
@@ -167,6 +217,10 @@ impl Shell {
     /// Where things were placed in the last frame.
     pub fn placement(&self) -> &Placement {
         &self.placement
+    }
+
+    pub fn handle(&self) -> AnyWindowHandle {
+        self.handle
     }
 
     pub fn area(&self) -> Rect {
@@ -214,6 +268,354 @@ impl Shell {
         };
         self.focus_next = Some(session_id.to_owned());
         cx.notify();
+    }
+
+    // ---------- keyboard ----------
+
+    /// The session whose terminal has the keyboard.
+    pub fn active_tile(&self, window: &Window, cx: &App) -> Option<String> {
+        self.views
+            .iter()
+            .find(|(_, view)| view.read(cx).focus.contains_focused(window, cx))
+            .map(|(id, _)| id.clone())
+    }
+
+    fn focus_tile(&mut self, session_id: String, cx: &mut Context<Self>) {
+        self.focus_next = Some(session_id);
+        cx.notify();
+    }
+
+    /// reframe's shortcuts, caught before the terminal (or anything else) sees the key.
+    fn on_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        // Dialogs keep their keys.
+        if window.has_active_dialog(cx) {
+            return;
+        }
+        let Some(shortcut) = keys::shortcut_of(&event.keystroke) else {
+            return;
+        };
+        cx.stop_propagation();
+        self.run_shortcut(shortcut, window, cx);
+    }
+
+    pub fn run_shortcut(&mut self, shortcut: Shortcut, window: &mut Window, cx: &mut Context<Self>) {
+        let shown: Vec<String> = self
+            .placement
+            .tiles
+            .iter()
+            .map(|tile| tile.session_id.clone())
+            .collect();
+        let active = self.active_tile(window, cx);
+        match shortcut {
+            Shortcut::FocusTile { index } => {
+                if let Some(id) = shown.get(index) {
+                    self.focus_tile(id.clone(), cx);
+                }
+            }
+            Shortcut::FocusDirection { direction } => {
+                let Some(from) = active else {
+                    if let Some(first) = shown.first() {
+                        self.focus_tile(first.clone(), cx);
+                    }
+                    return;
+                };
+                let boxes: Vec<TileBox> = self
+                    .placement
+                    .tiles
+                    .iter()
+                    .map(|tile| TileBox {
+                        id: tile.session_id.clone(),
+                        x: tile.rect.x,
+                        y: tile.rect.y,
+                        width: tile.rect.width,
+                        height: tile.rect.height,
+                    })
+                    .collect();
+                if let Some(next) = neighbor(&boxes, &from, direction) {
+                    self.focus_tile(next, cx);
+                }
+            }
+            Shortcut::NewSession => self.open_new_session(window, cx),
+            Shortcut::OpenSettings => self.open_settings(window, cx),
+            Shortcut::Zoom => {
+                if let Some(id) = active {
+                    self.toggle_zoom(&id, cx);
+                }
+            }
+            Shortcut::ToggleFullscreen => window.toggle_fullscreen(),
+            Shortcut::ToggleCollapse => {
+                // In a tile: collapse it. Otherwise: bring back the one collapsed last.
+                if let Some(session_id) = active {
+                    self.dispatch(LayoutAction::TileCollapse { session_id }, cx);
+                    return;
+                }
+                let last = self.window_state(cx).and_then(|window| window.dock.last().cloned());
+                match last {
+                    Some(DockEntry::Tile { session_id, .. }) => {
+                        self.dispatch(
+                            LayoutAction::TileExpand {
+                                session_id: session_id.clone(),
+                            },
+                            cx,
+                        );
+                        self.focus_tile(session_id, cx);
+                    }
+                    Some(DockEntry::Group { node, .. }) => {
+                        self.dispatch(LayoutAction::GroupExpand { group_id: node.id }, cx);
+                    }
+                    None => {}
+                }
+            }
+            Shortcut::TextSize { change } => self.change_text_size(change, cx),
+            Shortcut::Find => {
+                // In the focused tile (pressed in the find bar too: the field is selected again).
+                let bar = self.find.as_ref().map(|find| find.session_id.clone());
+                if let Some(id) = active.or(bar).or_else(|| shown.first().cloned()) {
+                    self.open_find(id, window, cx);
+                }
+            }
+            // Windows, the session list and "the next session that needs you" follow with their
+            // milestones.
+            Shortcut::NewWindow | Shortcut::NextWaiting | Shortcut::ToggleSidebar => {}
+        }
+    }
+
+    fn change_text_size(&mut self, change: TextSizeChange, cx: &mut Context<Self>) {
+        self.controller
+            .update(cx, |controller, cx| controller.change_text_size(change, cx));
+    }
+
+    /// The wheel over a tile with Ctrl held changes the text size instead of scrolling: a step
+    /// per notch, or per that much of a touchpad's movement.
+    fn on_wheel(&mut self, event: &ScrollEvent, cx: &mut Context<Self>) {
+        if !event.modifiers.control {
+            return;
+        }
+        cx.stop_propagation();
+        self.wheel += match event.delta {
+            ScrollDelta::Lines(delta) => delta.y.signum() * 100.0,
+            ScrollDelta::Pixels(delta) => f32::from(delta.y),
+        };
+        while self.wheel.abs() >= 100.0 {
+            let up = self.wheel > 0.0;
+            self.change_text_size(
+                if up {
+                    TextSizeChange::Bigger
+                } else {
+                    TextSizeChange::Smaller
+                },
+                cx,
+            );
+            self.wheel -= self.wheel.signum() * 100.0;
+        }
+    }
+
+    // ---------- finding text ----------
+
+    pub fn open_find(&mut self, session_id: String, window: &mut Window, cx: &mut Context<Self>) {
+        if self.find.as_ref().is_none_or(|find| find.session_id != session_id) {
+            self.close_find(cx);
+            let placeholder = self.text("find.placeholder", cx);
+            let input = cx.new(|cx| InputState::new(window, cx).placeholder(placeholder));
+            let events = cx.subscribe(&input, |this, _, event: &InputEvent, cx| match event {
+                InputEvent::Change => this.run_find(Step::Stay, cx),
+                InputEvent::PressEnter { shift, .. } => {
+                    this.run_find(if *shift { Step::Previous } else { Step::Next }, cx);
+                }
+                _ => {}
+            });
+            self.find = Some(FindBar {
+                session_id,
+                input,
+                _events: events,
+            });
+        }
+        if let Some(find) = &self.find {
+            find.input.update(cx, |input, cx| {
+                input.focus(window, cx);
+                input.select_all(window, cx);
+            });
+        }
+        cx.notify();
+    }
+
+    /// Finds what the bar says in its tile's terminal and goes to a match.
+    pub fn run_find(&mut self, step: Step, cx: &mut Context<Self>) {
+        let Some(find) = &self.find else { return };
+        let text = find.input.read(cx).value();
+        if let Some(view) = self.views.get(&find.session_id) {
+            view.update(cx, |view, cx| view.find(&text, step, cx));
+        }
+        cx.notify();
+    }
+
+    /// Closes the find bar (and leaves no marks behind); its session is typed in again.
+    pub fn close_find(&mut self, cx: &mut Context<Self>) {
+        let Some(find) = self.find.take() else { return };
+        if let Some(view) = self.views.get(&find.session_id) {
+            view.update(cx, |view, cx| view.clear_find(cx));
+        }
+        self.focus_tile(find.session_id, cx);
+    }
+
+    /// What the find bar is at: its text and where the current match is among how many.
+    pub fn find_state(&self, cx: &App) -> Option<(String, String, Option<crate::terminal_view::FindResult>)> {
+        let find = self.find.as_ref()?;
+        let result = self
+            .views
+            .get(&find.session_id)
+            .and_then(|view| view.read(cx).find_result());
+        Some((find.session_id.clone(), find.input.read(cx).value().to_string(), result))
+    }
+
+    fn find_bar(&self, find: &FindBar, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let locale = self.locale(cx);
+        let result = self
+            .views
+            .get(&find.session_id)
+            .and_then(|view| view.read(cx).find_result());
+        let count = match result {
+            None => String::new(),
+            Some(result) if result.count == 0 => self.text("find.none", cx),
+            Some(result) => {
+                let total = result.count.to_string();
+                match result.index {
+                    Some(index) => t(
+                        locale,
+                        "find.count",
+                        &[("n", &(index + 1).to_string()), ("total", &total)],
+                    ),
+                    None => t(locale, "find.found", &[("total", &total)]),
+                }
+                .unwrap_or_default()
+            }
+        };
+        div()
+            .absolute()
+            .top(px(6.0))
+            .right(px(18.0))
+            .flex()
+            .items_center()
+            .gap(px(2.0))
+            .py(px(3.0))
+            .pl(px(6.0))
+            .pr(px(4.0))
+            .rounded(px(theme::RADIUS))
+            .border_1()
+            .border_color(rgb(theme::BORDER_STRONG))
+            .bg(rgb(theme::SURFACE_2))
+            .shadow_md()
+            // Clicks here stay here (a click in the tile otherwise puts the focus in its terminal).
+            .occlude()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .capture_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                if event.keystroke.key == "escape" {
+                    cx.stop_propagation();
+                    this.close_find(cx);
+                }
+            }))
+            .child(div().w(px(180.0)).child(Input::new(&find.input).small()))
+            .child(
+                div()
+                    .min_w(px(64.0))
+                    .px(px(6.0))
+                    .text_color(rgb(theme::MUTED))
+                    .text_size(px(12.0))
+                    .text_right()
+                    .whitespace_nowrap()
+                    .child(count),
+            )
+            .child(self.icon_button(
+                "find-previous",
+                icon::UP,
+                self.text("find.previous", cx),
+                cx,
+                |this, _, cx| {
+                    this.run_find(Step::Previous, cx);
+                },
+            ))
+            .child(self.icon_button(
+                "find-next",
+                icon::DOWN,
+                self.text("find.next", cx),
+                cx,
+                |this, _, cx| {
+                    this.run_find(Step::Next, cx);
+                },
+            ))
+            .child(self.icon_button(
+                "find-close",
+                icon::CLOSE,
+                self.text("find.close", cx),
+                cx,
+                |this, _, cx| {
+                    this.close_find(cx);
+                },
+            ))
+    }
+
+    // ---------- renaming ----------
+
+    /// Puts a field in place of a session's name.
+    pub fn start_rename(&mut self, session_id: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(view) = self.controller.read(cx).session_view(&session_id, cx) else {
+            return;
+        };
+        let placeholder = self.text("session.automaticName", cx);
+        let initial = view.label;
+        let input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(placeholder)
+                .default_value(initial.clone())
+        });
+        input.update(cx, |input, cx| {
+            input.focus(window, cx);
+            input.select_all(window, cx);
+        });
+        let events = cx.subscribe(&input, |this, _, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::PressEnter { .. } | InputEvent::Blur) {
+                this.finish_rename(true, cx);
+            }
+        });
+        self.renaming = Some(Renaming {
+            session_id,
+            initial,
+            input,
+            _events: events,
+        });
+        cx.notify();
+    }
+
+    /// Keeps the name (when it changed) or drops the change; the session is typed in again. Once
+    /// kept or dropped, that is it: the field losing the focus afterwards does not keep it again.
+    pub fn finish_rename(&mut self, keep: bool, cx: &mut Context<Self>) {
+        let Some(renaming) = self.renaming.take() else { return };
+        let name = renaming.input.read(cx).value().trim().to_owned();
+        if keep && name != renaming.initial {
+            self.controller.update(cx, |controller, cx| {
+                controller.rename_session(&renaming.session_id, &name, cx);
+            });
+        }
+        self.focus_tile(renaming.session_id, cx);
+    }
+
+    /// The name being edited, for tests to type into.
+    pub fn renaming(&self) -> Option<&str> {
+        self.renaming.as_ref().map(|renaming| renaming.session_id.as_str())
+    }
+
+    // ---------- dialogs ----------
+
+    pub fn open_new_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        dialogs::open_new_session(&self.controller, &self.window_id, window, cx);
+    }
+
+    pub fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        dialogs::open_settings(&self.controller, window, cx);
+    }
+
+    pub fn open_about(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        dialogs::open_about(&self.controller, window, cx);
     }
 
     // ---------- separators ----------
@@ -415,7 +817,7 @@ impl Shell {
         glyph: &'static str,
         hint: String,
         cx: &mut Context<Self>,
-        on_click: impl Fn(&mut Self, &mut Context<Self>) + 'static,
+        on_click: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
     ) -> Stateful<Div> {
         div()
             .id(id)
@@ -433,7 +835,7 @@ impl Shell {
             .tooltip(move |window, cx| Tooltip::new(hint.clone()).build(window, cx))
             // The header's own mouse handling (focus, later dragging) is not for its buttons.
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(move |this, _, _, cx| on_click(this, cx)))
+            .on_click(cx.listener(move |this, _, window, cx| on_click(this, window, cx)))
             .child(glyph)
     }
 
@@ -443,7 +845,7 @@ impl Shell {
         label: String,
         primary: bool,
         cx: &mut Context<Self>,
-        on_click: impl Fn(&mut Self, &mut Context<Self>) + 'static,
+        on_click: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
     ) -> Stateful<Div> {
         div()
             .id(id)
@@ -466,7 +868,7 @@ impl Shell {
                         .hover(|style| style.border_color(rgb(theme::MUTED)))
                 }
             })
-            .on_click(cx.listener(move |this, _, _, cx| on_click(this, cx)))
+            .on_click(cx.listener(move |this, _, window, cx| on_click(this, window, cx)))
             .child(label)
     }
 
@@ -505,19 +907,46 @@ impl Shell {
             .child(
                 self.icon_button("collapse", icon::COLLAPSE, self.text("tile.collapse", cx), cx, {
                     let id = id.clone();
-                    move |this, cx| this.dispatch(LayoutAction::TileCollapse { session_id: id.clone() }, cx)
+                    move |this, _, cx| this.dispatch(LayoutAction::TileCollapse { session_id: id.clone() }, cx)
                 }),
             )
             .child(self.status_dot(view.status, cx))
             .child(
-                div()
-                    .flex_shrink_0()
-                    .max_w(relative(0.4))
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(view.label.clone()),
+                match self.renaming.as_ref().filter(|renaming| renaming.session_id == id) {
+                    Some(renaming) => div()
+                        .w(px(180.0))
+                        .flex_none()
+                        // Clicks and keys here belong to the field, not to the terminal around it.
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .capture_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                            if event.keystroke.key == "escape" {
+                                cx.stop_propagation();
+                                this.finish_rename(false, cx);
+                            }
+                        }))
+                        .child(Input::new(&renaming.input).small())
+                        .into_any_element(),
+                    None => {
+                        let hint = self.text("session.renameHint", cx);
+                        let id = id.clone();
+                        div()
+                            .id("label")
+                            .flex_shrink_0()
+                            .max_w(relative(0.4))
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .tooltip(move |window, cx| Tooltip::new(hint.clone()).build(window, cx))
+                            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                                if event.click_count() == 2 {
+                                    this.start_rename(id.clone(), window, cx);
+                                }
+                            }))
+                            .child(view.label.clone())
+                            .into_any_element()
+                    }
+                },
             )
             .child(
                 div()
@@ -537,12 +966,12 @@ impl Shell {
                 cx,
                 {
                     let id = id.clone();
-                    move |this, cx| this.toggle_zoom(&id, cx)
+                    move |this, _, cx| this.toggle_zoom(&id, cx)
                 },
             ))
             .child(self.icon_button("end", icon::CLOSE, self.text("tile.end", cx), cx, {
                 let id = id.clone();
-                move |this, cx| {
+                move |this, _, cx| {
                     this.controller
                         .update(cx, |controller, cx| controller.end_session(&id, cx))
                 }
@@ -563,6 +992,9 @@ impl Shell {
         if !running {
             body = body.child(self.overlay(view, cx));
         }
+        if let Some(find) = self.find.as_ref().filter(|find| find.session_id == id) {
+            body = body.child(self.find_bar(find, cx));
+        }
 
         div()
             .id(SharedString::from(format!("tile-{id}")))
@@ -581,6 +1013,7 @@ impl Shell {
                     cx.notify();
                 }),
             )
+            .on_scroll(cx.listener(|this, event, _, cx| this.on_wheel(event, cx)))
             .child(header)
             .child(body)
             .into_any_element()
@@ -605,7 +1038,7 @@ impl Shell {
             };
             buttons = buttons.child(self.button("resume", self.text(label, cx), true, cx, {
                 let id = id.clone();
-                move |this, cx| {
+                move |this, _, cx| {
                     this.controller
                         .update(cx, |controller, cx| controller.restart_session(&id, false, cx))
                 }
@@ -621,14 +1054,14 @@ impl Shell {
         if fresh {
             buttons = buttons.child(self.button("fresh", self.text("tile.startFresh", cx), false, cx, {
                 let id = id.clone();
-                move |this, cx| {
+                move |this, _, cx| {
                     this.controller
                         .update(cx, |controller, cx| controller.restart_session(&id, true, cx))
                 }
             }));
         }
         buttons = buttons.child(self.button("close", self.text("tile.close", cx), false, cx, {
-            move |this, cx| {
+            move |this, _, cx| {
                 this.controller
                     .update(cx, |controller, cx| controller.end_session(&id, cx))
             }
@@ -657,6 +1090,89 @@ impl Shell {
                     .child(div().text_center().child(message))
                     .child(buttons),
             )
+    }
+
+    /// The bar at the top: a new session at the left; settings and about at the right.
+    fn toolbar(&self, window: &Window, cx: &mut Context<Self>) -> Div {
+        let locale = self.locale(cx);
+        let new_session = self.text("toolbar.newSession", cx);
+        let hint = format!("{new_session} ({})", keys::label(locale, "T", true));
+        let settings = format!(
+            "{} ({})",
+            self.text("settings.title", cx),
+            keys::label(locale, ",", false)
+        );
+        div()
+            .h(px(theme::TOOLBAR))
+            .flex_none()
+            .px(px(8.0))
+            .flex()
+            .items_center()
+            .gap(px(6.0))
+            .bg(rgb(theme::SURFACE))
+            .border_b_1()
+            .border_color(rgb(theme::BORDER))
+            .child(
+                self.button("new-session", new_session, false, cx, |this, window, cx| {
+                    this.open_new_session(window, cx);
+                })
+                .flex()
+                .items_center()
+                .gap(px(6.0))
+                .tooltip(move |window, cx| Tooltip::new(hint.clone()).build(window, cx)),
+            )
+            .child(div().flex_1())
+            .when(window.is_fullscreen(), |bar| {
+                let hint = format!("{} (F11)", self.text("fullscreen.exit", cx));
+                bar.child(
+                    self.icon_button("exit-fullscreen", icon::EXIT_FULLSCREEN, hint, cx, |_, window, _| {
+                        window.toggle_fullscreen()
+                    }),
+                )
+            })
+            .child(
+                self.icon_button("settings", icon::SETTINGS, settings, cx, |this, window, cx| {
+                    this.open_settings(window, cx);
+                })
+                .size(px(28.0))
+                .text_size(px(14.0)),
+            )
+            .child(
+                self.icon_button(
+                    "about",
+                    icon::INFO,
+                    self.text("about.title", cx),
+                    cx,
+                    |this, window, cx| this.open_about(window, cx),
+                )
+                .size(px(28.0))
+                .text_size(px(14.0)),
+            )
+    }
+
+    /// The window's title (and so its taskbar button) says how many of its sessions need the
+    /// user.
+    pub fn title(&self, cx: &App) -> String {
+        let controller = self.controller.read(cx);
+        let sessions = controller.sessions().read(cx);
+        let waiting = self.window_state(cx).map_or(0, |window| {
+            let mut ids = leaves(window.layout.as_ref());
+            for entry in &window.dock {
+                match entry {
+                    DockEntry::Tile { session_id, .. } => ids.push(session_id.clone()),
+                    DockEntry::Group { node, .. } => ids.extend(leaves(Some(&node.child))),
+                }
+            }
+            ids.iter()
+                .filter(|id| sessions.status(id) == Some(SessionStatus::Waiting))
+                .count()
+        });
+        let locale = controller.locale();
+        match waiting {
+            0 => "reframe".to_owned(),
+            1 => t(locale, "title.waitingOne", &[]).unwrap_or_default(),
+            n => t(locale, "title.waiting", &[("n", &n.to_string())]).unwrap_or_default(),
+        }
     }
 
     /// Collapsed tiles and groups; a click puts them back where they were.
@@ -764,6 +1280,23 @@ impl Render for Shell {
             Some(state) => (state.layout.is_none(), state.dock.clone()),
             None => (true, Vec::new()),
         };
+        window.set_window_title(&self.title(cx));
+        if let Some(id) = &self.focus_next {
+            self.last_active = Some(id.clone());
+        }
+        if let Some(active) = self.active_tile(window, cx) {
+            self.last_active = Some(active);
+        } else if !window.has_active_dialog(cx) && (window.focused(cx).is_none() || self.focus.is_focused(window)) {
+            // Nothing has the keyboard (a dialog closed, a tile went): the tile that had it last
+            // gets it, else the window itself, so that the shortcuts still arrive.
+            match self.last_active.as_ref().and_then(|id| self.views.get(id)) {
+                Some(view) if self.focus_next.is_none() => {
+                    let focus = view.read(cx).focus.clone();
+                    window.focus(&focus, cx);
+                }
+                _ => window.focus(&self.focus, cx),
+            }
+        }
         let mut root = div()
             .size_full()
             .flex()
@@ -771,7 +1304,10 @@ impl Render for Shell {
             .bg(rgb(theme::BG))
             .text_color(rgb(theme::TEXT))
             .font_family(theme::UI_FONT)
-            .text_size(px(13.0));
+            .text_size(px(13.0))
+            .track_focus(&self.focus)
+            .capture_key_down(cx.listener(Self::on_key))
+            .child(self.toolbar(window, cx));
         if !dock.is_empty() {
             root = root.child(self.dock(&dock, cx));
         }
@@ -784,6 +1320,13 @@ impl Render for Shell {
                 .gap(px(6.0))
                 .child(div().text_size(px(18.0)).child(self.text("empty.title", cx)))
                 .child(div().text_color(rgb(theme::MUTED)).child(self.text("empty.hint", cx)))
+                .child(div().mt(px(10.0)).child(self.button(
+                    "empty-new-session",
+                    self.text("toolbar.newSession", cx),
+                    true,
+                    cx,
+                    |this, window, cx| this.open_new_session(window, cx),
+                )))
         } else {
             area.child(LayoutElement { shell: cx.entity() })
         })
@@ -904,7 +1447,8 @@ pub fn open(controller: &Entity<Controller>, window_id: &str, shown: bool, cx: &
     let (controller, window_id) = (controller.clone(), window_id.to_owned());
     let opened = gpui_kit::open_window(options, cx, |window, cx| {
         window.set_window_title("reframe");
-        let shell = cx.new(|cx| Shell::new(controller, window_id.clone(), cx));
+        let handle = window.window_handle();
+        let shell = cx.new(|cx| Shell::new(controller, window_id.clone(), handle, cx));
         cx.default_global::<Shells>().0.insert(window_id, shell.downgrade());
         shell
     });

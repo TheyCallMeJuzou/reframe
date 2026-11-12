@@ -12,6 +12,7 @@ use std::thread;
 
 use futures::StreamExt;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
+use gpui_kit::component::WindowExt as _;
 use gpui_kit::*;
 use serde_json::{Value, json};
 
@@ -198,12 +199,76 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
             }
             None => json!({ "ok": false }),
         },
+        // A key pressed in the first window, written as GPUI does ("ctrl-shift-t", "enter").
+        Some("key") => in_first_window(controller, cx, |_, window, cx| {
+            // Kept for good: a handful of short strings in a test run.
+            let keys: &'static str = Box::leak(text("keys").unwrap_or_default().into_boxed_str());
+            match Keystroke::parse(keys) {
+                Ok(keystroke) => json!({ "handled": window.dispatch_keystroke(keystroke, cx) }),
+                Err(error) => json!({ "error": error.to_string() }),
+            }
+        }),
+        // Text typed into whatever has the keyboard in the first window.
+        Some("type") => in_first_window(controller, cx, |_, window, cx| {
+            for character in text("text").unwrap_or_default().chars() {
+                let keystroke = Keystroke {
+                    modifiers: Modifiers::default(),
+                    key: character.to_string(),
+                    key_char: Some(character.to_string()),
+                };
+                window.dispatch_keystroke(keystroke, cx);
+            }
+            json!({ "ok": true })
+        }),
+        Some("open") => in_first_window(controller, cx, |shell, window, cx| {
+            shell.update(cx, |shell, cx| match text("dialog").as_deref() {
+                Some("settings") => shell.open_settings(window, cx),
+                Some("about") => shell.open_about(window, cx),
+                _ => shell.open_new_session(window, cx),
+            });
+            json!({ "ok": true })
+        }),
+        // A double click on a tile's name: the field to rename it in.
+        Some("rename") => in_first_window(controller, cx, |shell, window, cx| {
+            shell.update(cx, |shell, cx| shell.start_rename(session.clone(), window, cx));
+            json!({ "ok": true })
+        }),
+        // What the first window shows beyond its layout.
+        Some("window") => in_first_window(controller, cx, |shell, window, cx| {
+            json!({
+                "dialog": window.has_active_dialog(cx),
+                "focused": shell.read(cx).active_tile(window, cx),
+                "title": shell.read(cx).title(cx),
+                "fullscreen": window.is_fullscreen(),
+                "renaming": shell.read(cx).renaming(),
+                "find": shell.read(cx).find_state(cx).map(|(session, text, result)| json!({
+                    "session": session,
+                    "text": text,
+                    "index": result.and_then(|result| result.index),
+                    "count": result.map(|result| result.count),
+                })),
+            })
+        }),
         Some("quit") => {
             controller.update(cx, |controller, cx| controller.shutdown(cx));
             json!({ "ok": true })
         }
         other => json!({ "error": format!("unknown command: {other:?}") }),
     }
+}
+
+fn in_first_window(
+    controller: &Entity<Controller>,
+    cx: &mut App,
+    run: impl FnOnce(&Entity<Shell>, &mut Window, &mut App) -> Value,
+) -> Value {
+    let Some(shell) = first_shell(controller, cx) else {
+        return json!({ "error": "no window" });
+    };
+    let handle = shell.read(cx).handle();
+    handle
+        .update(cx, |_, window, cx| run(&shell, window, cx))
+        .unwrap_or_else(|error| json!({ "error": error.to_string() }))
 }
 
 fn first_shell(controller: &Entity<Controller>, cx: &App) -> Option<Entity<Shell>> {

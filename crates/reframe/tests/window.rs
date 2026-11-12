@@ -113,3 +113,182 @@ fn tiles_are_laid_out_collapsed_zoomed_and_resized() {
     );
     app.quit();
 }
+
+fn window(app: &mut common::App) -> Value {
+    app.cmd(json!({ "cmd": "window" }))
+}
+
+fn key(app: &mut common::App, keys: &str) {
+    let answer = app.cmd(json!({ "cmd": "key", "keys": keys }));
+    assert_eq!(answer["handled"], true, "{keys} was not taken");
+}
+
+/// What `e2e/shortcuts.spec.ts`, `new-session.spec.ts` and `text-size.spec.ts` checked.
+#[test]
+fn shortcuts_reach_dialogs_tiles_and_the_text_size() {
+    let setup = Setup::new();
+    let mut app = setup.launch();
+
+    // Ctrl+Shift+T opens the dialog in an empty window; a folder typed and Enter start a session
+    // named after the folder, and its tile has the keyboard.
+    key(&mut app, "ctrl-shift-t");
+    wait_for("the New session dialog", || {
+        (window(&mut app)["dialog"] == true).then_some(())
+    });
+    app.cmd(json!({ "cmd": "type", "text": setup.project() }));
+    key(&mut app, "enter");
+    let first = wait_for("the session from the dialog", || {
+        let state = app.state();
+        let sessions = state["sessions"].as_object().unwrap();
+        sessions.values().next().map(|session| {
+            assert_eq!(session["name"], "project");
+            session["id"].as_str().unwrap().to_owned()
+        })
+    });
+    wait_for("the dialog to close and the tile to take the keyboard", || {
+        let shown = window(&mut app);
+        (shown["dialog"] == false && shown["focused"] == first.as_str()).then_some(())
+    });
+    assert_eq!(app.state()["recentFolders"][0], setup.project().as_str());
+
+    let second = app.cmd(json!({ "cmd": "new", "cwd": setup.project() }))["session"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    app.wait_status(&second, "idle");
+    let focused = |app: &mut common::App, id: &str, what: &str| {
+        wait_for(what, || (window(app)["focused"] == id).then_some(()));
+    };
+    focused(&mut app, &second, "the new tile to take the keyboard");
+
+    // Ctrl+1…9 by place, Ctrl+Shift+arrows by direction.
+    key(&mut app, "ctrl-1");
+    focused(&mut app, &first, "Ctrl+1 to reach the first tile");
+    key(&mut app, "ctrl-shift-right");
+    focused(&mut app, &second, "Ctrl+Shift+Right to reach the tile at the right");
+    key(&mut app, "ctrl-shift-left");
+    focused(&mut app, &first, "Ctrl+Shift+Left to go back");
+
+    // The text size: a step per press, saved as a preference, Ctrl+0 for normal.
+    let size = |app: &mut common::App| app.state()["preferences"]["fontSize"].as_u64().unwrap();
+    key(&mut app, "ctrl-=");
+    key(&mut app, "ctrl-=");
+    assert_eq!(size(&mut app), 15);
+    key(&mut app, "ctrl--");
+    assert_eq!(size(&mut app), 14);
+    key(&mut app, "ctrl-0");
+    assert_eq!(size(&mut app), 13);
+
+    // Ctrl+Shift+Z fills the window with the focused tile and shows all again.
+    key(&mut app, "ctrl-shift-z");
+    wait_for("the zoom", || {
+        (app.cmd(json!({ "cmd": "placement" }))["zoomed"] == first.as_str()).then_some(())
+    });
+    key(&mut app, "ctrl-shift-z");
+    wait_for("the zoom to end", || {
+        app.cmd(json!({ "cmd": "placement" }))["zoomed"].is_null().then_some(())
+    });
+
+    // Ctrl+Shift+M collapses the focused tile; pressed again with no tile focused, it brings
+    // the one collapsed last back, with the keyboard.
+    key(&mut app, "ctrl-shift-m");
+    assert_eq!(app.state()["windows"][0]["dock"][0]["sessionId"], first.as_str());
+    wait_for("no tile to have the keyboard", || {
+        window(&mut app)["focused"].is_null().then_some(())
+    });
+    key(&mut app, "ctrl-shift-m");
+    assert_eq!(app.state()["windows"][0]["dock"], json!([]));
+    focused(&mut app, &first, "the tile brought back to take the keyboard");
+
+    // Ctrl+, opens Settings; while a dialog is open the shortcuts are its keys.
+    key(&mut app, "ctrl-,");
+    wait_for("Settings", || (window(&mut app)["dialog"] == true).then_some(()));
+    app.cmd(json!({ "cmd": "key", "keys": "ctrl-shift-m" }));
+    assert_eq!(app.state()["windows"][0]["dock"], json!([]));
+    app.cmd(json!({ "cmd": "key", "keys": "escape" }));
+    wait_for("Settings to close", || {
+        (window(&mut app)["dialog"] == false).then_some(())
+    });
+    focused(&mut app, &first, "the tile to have the keyboard again");
+    app.quit();
+}
+
+/// What `e2e/find.spec.ts` and `rename.spec.ts` checked.
+#[test]
+fn text_is_found_and_a_session_renamed_in_its_tile() {
+    let setup = Setup::new();
+    let mut app = setup.launch();
+    let id = app.cmd(json!({ "cmd": "new", "cwd": setup.project() }))["session"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    app.wait_status(&id, "idle");
+    wait_for("the tile to take the keyboard", || {
+        (window(&mut app)["focused"] == id.as_str()).then_some(())
+    });
+
+    // Ctrl+Shift+F opens the find bar in the focused tile; what is typed is found without regard
+    // to case and counted.
+    key(&mut app, "ctrl-shift-f");
+    wait_for("the find bar", || {
+        (window(&mut app)["find"]["session"] == id.as_str()).then_some(())
+    });
+    app.cmd(json!({ "cmd": "type", "text": "fake cl" }));
+    let found = wait_for("the text to be found", || {
+        let find = window(&mut app)["find"].clone();
+        (find["text"] == "fake cl" && find["count"] == 1).then_some(find)
+    });
+    assert_eq!(found["index"], 0);
+    app.cmd(json!({ "cmd": "type", "text": "zzz" }));
+    wait_for("nothing to be found", || {
+        (window(&mut app)["find"]["count"] == 0).then_some(())
+    });
+    // Typed in the bar, the text did not reach the session.
+    assert!(!app.screen(&id).contains("zzz"));
+    // Esc closes the bar and the session is typed in again.
+    app.cmd(json!({ "cmd": "key", "keys": "escape" }));
+    wait_for("the find bar to close", || {
+        let shown = window(&mut app);
+        (shown["find"].is_null() && shown["focused"] == id.as_str()).then_some(())
+    });
+
+    // A name typed in the tile's header is reframe's own; Claude Code keeps the one it had.
+    app.cmd(json!({ "cmd": "rename", "session": id }));
+    wait_for("the name field", || {
+        (window(&mut app)["renaming"] == id.as_str()).then_some(())
+    });
+    app.cmd(json!({ "cmd": "type", "text": "Mine" }));
+    key(&mut app, "enter");
+    wait_for("the name to be kept", || {
+        let shown = window(&mut app);
+        (shown["renaming"].is_null() && shown["focused"] == id.as_str()).then_some(())
+    });
+    let session = app.state()["sessions"][&id].clone();
+    assert_eq!(session["name"], "Mine");
+    assert!(session["claudeName"].is_null() && session.as_object().unwrap().contains_key("claudeName"));
+
+    // Esc drops a change.
+    app.cmd(json!({ "cmd": "rename", "session": id }));
+    wait_for("the name field", || {
+        (window(&mut app)["renaming"] == id.as_str()).then_some(())
+    });
+    app.cmd(json!({ "cmd": "type", "text": "Other" }));
+    app.cmd(json!({ "cmd": "key", "keys": "escape" }));
+    wait_for("the field to go", || {
+        window(&mut app)["renaming"].is_null().then_some(())
+    });
+    assert_eq!(app.state()["sessions"][&id]["name"], "Mine");
+
+    // An empty name goes back to the automatic one.
+    app.cmd(json!({ "cmd": "rename", "session": id }));
+    wait_for("the name field", || {
+        (window(&mut app)["renaming"] == id.as_str()).then_some(())
+    });
+    key(&mut app, "backspace");
+    key(&mut app, "enter");
+    wait_for("the field to go", || {
+        window(&mut app)["renaming"].is_null().then_some(())
+    });
+    assert!(app.state()["sessions"][&id].get("name").is_none());
+    app.quit();
+}
