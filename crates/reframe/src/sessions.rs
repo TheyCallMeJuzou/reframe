@@ -17,8 +17,7 @@ use futures::{StreamExt, channel::mpsc::UnboundedReceiver};
 use gpui_kit::*;
 use reframe_core::claude::args::{LaunchMode, claude_args};
 use reframe_core::claude::registry::{
-    RegistryEntry, find_registry_entry, forget_registry_entry, is_running_entry, read_registry_entry,
-    transcript_exists,
+    RegistryEntry, find_registry_entry, forget_registry_entry, is_running_entry, read_registry_entry, transcript_exists,
 };
 use reframe_core::claude::resolve::{ClaudeBinary, cmd_command_line};
 use reframe_core::claude::settings::write_hook_settings;
@@ -43,6 +42,7 @@ pub enum SessionEvent {
     /// Persisted identity changed: claude session id (after /clear), folder (worktrees), pid, or
     /// first use.
     Identity(String, IdentityPatch),
+    #[allow(dead_code)] // read once there are notifications
     Notify(String, NotifyKind),
     /// The session was just used: a prompt sent, or Claude done or asking something.
     Used(String),
@@ -103,7 +103,11 @@ impl Runtime {
 }
 
 fn now_ms() -> f64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs_f64() * 1000.0
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64()
+        * 1000.0
 }
 
 pub struct SessionManagerDeps {
@@ -145,7 +149,14 @@ impl SessionManager {
                 }
             }
         });
-        Self { deps, runtimes: HashMap::new(), instances: 0, via_cmd_logged: false, _hooks: hook_task, _poller: poller }
+        Self {
+            deps,
+            runtimes: HashMap::new(),
+            instances: 0,
+            via_cmd_logged: false,
+            _hooks: hook_task,
+            _poller: poller,
+        }
     }
 
     pub fn status(&self, session_id: &str) -> Option<SessionStatus> {
@@ -168,17 +179,25 @@ impl SessionManager {
     /// Running and staying so: not on its way out after it was ended (then it needs to be started
     /// again).
     pub fn keeps_running(&self, session_id: &str) -> bool {
-        self.is_running(session_id) && self.runtimes.get(session_id).is_some_and(|runtime| runtime.stopping.is_none())
+        self.is_running(session_id)
+            && self
+                .runtimes
+                .get(session_id)
+                .is_some_and(|runtime| runtime.stopping.is_none())
     }
 
     /// Display name Claude gave the session (used when the user did not name it).
     pub fn registry_name(&self, session_id: &str) -> Option<&str> {
-        self.runtimes.get(session_id).and_then(|runtime| runtime.registry.name.as_deref())
+        self.runtimes
+            .get(session_id)
+            .and_then(|runtime| runtime.registry.name.as_deref())
     }
 
     /// The terminal of the session's current start, for views to draw.
     pub fn terminal(&self, session_id: &str) -> Option<Entity<Terminal>> {
-        self.runtimes.get(session_id).and_then(|runtime| runtime.terminal.clone())
+        self.runtimes
+            .get(session_id)
+            .and_then(|runtime| runtime.terminal.clone())
     }
 
     /// Sessions with a process, running or on their way out.
@@ -187,7 +206,9 @@ impl SessionManager {
     }
 
     fn is_current(&self, session_id: &str, instance: u64) -> bool {
-        self.runtimes.get(session_id).is_some_and(|runtime| runtime.instance == instance)
+        self.runtimes
+            .get(session_id)
+            .is_some_and(|runtime| runtime.instance == instance)
     }
 
     pub fn start(&mut self, session: &SessionRecord, requested: LaunchMode, cx: &mut Context<Self>) {
@@ -200,12 +221,18 @@ impl SessionManager {
             // it goes now, and whoever waits for it to end (its stop) is done; its exit is not
             // reported, being an older instance.
             previous.exited = true;
-            let (pid, forget) = (previous.pid, previous.launched.as_ref().and_then(|launched| launched.pid));
+            let (pid, forget) = (
+                previous.pid,
+                previous.launched.as_ref().and_then(|launched| launched.pid),
+            );
             self.kill_own(pid, forget, cx).detach();
         }
         self.instances += 1;
         let instance = self.instances;
-        self.runtimes.insert(id.to_owned(), Runtime::new(instance, SessionStatus::Starting, requested));
+        self.runtimes.insert(
+            id.to_owned(),
+            Runtime::new(instance, SessionStatus::Starting, requested),
+        );
 
         if parse_wsl_path(&session.cwd, None).is_some() {
             return self.fail(id, SessionError::ClaudeNotFound, cx);
@@ -221,12 +248,19 @@ impl SessionManager {
         let Some(claude) = (self.deps.resolve_claude)() else {
             return self.fail(id, SessionError::ClaudeNotFound, cx);
         };
-        let settings =
-            write_hook_settings(&self.deps.settings_dir, self.deps.hooks_port, &self.deps.hooks_token, &session.id);
+        let settings = write_hook_settings(
+            &self.deps.settings_dir,
+            self.deps.hooks_port,
+            &self.deps.hooks_token,
+            &session.id,
+        );
         let settings = match settings {
             Ok(file) => file.to_string_lossy().into_owned(),
             Err(error) => {
-                self.deps.log.error("hook settings could not be written", Some(json!({ "error": error.to_string() })));
+                self.deps.log.error(
+                    "hook settings could not be written",
+                    Some(json!({ "error": error.to_string() })),
+                );
                 return self.fail(id, SessionError::SpawnFailed, cx);
             }
         };
@@ -245,7 +279,10 @@ impl SessionManager {
             Some(script) => {
                 // The pty's process is cmd's then, not claude's: its registry entry is found by its
                 // session id.
-                launched = Some(Launched { claude_session_id: session.claude_session_id.clone(), pid: None });
+                launched = Some(Launched {
+                    claude_session_id: session.claude_session_id.clone(),
+                    pid: None,
+                });
                 if !self.via_cmd_logged {
                     self.via_cmd_logged = true;
                     self.deps.log.warn(
@@ -259,12 +296,21 @@ impl SessionManager {
         };
         let mut env = claude.env.clone();
         env.insert("REFRAME_SESSION".into(), session.id.clone());
-        let launch = Launch { program: claude.file.clone(), args, raw_args, cwd: PathBuf::from(&session.cwd), env };
+        let launch = Launch {
+            program: claude.file.clone(),
+            args,
+            raw_args,
+            cwd: PathBuf::from(&session.cwd),
+            env,
+        };
 
         let (pty, events) = match Pty::spawn(&launch) {
             Ok(spawned) => spawned,
             Err(error) => {
-                self.deps.log.warn("session could not be spawned", Some(json!({ "error": error.to_string() })));
+                self.deps.log.warn(
+                    "session could not be spawned",
+                    Some(json!({ "error": error.to_string() })),
+                );
                 return self.fail(id, SessionError::SpawnFailed, cx);
             }
         };
@@ -285,14 +331,23 @@ impl SessionManager {
             runtime.proc_start = pid.and_then(process_start);
         }
         if let Some(pid) = pid {
-            self.deps.log.info("session spawned", Some(json!({ "session": id, "pid": pid })));
-            cx.emit(SessionEvent::Identity(id.to_owned(), IdentityPatch { pid: Some(pid), ..IdentityPatch::default() }));
+            self.deps
+                .log
+                .info("session spawned", Some(json!({ "session": id, "pid": pid })));
+            cx.emit(SessionEvent::Identity(
+                id.to_owned(),
+                IdentityPatch {
+                    pid: Some(pid),
+                    ..IdentityPatch::default()
+                },
+            ));
         }
         cx.emit(SessionEvent::Changed(id.to_owned()));
     }
 
     /// Shows a session as not started, for a reason (its conversation runs elsewhere), without
     /// starting anything.
+    #[allow(dead_code)] // until conversations running elsewhere are looked for
     pub fn refuse(&mut self, session_id: &str, error: SessionError, cx: &mut Context<Self>) {
         if self.is_running(session_id) {
             return;
@@ -302,7 +357,10 @@ impl SessionManager {
         runtime.error = Some(error);
         runtime.exited = true;
         self.runtimes.insert(session_id.to_owned(), runtime);
-        self.deps.log.info("session not started", Some(json!({ "session": session_id, "error": error.key() })));
+        self.deps.log.info(
+            "session not started",
+            Some(json!({ "session": session_id, "error": error.key() })),
+        );
         cx.emit(SessionEvent::Changed(session_id.to_owned()));
     }
 
@@ -318,7 +376,9 @@ impl SessionManager {
         }
         let instance = runtime.instance;
         let id = session_id.to_owned();
-        let task = cx.spawn(async move |this, cx| Self::stop_runtime(this, id, instance, timeout, cx).await).shared();
+        let task = cx
+            .spawn(async move |this, cx| Self::stop_runtime(this, id, instance, timeout, cx).await)
+            .shared();
         if let Some(runtime) = self.runtimes.get_mut(session_id) {
             runtime.stopping = Some(task.clone());
         }
@@ -420,9 +480,14 @@ impl SessionManager {
                 }
                 // Its entry alone is not enough: the process may be gone and its id another
                 // program's now.
-                let Some(entry) = read_registry_entry(&home, pid) else { continue };
+                let Some(entry) = read_registry_entry(&home, pid) else {
+                    continue;
+                };
                 if entry.session_id == claude_session_id && is_running_entry(&entry, &is_alive, &process_start) {
-                    log.warn("killing orphaned claude from a previous run", Some(json!({ "session": id, "pid": pid })));
+                    log.warn(
+                        "killing orphaned claude from a previous run",
+                        Some(json!({ "session": id, "pid": pid })),
+                    );
                     kill_tree(pid);
                     forget_registry_entry(&home, pid, &is_alive);
                 }
@@ -444,7 +509,11 @@ impl SessionManager {
     fn on_exit(&mut self, session_id: &str, instance: u64, exit_code: i32, cx: &mut Context<Self>) {
         // A process that is still going away while its session was started again: not this
         // runtime's business.
-        let Some(runtime) = self.runtimes.get_mut(session_id).filter(|runtime| runtime.instance == instance) else {
+        let Some(runtime) = self
+            .runtimes
+            .get_mut(session_id)
+            .filter(|runtime| runtime.instance == instance)
+        else {
             return;
         };
         if matches!(runtime.status, SessionStatus::Ended | SessionStatus::Error) {
@@ -474,11 +543,16 @@ impl SessionManager {
     }
 
     fn fail(&mut self, session_id: &str, error: SessionError, cx: &mut Context<Self>) {
-        let Some(runtime) = self.runtimes.get_mut(session_id) else { return };
+        let Some(runtime) = self.runtimes.get_mut(session_id) else {
+            return;
+        };
         runtime.status = SessionStatus::Error;
         runtime.error = Some(error);
         runtime.exited = true;
-        self.deps.log.warn("session could not start", Some(json!({ "session": session_id, "error": error.key() })));
+        self.deps.log.warn(
+            "session could not start",
+            Some(json!({ "session": session_id, "error": error.key() })),
+        );
         cx.emit(SessionEvent::Changed(session_id.to_owned()));
     }
 
@@ -487,7 +561,12 @@ impl SessionManager {
         let event = message.event.as_str();
         let known = self.runtimes.contains_key(id);
         let mut data = json!({ "session": id, "event": event });
-        if let Some(kind) = message.payload.notification_type.as_deref().filter(|kind| !kind.is_empty()) {
+        if let Some(kind) = message
+            .payload
+            .notification_type
+            .as_deref()
+            .filter(|kind| !kind.is_empty())
+        {
             data["type"] = json!(kind);
         }
         if !known {
@@ -521,7 +600,9 @@ impl SessionManager {
                 continue;
             }
             let home = &self.deps.claude_home;
-            let Some(runtime) = self.runtimes.get_mut(&id) else { continue };
+            let Some(runtime) = self.runtimes.get_mut(&id) else {
+                continue;
+            };
             let Some(pid) = runtime.pid else { continue };
             let entry = match &mut runtime.launched {
                 // Found by its session id once, then by its process id.
@@ -538,7 +619,11 @@ impl SessionManager {
             };
             // Nothing (yet).
             let Some(entry) = entry else { continue };
-            let place = if runtime.launched.is_some() { RegistryPlace::ThroughCmd } else { RegistryPlace::Direct };
+            let place = if runtime.launched.is_some() {
+                RegistryPlace::ThroughCmd
+            } else {
+                RegistryPlace::Direct
+            };
             if place == RegistryPlace::Direct
                 && is_stale_entry(&entry, runtime.proc_start.as_deref(), runtime.started_at_ms)
             {
@@ -566,7 +651,9 @@ impl SessionManager {
     }
 
     fn set_status(&mut self, session_id: &str, status: SessionStatus, cx: &mut Context<Self>) {
-        let Some(runtime) = self.runtimes.get_mut(session_id) else { return };
+        let Some(runtime) = self.runtimes.get_mut(session_id) else {
+            return;
+        };
         if runtime.status == status {
             return;
         }

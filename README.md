@@ -1,39 +1,47 @@
 # reframe-native
 
-Throwaway prototype: [reframe](https://github.com/TheyCallMeJuzou/reframe) as a native
-application without a webview (Rust, GPUI, `alacritty_terminal`).
+[reframe](https://github.com/TheyCallMeJuzou/reframe) as a native application without a webview
+(Rust, GPUI, `alacritty_terminal`). It is being built up to do everything reframe 0.10 does and
+will then replace the Electron version as reframe 1.0.
 
-It exists to answer one question before a rewrite is decided: does a GPUI terminal running real
-`claude` sessions behave at least as well as the Electron version, and what does it save?
-Results go into `FINDINGS.md`.
+It started as a prototype; what that showed and measured is in `FINDINGS.md` (the commands there
+are the prototype's, as of commit `07c5f1a`).
 
-Nothing here is meant to ship.
+## Layout
+
+- `crates/reframe-core`: everything without a window (state and its file, layout, groups,
+  workspaces, texts, finding and starting claude, hooks, session discovery). Ported module by
+  module from the Electron version, with its tests; each file names where it comes from.
+- `crates/reframe`: the app (`reframe-native.exe`): sessions on pseudo consoles, the terminal
+  view, windows.
+- `test/`: the stand-ins for claude and WSL the end-to-end tests run, taken from the Electron
+  version unchanged.
 
 ## Build and run
 
 ```
 cargo build --release
-target\release\reframe-native.exe --tile <folder> --tile <folder>
+target\release\reframe-native.exe [--new <folder>]...
 ```
 
-Needs the stable MSVC Rust toolchain and the Visual Studio C++ build tools. `claude.exe` is taken
-from the PATH, or from `--claude <path>`.
+Needs the stable MSVC Rust toolchain and the Visual Studio C++ build tools.
 
-A tile under `\\wsl.localhost\<distro>\...` runs claude inside that distro. It needs two more
-values, which the Electron version probes by itself: `--wsl-claude <path of claude in the distro>`
-and `--wsl-path <the login shell's PATH there>`.
+Until it takes over from the Electron version it keeps a profile of its own
+(`%APPDATA%\reframe-native`, or `REFRAME_USER_DATA`), so the two never write the same state file.
+Sessions that were open are resumed on the next start. `--new <folder>` starts a new session
+there; it stands in for the New session dialog until the window has one.
 
-Keys the prototype adds: Ctrl+Shift+O moves the focused tile into a window of its own,
-Ctrl+Shift+D writes its screen to a text file in the temp folder. Copy, paste and right-click
-follow the Electron version.
+Ctrl+Shift+D writes the focused terminal's screen to a text file in the temp folder.
 
 ## Checks
 
-- `--dump`: one session without a window; prints its screen and whether Claude Code registered it.
-- `scripts\selftest.ps1 <folder>`: two real sessions; types, selects with the mouse and tears a
-  tile out through the window's own input path, captures the windows, ends the sessions.
-- `scripts\measure.ps1 -RootPid <pid> -Label <name>`: memory and idle CPU of a running app.
-  `scripts\run-electron.mjs` starts the Electron version with an empty profile for the same
-  measurement; `--hold <seconds>` keeps the prototype idle and then ends it.
+`scripts\check.ps1` runs what has to pass before a push: formatting, clippy, the unit tests and
+the end-to-end tests. The end-to-end tests (`crates/reframe/tests`) start the app with a
+throwaway profile and the fake claude and drive it over a local socket that only exists with
+`REFRAME_E2E`; they need `node` on the PATH.
+
+`scripts\measure.ps1 -RootPid <pid> -Label <name>` measures memory and idle CPU of a running app;
+`scripts\run-electron.mjs` starts the Electron version with an empty profile for the same
+measurement. `scripts\capture.ps1 <folder>` saves a picture of each window.
 
 No check sends a prompt to Claude.

@@ -324,7 +324,11 @@ fn decode_uri_component(text: &str) -> Option<String> {
 
 /// Compares in constant time (for texts of the same length).
 fn safe_equal(a: &str, b: &str) -> bool {
-    a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0, |differing, (x, y)| differing | (x ^ y)) == 0
+    a.len() == b.len()
+        && a.bytes()
+            .zip(b.bytes())
+            .fold(0, |differing, (x, y)| differing | (x ^ y))
+            == 0
 }
 
 fn reason(status: u16) -> &'static str {

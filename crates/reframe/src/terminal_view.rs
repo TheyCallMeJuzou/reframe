@@ -1,30 +1,25 @@
-//! A tile: one session drawn as a grid of cells, with keyboard, mouse, selection and clipboard.
+//! A tile's terminal: one start of a session drawn as a grid of cells, with keyboard, mouse,
+//! selection and clipboard.
 
 use std::ops::Range;
 use std::panic::Location;
 
-use alacritty_terminal::event::Event as TermEvent;
 use alacritty_terminal::grid::Scroll;
 use alacritty_terminal::index::{Column, Point as GridPoint, Side};
 use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::{TermMode, viewport_to_point};
 use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor, Rgb};
-use futures::StreamExt;
 use gpui_kit::*;
 
-use crate::session::{Launch, Session, TermSize};
+use crate::pty::{Pty, TermSize};
+use crate::terminal::Terminal;
 use crate::{colors, glyphs, input};
 
 const FONT_FAMILY: &str = "Cascadia Mono";
 const FONT_SIZE: f32 = 13.0;
 const LINE_HEIGHT: f32 = 1.1;
 const PADDING: f32 = 4.0;
-
-pub enum TileEvent {
-    /// The tile asks to be moved into a window of its own.
-    TearOut,
-}
 
 /// Where the grid was drawn in the last frame; mouse positions are mapped through it.
 #[derive(Clone, Copy, PartialEq)]
@@ -36,11 +31,11 @@ struct Layout {
 }
 
 pub struct TerminalView {
-    pub session: Session,
+    pub terminal: Entity<Terminal>,
+    pub pty: Pty,
+    /// The program runs in WSL and sees Windows paths under /mnt.
     wsl: bool,
     pub focus: FocusHandle,
-    pub title: Option<String>,
-    pub exited: bool,
     layout: Option<Layout>,
     /// Text the IME is still composing, shown at the cursor.
     composing: Option<String>,
@@ -50,36 +45,19 @@ pub struct TerminalView {
     reported_cell: Option<(usize, usize)>,
     scroll_remainder: f32,
     focused: bool,
-    _events: Task<()>,
+    _terminal: Subscription,
 }
 
-impl EventEmitter<TileEvent> for TerminalView {}
-
 impl TerminalView {
-    pub fn new(launch: &Launch, cx: &mut Context<Self>) -> Self {
-        let (session, mut events) = Session::spawn(launch).expect("failed to start the session");
-        let task = cx.spawn(async move |this, cx| {
-            while let Some(event) = events.next().await {
-                let mut batch = vec![event];
-                while let Ok(event) = events.try_recv() {
-                    batch.push(event);
-                }
-                let alive = this.update(cx, |this, cx| {
-                    for event in batch {
-                        this.on_term_event(event, cx);
-                    }
-                });
-                if alive.is_err() {
-                    break;
-                }
-            }
-        });
+    pub fn new(terminal: Entity<Terminal>, wsl: bool, cx: &mut Context<Self>) -> Self {
+        let pty = terminal.read(cx).pty().clone();
+        // Whatever the terminal reports (new output, its title, its exit) is drawn.
+        let subscription = cx.observe(&terminal, |_, _, cx| cx.notify());
         Self {
-            session,
-            wsl: launch.wsl,
+            terminal,
+            pty,
+            wsl,
             focus: cx.focus_handle(),
-            title: None,
-            exited: false,
             layout: None,
             composing: None,
             selecting: false,
@@ -87,22 +65,12 @@ impl TerminalView {
             reported_cell: None,
             scroll_remainder: 0.0,
             focused: false,
-            _events: task,
+            _terminal: subscription,
         }
-    }
-
-    fn on_term_event(&mut self, event: TermEvent, cx: &mut Context<Self>) {
-        match event {
-            TermEvent::Title(title) => self.title = Some(title),
-            TermEvent::ResetTitle => self.title = None,
-            TermEvent::ChildExit(_) | TermEvent::Exit => self.exited = true,
-            TermEvent::ClipboardStore(_, text) => cx.write_to_clipboard(ClipboardItem::new_string(text)),
-            _ => {}
-        }
-        cx.notify();
     }
 
     /// The middle of a cell in window coordinates, as of the last frame.
+    #[allow(dead_code)] // for the window's tests
     pub fn cell_center(&self, col: usize, row: usize) -> Option<Point<Pixels>> {
         let layout = self.layout?;
         Some(point(
@@ -112,26 +80,28 @@ impl TerminalView {
     }
 
     /// Columns and rows as of the last frame.
+    #[allow(dead_code)] // for the window's tests
     pub fn grid_size(&self) -> Option<(usize, usize)> {
         self.layout.map(|layout| (layout.cols, layout.rows))
     }
 
+    #[allow(dead_code)] // for the window's tests
     pub fn selection_text(&self) -> Option<String> {
-        self.session.term.lock().selection_to_string()
+        self.pty.term.lock().selection_to_string()
     }
 
     pub fn mode(&self) -> TermMode {
-        *self.session.term.lock().mode()
+        *self.pty.term.lock().mode()
     }
 
     /// Sends input the user produced: the view jumps back to the live screen first.
     fn type_bytes(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
         {
-            let mut term = self.session.term.lock();
+            let mut term = self.pty.term.lock();
             term.scroll_display(Scroll::Bottom);
             term.selection = None;
         }
-        self.session.write(bytes);
+        self.pty.write(bytes);
         cx.notify();
     }
 
@@ -143,7 +113,7 @@ impl TerminalView {
             .is_none_or(|old| old.cols != layout.cols || old.rows != layout.rows);
         self.layout = Some(layout);
         if resized {
-            self.session.resize(
+            self.pty.resize(
                 TermSize {
                     cols: layout.cols as u16,
                     rows: layout.rows as u16,
@@ -155,8 +125,7 @@ impl TerminalView {
         if focused != self.focused {
             self.focused = focused;
             if self.mode().contains(TermMode::FOCUS_IN_OUT) {
-                self.session
-                    .write(if focused { &b"\x1b[I"[..] } else { &b"\x1b[O"[..] });
+                self.pty.write(if focused { &b"\x1b[I"[..] } else { &b"\x1b[O"[..] });
             }
         }
     }
@@ -165,7 +134,7 @@ impl TerminalView {
 
     fn copy_selection(&mut self, cx: &mut Context<Self>) -> bool {
         let text = {
-            let mut term = self.session.term.lock();
+            let mut term = self.pty.term.lock();
             let text = term.selection_to_string();
             term.selection = None;
             text
@@ -181,7 +150,7 @@ impl TerminalView {
     }
 
     fn has_selection(&self) -> bool {
-        self.session
+        self.pty
             .term
             .lock()
             .selection
@@ -252,10 +221,6 @@ impl TerminalView {
 
         if m.control && !m.alt && !m.platform {
             let handled = match (key, m.shift) {
-                ("o", true) => {
-                    cx.emit(TileEvent::TearOut);
-                    true
-                }
                 ("d", true) => {
                     self.dump();
                     true
@@ -290,8 +255,8 @@ impl TerminalView {
 
     /// Writes the visible screen to a file in the temp folder (Ctrl+Shift+D).
     fn dump(&self) {
-        let file = std::env::temp_dir().join(format!("reframe-native-{}.txt", self.session.pid.unwrap_or(0)));
-        match std::fs::write(&file, self.session.screen_text()) {
+        let file = std::env::temp_dir().join(format!("reframe-native-{}.txt", self.pty.pid.unwrap_or(0)));
+        match std::fs::write(&file, self.pty.screen_text()) {
             Ok(()) => eprintln!("screen written to {}", file.display()),
             Err(err) => eprintln!("could not write {}: {err}", file.display()),
         }
@@ -334,7 +299,7 @@ impl TerminalView {
         if self.reports_mouse(&event.modifiers) {
             let mode = self.mode();
             if let Some(report) = input::mouse_report(button, col, row, true, &event.modifiers, mode) {
-                self.session.write(report);
+                self.pty.write(report);
             }
             self.reported_button = Some(button);
             self.reported_cell = Some((col, row));
@@ -348,7 +313,7 @@ impl TerminalView {
                     2 => SelectionType::Semantic,
                     _ => SelectionType::Lines,
                 };
-                let mut term = self.session.term.lock();
+                let mut term = self.pty.term.lock();
                 let point = viewport_to_point(term.grid().display_offset(), GridPoint::new(row, Column(col)));
                 term.selection = Some(Selection::new(kind, point, side));
                 drop(term);
@@ -373,7 +338,7 @@ impl TerminalView {
                 self.selecting = false;
                 return;
             }
-            let mut term = self.session.term.lock();
+            let mut term = self.pty.term.lock();
             let point = viewport_to_point(term.grid().display_offset(), GridPoint::new(row, Column(col)));
             if let Some(selection) = term.selection.as_mut() {
                 selection.update(point, side);
@@ -394,7 +359,7 @@ impl TerminalView {
             self.reported_cell = Some((col, row));
             let button = self.reported_button.unwrap_or(input::BUTTON_NONE) + input::MOTION;
             if let Some(report) = input::mouse_report(button, col, row, true, &event.modifiers, mode) {
-                self.session.write(report);
+                self.pty.write(report);
             }
         }
     }
@@ -403,7 +368,7 @@ impl TerminalView {
         if self.selecting && event.button == MouseButton::Left {
             self.selecting = false;
             // A click without a drag selects nothing.
-            let mut term = self.session.term.lock();
+            let mut term = self.pty.term.lock();
             if term.selection.as_ref().is_some_and(|selection| selection.is_empty()) {
                 term.selection = None;
             }
@@ -415,7 +380,7 @@ impl TerminalView {
         {
             let mode = self.mode();
             if let Some(report) = input::mouse_report(button, col, row, false, &event.modifiers, mode) {
-                self.session.write(report);
+                self.pty.write(report);
             }
         }
     }
@@ -443,15 +408,15 @@ impl TerminalView {
             let button = if up { input::WHEEL_UP } else { input::WHEEL_DOWN };
             for _ in 0..count {
                 if let Some(report) = input::mouse_report(button, col, row, true, &event.modifiers, mode) {
-                    self.session.write(report);
+                    self.pty.write(report);
                 }
             }
         } else if mode.contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL) && !event.modifiers.shift {
             // A full-screen program without mouse reporting gets arrow keys instead.
             let key: &[u8] = if up { b"\x1bOA" } else { b"\x1bOB" };
-            self.session.write(key.repeat(count));
+            self.pty.write(key.repeat(count));
         } else {
-            self.session.term.lock().scroll_display(Scroll::Delta(whole as i32));
+            self.pty.term.lock().scroll_display(Scroll::Delta(whole as i32));
             cx.notify();
         }
     }
@@ -513,7 +478,7 @@ impl EntityInputHandler for TerminalView {
     ) -> Option<Bounds<Pixels>> {
         // The IME window goes next to the cursor.
         let layout = self.layout?;
-        let cursor = self.session.term.lock().grid().cursor.point;
+        let cursor = self.pty.term.lock().grid().cursor.point;
         let origin = point(
             layout.origin.x + layout.cell.width * cursor.column.0 as f32,
             layout.origin.y + layout.cell.height * cursor.line.0.max(0) as f32,
@@ -731,7 +696,7 @@ impl Element for TerminalElement {
         self.view.update(cx, |view, _| view.sync(layout, focused));
 
         let view = self.view.read(cx);
-        let term = view.session.term.lock();
+        let term = view.pty.term.lock();
         let content = term.renderable_content();
         let offset = content.display_offset as i32;
         let background = to_hsla(colors::BACKGROUND);

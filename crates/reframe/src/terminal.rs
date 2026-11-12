@@ -41,7 +41,12 @@ impl Terminal {
                 }
             }
         });
-        Self { pty, title: None, exit_code: None, _events: task }
+        Self {
+            pty,
+            title: None,
+            exit_code: None,
+            _events: task,
+        }
     }
 
     fn on_event(&mut self, event: TermEvent, cx: &mut Context<Self>) {
@@ -64,10 +69,6 @@ impl Terminal {
 
     pub fn pty(&self) -> &Pty {
         &self.pty
-    }
-
-    pub fn pid(&self) -> Option<u32> {
-        self.pty.pid
     }
 }
 

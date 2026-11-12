@@ -30,7 +30,11 @@ fn appends_one_line_per_event_with_level_and_data() {
     let lines: Vec<&str> = text.trim().split('\n').collect();
     assert_eq!(lines.len(), 2);
     assert!(starts_with_date(lines[0]), "{}", lines[0]);
-    assert!(lines[0].ends_with(r#" INFO  session started {"id":"a"}"#), "{}", lines[0]);
+    assert!(
+        lines[0].ends_with(r#" INFO  session started {"id":"a"}"#),
+        "{}",
+        lines[0]
+    );
 }
 
 #[test]

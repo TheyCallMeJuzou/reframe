@@ -120,19 +120,34 @@ pub struct Pty {
 }
 
 fn window_size(size: TermSize, cell_width: u16, cell_height: u16) -> WindowSize {
-    WindowSize { num_lines: size.rows, num_cols: size.cols, cell_width, cell_height }
+    WindowSize {
+        num_lines: size.rows,
+        num_cols: size.cols,
+        cell_width,
+        cell_height,
+    }
 }
 
 impl Pty {
     /// Starts the process. The receiver yields the events the UI has to act on (wakeups, title,
     /// bell, exit).
     pub fn spawn(launch: &Launch) -> std::io::Result<(Pty, UnboundedReceiver<Event>)> {
-        let size = TermSize { cols: INITIAL_COLS, rows: INITIAL_ROWS };
+        let size = TermSize {
+            cols: INITIAL_COLS,
+            rows: INITIAL_ROWS,
+        };
         let initial = window_size(size, 8, 17);
         let (ui, events) = unbounded();
-        let listener = Listener { ui, pty: Arc::new(OnceLock::new()), size: Arc::new(Mutex::new(initial)) };
+        let listener = Listener {
+            ui,
+            pty: Arc::new(OnceLock::new()),
+            size: Arc::new(Mutex::new(initial)),
+        };
 
-        let config = Config { scrolling_history: SCROLLBACK, ..Config::default() };
+        let config = Config {
+            scrolling_history: SCROLLBACK,
+            ..Config::default()
+        };
         let term = Arc::new(FairMutex::new(Term::new(config, &size, listener.clone())));
 
         let program = if launch.program.contains(' ') && !launch.program.starts_with('"') {
@@ -155,7 +170,15 @@ impl Pty {
         let _ = listener.pty.set(sender.clone());
         event_loop.spawn();
 
-        Ok((Pty { term, pid, sender, size: listener.size }, events))
+        Ok((
+            Pty {
+                term,
+                pid,
+                sender,
+                size: listener.size,
+            },
+            events,
+        ))
     }
 
     pub fn write(&self, bytes: impl Into<Cow<'static, [u8]>>) {
@@ -186,7 +209,10 @@ impl Pty {
             let mut line = String::new();
             for col in 0..grid.columns() {
                 let cell = &grid[Line(row as i32)][Column(col)];
-                if cell.flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER) {
+                if cell
+                    .flags
+                    .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+                {
                     continue;
                 }
                 line.push(cell.c);

@@ -70,7 +70,8 @@ pub fn clean_up_at(drops: &Path, hooks: &Path, session_ids: &HashSet<String>, no
             })
             .collect()
     };
-    let remove = |dir: &Path, names: Vec<String>| names.iter().filter(|name| remove_all(&dir.join(name)).is_ok()).count();
+    let remove =
+        |dir: &Path, names: Vec<String>| names.iter().filter(|name| remove_all(&dir.join(name)).is_ok()).count();
     Removed {
         drops: remove(drops, older_than(&entries(drops), now, DROPS_KEEP_MS)),
         hooks: remove(hooks, stray_hook_files(&names_in(hooks), session_ids)),

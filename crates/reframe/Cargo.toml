@@ -19,3 +19,6 @@ reframe-core = { path = "../reframe-core" }
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading"] }
 serde_json = { workspace = true, features = ["preserve_order"] }
 serde = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+tempfile = "3"

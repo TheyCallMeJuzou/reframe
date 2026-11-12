@@ -23,14 +23,8 @@ fn leaves_other_folders_alone_also_ones_whose_name_only_starts_like_the_home_fol
         home_relative("D:\\work\\shop", "C:\\Users\\Ann", true),
         "D:\\work\\shop"
     );
-    assert_eq!(
-        home_relative("/home/anna/shop", "/home/ann", false),
-        "/home/anna/shop"
-    );
+    assert_eq!(home_relative("/home/anna/shop", "/home/ann", false), "/home/anna/shop");
     // case matters there
-    assert_eq!(
-        home_relative("/home/Ann/shop", "/home/ann", false),
-        "/home/Ann/shop"
-    );
+    assert_eq!(home_relative("/home/Ann/shop", "/home/ann", false), "/home/Ann/shop");
     assert_eq!(home_relative("/srv/shop", "", false), "/srv/shop");
 }

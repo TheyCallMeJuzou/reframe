@@ -36,7 +36,10 @@ pub fn process_start(pid: u32) -> Option<String> {
         if process.is_null() {
             return None;
         }
-        let zero = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+        let zero = FILETIME {
+            dwLowDateTime: 0,
+            dwHighDateTime: 0,
+        };
         let (mut creation, mut exit, mut kernel, mut user) = (zero, zero, zero, zero);
         let told = GetProcessTimes(process, &mut creation, &mut exit, &mut kernel, &mut user) != 0;
         CloseHandle(process);
