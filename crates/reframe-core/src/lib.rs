@@ -12,6 +12,10 @@ pub mod last_used;
 pub mod layout;
 pub mod workspaces;
 
+pub mod focus_nav;
+pub mod shortcuts;
+pub mod snap;
+
 pub mod i18n;
 pub mod links;
 pub mod wsl;
