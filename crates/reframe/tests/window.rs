@@ -128,6 +128,9 @@ fn key(app: &mut common::App, keys: &str) {
 fn shortcuts_reach_dialogs_tiles_and_the_text_size() {
     let setup = Setup::new();
     let mut app = setup.launch();
+    wait_for("the window to be drawn", || {
+        (window(&mut app)["drawn"] == true).then_some(())
+    });
 
     // Ctrl+Shift+T opens the dialog in an empty window; a folder typed and Enter start a session
     // named after the folder, and its tile has the keyboard.
@@ -194,7 +197,8 @@ fn shortcuts_reach_dialogs_tiles_and_the_text_size() {
     key(&mut app, "ctrl-shift-m");
     assert_eq!(app.state()["windows"][0]["dock"][0]["sessionId"], first.as_str());
     wait_for("no tile to have the keyboard", || {
-        window(&mut app)["focused"].is_null().then_some(())
+        let shown = window(&mut app);
+        (shown["focused"].is_null() && shown["keyboard"] == true).then_some(())
     });
     key(&mut app, "ctrl-shift-m");
     assert_eq!(app.state()["windows"][0]["dock"], json!([]));
@@ -290,5 +294,24 @@ fn text_is_found_and_a_session_renamed_in_its_tile() {
         window(&mut app)["renaming"].is_null().then_some(())
     });
     assert!(app.state()["sessions"][&id].get("name").is_none());
+    app.quit();
+}
+
+/// A window comes back as big as it was (`e2e/window-bounds.spec.ts`).
+#[test]
+fn a_window_opens_as_big_as_it_was_left() {
+    let setup = Setup::new();
+    let mut app = setup.launch();
+    app.cmd(json!({ "cmd": "resize", "width": 910.0, "height": 640.0 }));
+    wait_for("the size to be remembered", || {
+        let bounds = app.state()["windows"][0]["bounds"].clone();
+        (bounds["width"] == 910 && bounds["height"] == 640).then_some(())
+    });
+    app.quit();
+
+    let mut app = setup.launch();
+    wait_for("the window to be that big again", || {
+        (window(&mut app)["size"] == json!([910.0, 640.0])).then_some(())
+    });
     app.quit();
 }

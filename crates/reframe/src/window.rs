@@ -80,6 +80,8 @@ pub struct Shell {
     drag: Option<SeparatorDrag>,
     renaming: Option<Renaming>,
     find: Option<FindBar>,
+    /// How often the window was drawn (keys reach it from the first time on).
+    drawn: usize,
     /// What the wheel turned with Ctrl held that did not make a whole step of text size yet.
     wheel: f32,
     /// Where things were placed in the last frame, and the area they were placed in.
@@ -113,7 +115,10 @@ fn along(dir: SplitDir, position: Point<Pixels>) -> f64 {
 }
 
 impl Shell {
-    fn new(controller: Entity<Controller>, window_id: String, handle: AnyWindowHandle, cx: &mut Context<Self>) -> Self {
+    fn new(controller: Entity<Controller>, window_id: String, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let handle = window.window_handle();
+        cx.observe_window_bounds(window, |this, window, cx| this.bounds_changed(window, cx))
+            .detach();
         let events = cx.subscribe(&controller, |this, _, event, cx| match event {
             AppEvent::Session(_) => this.sync(cx),
             AppEvent::Window(id) if *id == this.window_id => {
@@ -137,6 +142,7 @@ impl Shell {
             drag: None,
             renaming: None,
             find: None,
+            drawn: 0,
             wheel: 0.0,
             placement: Placement::default(),
             area: Rect::default(),
@@ -219,6 +225,16 @@ impl Shell {
         &self.placement
     }
 
+    /// The window itself or one of its tiles has the keyboard.
+    pub fn has_keyboard(&self, window: &Window, cx: &App) -> bool {
+        self.focus.is_focused(window) || self.active_tile(window, cx).is_some()
+    }
+
+    /// How often the window was drawn.
+    pub fn drawn(&self) -> usize {
+        self.drawn
+    }
+
     pub fn handle(&self) -> AnyWindowHandle {
         self.handle
     }
@@ -267,6 +283,32 @@ impl Shell {
             Some(session_id.to_owned())
         };
         self.focus_next = Some(session_id.to_owned());
+        cx.notify();
+    }
+
+    /// The window was moved, resized, maximized or put on the whole screen: remembered for the
+    /// next start.
+    fn bounds_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (bounds, maximized, fullscreen) = match window.window_bounds() {
+            WindowBounds::Windowed(bounds) => (bounds, false, false),
+            WindowBounds::Maximized(bounds) => (bounds, true, false),
+            // Full screen is no size of its own: the window keeps the bounds it returns to.
+            WindowBounds::Fullscreen(bounds) => (
+                bounds,
+                self.window_state(cx).is_some_and(|window| window.maximized),
+                true,
+            ),
+        };
+        let bounds = reframe_core::state::Bounds {
+            x: f64::from(f32::from(bounds.origin.x)).round(),
+            y: f64::from(f32::from(bounds.origin.y)).round(),
+            width: f64::from(f32::from(bounds.size.width)).round(),
+            height: f64::from(f32::from(bounds.size.height)).round(),
+        };
+        let window_id = self.window_id.clone();
+        self.controller.update(cx, |controller, cx| {
+            controller.set_window_bounds(&window_id, bounds, maximized, fullscreen, cx);
+        });
         cx.notify();
     }
 
@@ -430,6 +472,7 @@ impl Shell {
                 _events: events,
             });
         }
+        self.focus_next = None;
         if let Some(find) = &self.find {
             find.input.update(cx, |input, cx| {
                 input.focus(window, cx);
@@ -561,6 +604,8 @@ impl Shell {
         let Some(view) = self.controller.read(cx).session_view(&session_id, cx) else {
             return;
         };
+        // The field takes the keyboard, also from a tile that was about to get it.
+        self.focus_next = None;
         let placeholder = self.text("session.automaticName", cx);
         let initial = view.label;
         let input = cx.new(|cx| {
@@ -1281,6 +1326,7 @@ impl Render for Shell {
             None => (true, Vec::new()),
         };
         window.set_window_title(&self.title(cx));
+        self.drawn += 1;
         if let Some(id) = &self.focus_next {
             self.last_active = Some(id.clone());
         }
@@ -1294,7 +1340,9 @@ impl Render for Shell {
                     let focus = view.read(cx).focus.clone();
                     window.focus(&focus, cx);
                 }
-                _ => window.focus(&self.focus, cx),
+                // Only when it is not there already: taking the focus draws the window again.
+                _ if !self.focus.is_focused(window) => window.focus(&self.focus, cx),
+                _ => {}
             }
         }
         let mut root = div()
@@ -1438,7 +1486,39 @@ impl Element for LayoutElement {
 
 /// Opens the window for one of the state's windows. `shown`: on screen, not kept in the tray.
 pub fn open(controller: &Entity<Controller>, window_id: &str, shown: bool, cx: &mut App) {
+    // Where it was, if its top edge is still on a connected display; else only as big as it was.
+    let saved = controller
+        .read(cx)
+        .state()
+        .windows
+        .iter()
+        .find(|window| window.id == window_id)
+        .and_then(|window| Some((window.bounds?, window.maximized, window.fullscreen == Some(true))));
+    let window_bounds = saved.map(|(saved, maximized, fullscreen)| {
+        let size = size(px(saved.width as f32), px(saved.height as f32));
+        let title_bar = Bounds::new(
+            point(px(saved.x as f32 + 40.0), px(saved.y as f32)),
+            gpui_kit::size(px((saved.width as f32 - 80.0).max(1.0)), px(30.0)),
+        );
+        let on_screen = cx
+            .displays()
+            .iter()
+            .any(|display| display.bounds().intersects(&title_bar));
+        let bounds = if on_screen {
+            Bounds::new(point(px(saved.x as f32), px(saved.y as f32)), size)
+        } else {
+            Bounds::centered(None, size, cx)
+        };
+        if fullscreen {
+            WindowBounds::Fullscreen(bounds)
+        } else if maximized {
+            WindowBounds::Maximized(bounds)
+        } else {
+            WindowBounds::Windowed(bounds)
+        }
+    });
     let options = WindowOptions {
+        window_bounds,
         show: shown,
         // Driven by a test, a window does not take the keyboard from whoever is working.
         focus: shown && !controller.read(cx).config().e2e,
@@ -1447,8 +1527,7 @@ pub fn open(controller: &Entity<Controller>, window_id: &str, shown: bool, cx: &
     let (controller, window_id) = (controller.clone(), window_id.to_owned());
     let opened = gpui_kit::open_window(options, cx, |window, cx| {
         window.set_window_title("reframe");
-        let handle = window.window_handle();
-        let shell = cx.new(|cx| Shell::new(controller, window_id.clone(), handle, cx));
+        let shell = cx.new(|cx| Shell::new(controller, window_id.clone(), window, cx));
         cx.default_global::<Shells>().0.insert(window_id, shell.downgrade());
         shell
     });

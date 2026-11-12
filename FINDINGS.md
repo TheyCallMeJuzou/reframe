@@ -46,6 +46,24 @@ console hosts are the same on both sides and are left out.
   wakeup redraws the whole tile.
 - One run each, except start-up of the prototype.
 
+### Idle CPU, looked into (milestone 3)
+
+Measured on the release build with three idle fake sessions, per thread, over 5 s:
+
+| | main thread | vsync thread |
+|---|---|---|
+| reframe's window is the active one | 1.2 % of one core | 0.3 % |
+| another window is in front | 3.8 % | 0.6 % |
+
+- It is not redrawing: the window drew once in those 5 s. The terminals are only drawn when
+  their session writes something.
+- The time goes into GPUI's frame tick on Windows: a thread wakes the main thread once per
+  display refresh for every window, whether anything changed or not. The display of this machine
+  runs at 280 Hz, so that is 280 wake-ups a second; at 60 Hz it would be about a fifth of it.
+- Why the tick costs three times as much while another window is in front was not found.
+- Nothing in reframe's own code can turn the tick off. Doing so means a patched copy of GPUI's
+  Windows backend, which is a step of its own (GPUI versions are pinned and upgraded on purpose).
+
 ## Automated checks that passed
 
 - `--dump`: a session starts, the screen parses, Claude Code's registry entry exists for the

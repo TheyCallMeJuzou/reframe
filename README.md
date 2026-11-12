@@ -29,7 +29,19 @@ Needs the stable MSVC Rust toolchain and the Visual Studio C++ build tools.
 Until it takes over from the Electron version it keeps a profile of its own
 (`%APPDATA%\reframe-native`, or `REFRAME_USER_DATA`), so the two never write the same state file.
 Sessions that were open are resumed on the next start. `--new <folder>` starts a new session
-there; it stands in for the New session dialog until the window has one.
+there right away, without the dialog.
+
+## Where it stands
+
+Done: sessions (start, resume, restart, end), the window with its split layout, separators that
+snap, zoom, collapsed tiles, the toolbar, the New session, Settings and About dialogs, all
+shortcuts except those named below, text size, the find bar, renaming a session in its tile, web
+links, the window's place and size.
+
+Still to come, in this order: dragging tiles and groups, group menus, more than one window and
+what closing one does (Ctrl+Shift+N); tray, notifications, autostart and "the next session that
+needs you" (Ctrl+Shift+Space); the session list (Ctrl+Shift+L) and workspaces; sessions in WSL and
+taking over a session from another terminal; installer and updater.
 
 Ctrl+Shift+D writes the focused terminal's screen to a text file in the temp folder.
 

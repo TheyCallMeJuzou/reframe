@@ -379,6 +379,29 @@ impl Controller {
         );
     }
 
+    /// Where a window is now, to open it there again: its place and size when it is neither
+    /// maximized nor full screen, and whether it is one of those.
+    pub fn set_window_bounds(
+        &mut self,
+        window_id: &str,
+        bounds: reframe_core::state::Bounds,
+        maximized: bool,
+        fullscreen: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(window) = self.state.windows.iter_mut().find(|window| window.id == window_id) else {
+            return;
+        };
+        let fullscreen = fullscreen.then_some(true);
+        if window.bounds.as_ref() == Some(&bounds) && window.maximized == maximized && window.fullscreen == fullscreen {
+            return;
+        }
+        window.bounds = Some(bounds);
+        window.maximized = maximized;
+        window.fullscreen = fullscreen;
+        self.save_later(cx);
+    }
+
     fn find_window(&self, window_id: &str) -> Option<&WindowState> {
         self.state.windows.iter().find(|window| window.id == window_id)
     }

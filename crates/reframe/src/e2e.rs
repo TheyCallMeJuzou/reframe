@@ -233,6 +233,12 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
             shell.update(cx, |shell, cx| shell.start_rename(session.clone(), window, cx));
             json!({ "ok": true })
         }),
+        // The first window made this big, as dragging its edge would.
+        Some("resize") => in_first_window(controller, cx, |_, window, _| {
+            let side = |name: &str| px(command.get(name).and_then(Value::as_f64).unwrap_or(800.0) as f32);
+            window.resize(size(side("width"), side("height")));
+            json!({ "ok": true })
+        }),
         // What the first window shows beyond its layout.
         Some("window") => in_first_window(controller, cx, |shell, window, cx| {
             json!({
@@ -240,6 +246,11 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
                 "focused": shell.read(cx).active_tile(window, cx),
                 "title": shell.read(cx).title(cx),
                 "fullscreen": window.is_fullscreen(),
+                "drawn": shell.read(cx).drawn() > 0,
+                "frames": shell.read(cx).drawn(),
+                // The window or one of its tiles has the keyboard, so keys reach reframe's shortcuts.
+                "keyboard": shell.read(cx).has_keyboard(window, cx),
+                "size": [f32::from(window.bounds().size.width), f32::from(window.bounds().size.height)],
                 "renaming": shell.read(cx).renaming(),
                 "find": shell.read(cx).find_state(cx).map(|(session, text, result)| json!({
                     "session": session,
