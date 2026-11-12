@@ -11,6 +11,7 @@ mod pty;
 mod sessions;
 mod terminal;
 mod terminal_view;
+mod theme;
 mod window;
 
 use gpui_kit::*;
@@ -78,7 +79,7 @@ fn main() {
                         .collect()
                 };
                 for (id, shown) in &windows {
-                    window::open(&controller, id, *shown && !e2e, cx);
+                    window::open(&controller, id, *shown, cx);
                 }
                 controller.update(cx, |controller, cx| {
                     controller.resume_sessions(cx);

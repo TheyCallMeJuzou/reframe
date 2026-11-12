@@ -49,5 +49,6 @@ pub fn status_color(status: SessionStatus) -> u32 {
 /// A colour written as `#rrggbb` (a group's), or the accent if it is not one.
 pub fn parse_color(text: &str) -> Hsla {
     let hex = text.strip_prefix('#').filter(|hex| hex.len() == 6);
-    hex.and_then(|hex| u32::from_str_radix(hex, 16).ok()).map_or_else(|| rgb(ACCENT).into(), |value| rgb(value).into())
+    hex.and_then(|hex| u32::from_str_radix(hex, 16).ok())
+        .map_or_else(|| rgb(ACCENT).into(), |value| rgb(value).into())
 }

@@ -15,8 +15,12 @@ use futures::channel::mpsc::{UnboundedSender, unbounded};
 use gpui_kit::*;
 use serde_json::{Value, json};
 
+use reframe_core::actions::LayoutAction;
+use reframe_core::geometry::Rect;
+
 use crate::app::{Controller, NewSessionRequest};
 use crate::sessions::status_name;
+use crate::window::{self, Shell};
 
 type Command = (Value, Sender<Value>);
 
@@ -145,10 +149,64 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
             controller.update(cx, |controller, cx| controller.remove_session(&session, cx));
             json!({ "ok": true })
         }
+        // A change to the first window's layout, as its tiles and its strip ask for it.
+        Some("layout") => {
+            let action = match text("action").as_deref() {
+                Some("collapse") => LayoutAction::TileCollapse { session_id: session },
+                Some("expand") => LayoutAction::TileExpand { session_id: session },
+                _ => return json!({ "error": "unknown layout action" }),
+            };
+            controller.update(cx, |controller, cx| {
+                let window = controller.state().windows[0].id.clone();
+                controller.dispatch(&window, &action, cx);
+            });
+            json!({ "ok": true })
+        }
+        Some("zoom") => match first_shell(controller, cx) {
+            Some(shell) => {
+                shell.update(cx, |shell, cx| shell.toggle_zoom(&session, cx));
+                json!({ "ok": true })
+            }
+            None => json!({ "ok": false }),
+        },
+        // Where the first window drew its tiles and separators in its last frame.
+        Some("placement") => match first_shell(controller, cx) {
+            Some(shell) => {
+                let shell = shell.read(cx);
+                let rect = |rect: &Rect| json!([rect.x, rect.y, rect.width, rect.height]);
+                let placement = shell.placement();
+                json!({
+                    "area": rect(&shell.area()),
+                    "zoomed": shell.zoomed(),
+                    "tiles": placement.tiles.iter().map(|tile| json!({ "session": tile.session_id, "rect": rect(&tile.rect) })).collect::<Vec<_>>(),
+                    "separators": placement.separators.iter().map(|separator| json!({ "split": separator.split_id, "index": separator.index, "rect": rect(&separator.rect) })).collect::<Vec<_>>(),
+                })
+            }
+            None => Value::Null,
+        },
+        // Drags a separator by so many pixels ("free": with Alt held, off the grid).
+        Some("drag") => match first_shell(controller, cx) {
+            Some(shell) => {
+                let split = text("split").unwrap_or_default();
+                let index = command.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
+                let delta = command.get("delta").and_then(Value::as_f64).unwrap_or(0.0) as f32;
+                shell.update(cx, |shell, cx| {
+                    let area = shell.area();
+                    shell.drag_separator(&split, index, delta, flag("free"), area, cx);
+                });
+                json!({ "ok": true })
+            }
+            None => json!({ "ok": false }),
+        },
         Some("quit") => {
             controller.update(cx, |controller, cx| controller.shutdown(cx));
             json!({ "ok": true })
         }
         other => json!({ "error": format!("unknown command: {other:?}") }),
     }
+}
+
+fn first_shell(controller: &Entity<Controller>, cx: &App) -> Option<Entity<Shell>> {
+    let id = controller.read(cx).state().windows.first()?.id.clone();
+    window::shell(&id, cx)
 }

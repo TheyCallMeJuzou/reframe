@@ -14,7 +14,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use futures::FutureExt;
 use futures::channel::mpsc::unbounded;
 use gpui_kit::*;
-use reframe_core::actions::{add_tile, drop_session, is_window_empty, window_has_session, windows_to_restore};
+use reframe_core::actions::{
+    LayoutAction, add_tile, apply_layout_action, drop_session, is_window_empty, window_has_session, windows_to_restore,
+};
 use reframe_core::claude::args::LaunchMode;
 use reframe_core::claude::registry::claude_home;
 use reframe_core::claude::resolve::{self, ClaudeBinary, NodeRunner, Platform, ResolveOptions, resolve_claude};
@@ -22,7 +24,8 @@ use reframe_core::cleanup::{clean_up, drops_dir};
 use reframe_core::hooks::HookServer;
 use reframe_core::layout::DropTarget;
 use reframe_core::log::Logger;
-use reframe_core::session_logic::{IdentityPatch, SessionError};
+use reframe_core::paths::home_relative;
+use reframe_core::session_logic::{IdentityPatch, SessionError, SessionStatus};
 use reframe_core::state::{AppState, LaunchOptions, Lifecycle, PermissionMode, SessionRecord, WindowState};
 use reframe_core::store::{LoadSource, SAVE_DELAY, StateStore};
 use reframe_core::wsl::parse_wsl_path;
@@ -645,5 +648,64 @@ impl Controller {
             cx.update(|cx| cx.quit());
         })
         .detach();
+    }
+}
+
+/// What a tile shows of its session.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SessionView {
+    pub id: String,
+    /// The user's name for it, else Claude's name for the session, else the folder.
+    pub label: String,
+    pub cwd: String,
+    /// `cwd` as shown: under the home folder from "~".
+    pub cwd_label: String,
+    pub status: SessionStatus,
+    pub error: Option<SessionError>,
+}
+
+impl Controller {
+    pub fn session_view(&self, session_id: &str, cx: &App) -> Option<SessionView> {
+        let record = self.state.sessions.get(session_id)?;
+        let sessions = self.sessions.read(cx);
+        let ended = if record.lifecycle == Lifecycle::Ended {
+            SessionStatus::Ended
+        } else {
+            SessionStatus::Starting
+        };
+        let folder = record
+            .cwd
+            .trim_end_matches(['\\', '/'])
+            .rsplit(['\\', '/'])
+            .next()
+            .unwrap_or_default();
+        let named = |name: Option<&str>| name.filter(|name| !name.is_empty()).map(str::to_owned);
+        let label = named(record.name.as_deref())
+            .or_else(|| named(sessions.registry_name(session_id)))
+            .or_else(|| named(Some(folder)))
+            .unwrap_or_else(|| record.cwd.clone());
+        Some(SessionView {
+            id: record.id.clone(),
+            label,
+            cwd: record.cwd.clone(),
+            cwd_label: home_relative(&record.cwd, &self.config.home.to_string_lossy(), true),
+            status: sessions.status(session_id).unwrap_or(ended),
+            error: sessions.error(session_id),
+        })
+    }
+
+    /// A change to a window's layout, as the window asks for it.
+    pub fn dispatch(&mut self, window_id: &str, action: &LayoutAction, cx: &mut Context<Self>) {
+        let Some(window) = self.state.windows.iter_mut().find(|window| window.id == window_id) else {
+            return;
+        };
+        *window = apply_layout_action(window, action);
+        // A separator being dragged: written once it rests.
+        if matches!(action, LayoutAction::SplitResize { .. }) {
+            self.save_later(cx);
+        } else {
+            self.save(cx);
+        }
+        cx.emit(AppEvent::Window(window_id.to_owned()));
     }
 }
