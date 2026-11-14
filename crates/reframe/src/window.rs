@@ -8,20 +8,24 @@
 
 use std::collections::HashMap;
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{Sizable as _, WindowExt as _};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
-use reframe_core::actions::LayoutAction;
+use reframe_core::actions::{LayoutAction, window_has_session, window_sessions};
 use reframe_core::focus_nav::{TileBox, neighbor};
 use reframe_core::geometry::{Metrics, Placement, Rect, drag_sizes, place, shares};
+use reframe_core::groups::GROUP_COLORS;
 use reframe_core::i18n::{Locale, t};
-use reframe_core::layout::{find_node, leaves, set_split_sizes, tile, tile_key};
+use reframe_core::layout::{DropTarget, find_node, group_of, groups, leaves, set_split_sizes, tile, tile_key};
 use reframe_core::session_logic::{SessionError, SessionStatus, is_running};
 use reframe_core::shortcuts::{Shortcut, TextSizeChange};
 use reframe_core::snap::{GRID_STEPS, GridAxis, SplitAxis, snap_sizes};
-use reframe_core::state::{DockEntry, LayoutNode, SplitDir, WindowState};
+use reframe_core::state::{CloseWindow, DockEntry, GroupNode, LayoutNode, Side, SplitDir, WindowState};
 use reframe_core::wsl::parse_wsl_path;
 
 use crate::app::{AppEvent, Controller, SessionView};
@@ -46,10 +50,151 @@ struct SeparatorDrag {
     area: Rect,
 }
 
+/// What a name is edited of.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RenameTarget {
+    Session(String),
+    Group(String),
+}
+
+/// A tile or a group, as something to drag.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DragKind {
+    Tile,
+    Group,
+}
+
+/// A tile or group that is being dragged by its bar.
+struct NodeDrag {
+    key: String,
+    kind: DragKind,
+    /// What follows the pointer: the session's or the group's name.
+    label: String,
+    /// Where the button went down, and where the pointer is now.
+    from: Point<Pixels>,
+    at: Point<Pixels>,
+    /// How big it is where it comes from (a window it is torn out into is made to fit).
+    size: (f64, f64),
+    /// The pointer went far enough for this to be a drag and not a click.
+    started: bool,
+    /// The other window that shows where a drop would go.
+    preview_in: Option<String>,
+}
+
+/// What a menu entry does.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MenuAction {
+    RenameSession(String),
+    NewGroup(String),
+    AddToGroup { session: String, group: String },
+    RemoveFromGroup(String),
+    RenameGroup(String),
+    RecolorGroup { group: String, color: String },
+    DissolveGroup(String),
+    EndGroup(String),
+}
+
+/// An entry of a tile's or group's menu. The menus only describe the choices (as the Electron
+/// version's `menus.ts` did for the system's menus); what they do is the window's.
+#[derive(Clone, Debug)]
+pub struct MenuEntry {
+    pub label: String,
+    pub enabled: bool,
+    pub checked: bool,
+    /// A dot in a group's colour before the label.
+    pub swatch: Option<String>,
+    /// A line above it.
+    pub separator: bool,
+    pub action: Option<MenuAction>,
+    /// What a submenu holds.
+    pub children: Vec<MenuEntry>,
+}
+
+impl MenuEntry {
+    fn new(label: String, action: MenuAction) -> Self {
+        Self {
+            label,
+            enabled: true,
+            checked: false,
+            swatch: None,
+            separator: false,
+            action: Some(action),
+            children: Vec::new(),
+        }
+    }
+}
+
+/// The menu that is open in a window.
+struct OpenMenu {
+    entries: Vec<MenuEntry>,
+    view: Entity<PopupMenu>,
+    position: Point<Pixels>,
+    _dismissed: Subscription,
+}
+
+/// Fills the component library's menu from the entries.
+fn menu_items(
+    mut menu: PopupMenu,
+    entries: &[MenuEntry],
+    shell: &WeakEntity<Shell>,
+    window: &mut Window,
+    cx: &mut Context<PopupMenu>,
+) -> PopupMenu {
+    for entry in entries {
+        if entry.separator {
+            menu = menu.separator();
+        }
+        if !entry.children.is_empty() && entry.enabled {
+            let (children, shell) = (entry.children.clone(), shell.clone());
+            menu = menu.submenu(entry.label.clone(), window, cx, move |menu, window, cx| {
+                menu_items(menu, &children, &shell, window, cx)
+            });
+            continue;
+        }
+        let item = match &entry.swatch {
+            Some(color) => {
+                let (label, color, checked) = (entry.label.clone(), theme::parse_color(color), entry.checked);
+                PopupMenuItem::element(move |_, _| {
+                    div()
+                        .w_full()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.0))
+                        .child(div().size(px(10.0)).flex_none().rounded_full().bg(color))
+                        .child(div().flex_1().child(label.clone()))
+                        // The one it has.
+                        .when(checked, |row| {
+                            row.child(
+                                div()
+                                    .font_family(theme::ICON_FONT)
+                                    .text_size(px(10.0))
+                                    .child(icon::CHECK),
+                            )
+                        })
+                })
+            }
+            None => PopupMenuItem::new(entry.label.clone()),
+        };
+        let mut item = item.disabled(!entry.enabled);
+        if let Some(action) = entry.action.clone() {
+            let shell = shell.clone();
+            item = item.on_click(move |_, window, cx| {
+                // Once the menu is gone: what the entry does may want the keyboard (renaming).
+                let (shell, action) = (shell.clone(), action.clone());
+                window.defer(cx, move |window, cx| {
+                    let _ = shell.update(cx, |shell, cx| shell.run_menu_action(&action, window, cx));
+                });
+            });
+        }
+        menu = menu.item(item);
+    }
+    menu
+}
+
 /// The field a name is edited in, in place: Enter or leaving the field keeps it, Escape drops
 /// the change.
 struct Renaming {
-    session_id: String,
+    target: RenameTarget,
     initial: String,
     input: Entity<InputState>,
     _events: Subscription,
@@ -80,6 +225,21 @@ pub struct Shell {
     drag: Option<SeparatorDrag>,
     renaming: Option<Renaming>,
     find: Option<FindBar>,
+    menu: Option<OpenMenu>,
+    node_drag: Option<NodeDrag>,
+    /// Where a tile or group that is being dragged (in this or another window) would go.
+    drop_preview: Option<Rect>,
+    /// The running session that files are dragged over.
+    files_over: Option<String>,
+    /// The question whether to end the window's sessions is open.
+    asking_to_close: bool,
+    /// Closed by the user and out of sight, its sessions running on.
+    away: bool,
+    /// When the window was last the active one (a running count): of reframe's windows, the
+    /// one that was active last is in front.
+    focused_at: usize,
+    /// Where the window's content is on the screen.
+    screen: Bounds<Pixels>,
     /// How often the window was drawn (keys reach it from the first time on).
     drawn: usize,
     /// What the wheel turned with Ctrl held that did not make a whole step of text size yet.
@@ -96,9 +256,42 @@ struct Shells(HashMap<String, WeakEntity<Shell>>);
 
 impl Global for Shells {}
 
+/// Counts the times a window became the active one.
+static FOCUS_COUNT: AtomicUsize = AtomicUsize::new(0);
+
 /// The window showing one of the state's windows, if it is open.
 pub fn shell(window_id: &str, cx: &App) -> Option<Entity<Shell>> {
     cx.try_global::<Shells>()?.0.get(window_id)?.upgrade()
+}
+
+/// Every open window.
+pub fn shells(cx: &App) -> Vec<Entity<Shell>> {
+    cx.try_global::<Shells>()
+        .map(|shells| shells.0.values().filter_map(WeakEntity::upgrade).collect())
+        .unwrap_or_default()
+}
+
+/// The window of reframe at a point of the screen that is on screen (not put away), with the
+/// point in that window; where windows overlap, the one that was active last. `except`: a window
+/// that is not looked at (the one that asks, which cannot be read meanwhile).
+pub fn window_at_screen(screen: Point<Pixels>, except: Option<EntityId>, cx: &App) -> Option<(String, Point<Pixels>)> {
+    shells(cx)
+        .iter()
+        .filter(|shell| Some(shell.entity_id()) != except)
+        .map(|shell| shell.read(cx))
+        .filter(|shell| !shell.away && shell.screen.contains(&screen))
+        .max_by_key(|shell| shell.focused_at)
+        .map(|shell| (shell.window_id.clone(), screen - shell.screen.origin))
+}
+
+/// Opens a window for every one that is added to the state from now on.
+pub fn init(controller: &Entity<Controller>, cx: &mut App) {
+    cx.subscribe(controller, |controller, event, cx| {
+        if let AppEvent::WindowOpened(id) = event {
+            open(&controller, id, true, cx);
+        }
+    })
+    .detach();
 }
 
 fn to_rect(bounds: Bounds<Pixels>) -> Rect {
@@ -120,7 +313,16 @@ impl Shell {
         cx.observe_window_bounds(window, |this, window, cx| this.bounds_changed(window, cx))
             .detach();
         let events = cx.subscribe(&controller, |this, _, event, cx| match event {
-            AppEvent::Session(_) => this.sync(cx),
+            // A session of this window, or one that just left it.
+            AppEvent::Session(id) => {
+                let here = this.views.contains_key(id)
+                    || this
+                        .window_state(cx)
+                        .is_some_and(|window| window_has_session(window, id));
+                if here {
+                    this.sync(cx);
+                }
+            }
             AppEvent::Window(id) if *id == this.window_id => {
                 // A zoom is over as soon as the layout changes (a tile added, moved, brought back
                 // or closed).
@@ -128,8 +330,22 @@ impl Shell {
                 this.sync(cx);
             }
             AppEvent::Preferences => cx.notify(),
+            AppEvent::WindowClosed(id) if *id == this.window_id => this.close_for_good(cx),
+            AppEvent::WindowPutAway(id) if *id == this.window_id => this.put_away(cx),
+            AppEvent::FocusTile { window, session } if *window == this.window_id => {
+                this.focus_tile(session.clone(), cx);
+                this.come_forward(cx);
+            }
             _ => {}
         });
+        cx.observe_window_activation(window, |this, window, cx| {
+            if window.is_window_active() {
+                this.away = false;
+                this.focused_at = FOCUS_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+                cx.notify();
+            }
+        })
+        .detach();
         let mut shell = Self {
             controller,
             window_id,
@@ -142,6 +358,14 @@ impl Shell {
             drag: None,
             renaming: None,
             find: None,
+            menu: None,
+            node_drag: None,
+            drop_preview: None,
+            files_over: None,
+            asking_to_close: false,
+            away: false,
+            focused_at: FOCUS_COUNT.fetch_add(1, Ordering::Relaxed) + 1,
+            screen: window.bounds(),
             drawn: 0,
             wheel: 0.0,
             placement: Placement::default(),
@@ -181,12 +405,22 @@ impl Shell {
         if self.find.as_ref().is_some_and(|find| !tiles.contains(&find.session_id)) {
             self.find = None;
         }
-        if self
-            .renaming
-            .as_ref()
-            .is_some_and(|renaming| !tiles.contains(&renaming.session_id))
-        {
+        let layout = self.window_state(cx).and_then(|window| window.layout.as_ref());
+        let gone = match self.renaming.as_ref().map(|renaming| &renaming.target) {
+            Some(RenameTarget::Session(id)) => !tiles.contains(id),
+            Some(RenameTarget::Group(id)) => find_node(layout, id).is_none(),
+            None => false,
+        };
+        if gone {
             self.renaming = None;
+        }
+        // Whatever was being dragged may be gone or somewhere else by now.
+        if self
+            .node_drag
+            .as_ref()
+            .is_some_and(|drag| find_node(layout, &drag.key).is_none())
+        {
+            self.cancel_node_drag(cx);
         }
         if self.zoomed.as_ref().is_some_and(|id| !tiles.contains(id)) {
             self.zoomed = None;
@@ -237,6 +471,11 @@ impl Shell {
 
     pub fn handle(&self) -> AnyWindowHandle {
         self.handle
+    }
+
+    /// The state's window this shows.
+    pub fn window_id(&self) -> &str {
+        &self.window_id
     }
 
     pub fn area(&self) -> Rect {
@@ -305,11 +544,612 @@ impl Shell {
             width: f64::from(f32::from(bounds.size.width)).round(),
             height: f64::from(f32::from(bounds.size.height)).round(),
         };
+        self.screen = window.bounds();
         let window_id = self.window_id.clone();
         self.controller.update(cx, |controller, cx| {
             controller.set_window_bounds(&window_id, bounds, maximized, fullscreen, cx);
         });
         cx.notify();
+    }
+
+    // ---------- windows ----------
+
+    /// Whether the window was closed by the user and waits out of sight.
+    pub fn is_away(&self) -> bool {
+        self.away
+    }
+
+    /// A new, empty window next to this one.
+    pub fn new_window(&mut self, cx: &mut Context<Self>) -> String {
+        let near = self.window_state(cx).and_then(|window| window.bounds);
+        self.controller
+            .update(cx, |controller, cx| controller.new_window(near, cx))
+    }
+
+    /// The user closes the window (its X, Alt+F4). With sessions in it, reframe asks first,
+    /// unless an answer was kept.
+    pub fn request_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.asking_to_close {
+            return;
+        }
+        let choice = self.controller.read(cx).close_choice(&self.window_id);
+        match choice {
+            Some(choice) => {
+                let window_id = self.window_id.clone();
+                self.controller.update(cx, |controller, cx| {
+                    controller.close_window(&window_id, choice, false, cx);
+                });
+            }
+            None => {
+                self.asking_to_close = true;
+                let count = self.window_state(cx).map_or(0, |state| window_sessions(state).len());
+                dialogs::open_close_window(cx.weak_entity(), &self.controller, count, window, cx);
+            }
+        }
+    }
+
+    /// The answer to "end the sessions in this window?": end them, keep them, or (`None`) leave
+    /// the window open. `remember`: do not ask again.
+    pub fn answer_close(
+        &mut self,
+        choice: Option<CloseWindow>,
+        remember: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.asking_to_close {
+            return;
+        }
+        self.asking_to_close = false;
+        window.close_dialog(cx);
+        if let Some(choice) = choice {
+            let window_id = self.window_id.clone();
+            self.controller.update(cx, |controller, cx| {
+                controller.close_window(&window_id, choice, remember, cx);
+            });
+        }
+    }
+
+    /// Whether the question about closing the window is open.
+    pub fn asking_to_close(&self) -> bool {
+        self.asking_to_close
+    }
+
+    /// The window goes out of sight and its sessions run on. Until reframe has its tray icon to
+    /// wait in, that is the taskbar: the window is minimized. When no other window is left on
+    /// screen, reframe quits instead, as closing its last window always did; the sessions come
+    /// back with the next start.
+    fn put_away(&mut self, cx: &mut Context<Self>) {
+        let me = cx.entity_id();
+        let others = shells(cx)
+            .iter()
+            .any(|other| other.entity_id() != me && !other.read(cx).away);
+        if !others {
+            self.controller.update(cx, |controller, cx| controller.shutdown(cx));
+            return;
+        }
+        self.away = true;
+        let handle = self.handle;
+        cx.defer(move |cx| {
+            let _ = handle.update(cx, |_, window, _| window.minimize_window());
+        });
+    }
+
+    /// The window is gone for good (it was a secondary one and nothing is left in it).
+    fn close_for_good(&mut self, cx: &mut Context<Self>) {
+        let (handle, window_id) = (self.handle, self.window_id.clone());
+        cx.defer(move |cx| {
+            cx.default_global::<Shells>().0.remove(&window_id);
+            let _ = handle.update(cx, |_, window, _| window.remove_window());
+        });
+    }
+
+    /// Comes to the front (not when a test drives the app: that would take the keyboard from
+    /// whoever is working).
+    fn come_forward(&mut self, cx: &mut Context<Self>) {
+        self.away = false;
+        if self.controller.read(cx).config().e2e {
+            return;
+        }
+        let handle = self.handle;
+        cx.defer(move |cx| {
+            let _ = handle.update(cx, |_, window, _| window.activate_window());
+        });
+    }
+
+    // ---------- menus ----------
+
+    fn entry(&self, key: &str, action: MenuAction, cx: &App) -> MenuEntry {
+        MenuEntry::new(self.text(key, cx), action)
+    }
+
+    /// A tile's menu: rename it, and put it into a group or take it out.
+    pub fn tile_menu(&self, session_id: &str, cx: &App) -> Vec<MenuEntry> {
+        let layout = self.window_state(cx).and_then(|window| window.layout.as_ref());
+        let group = group_of(layout, &tile_key(session_id)).map(|group| group.id.clone());
+        let session = || session_id.to_owned();
+        let others: Vec<MenuEntry> = groups(layout)
+            .into_iter()
+            .filter(|other| Some(&other.id) != group.as_ref())
+            .map(|other| {
+                let action = MenuAction::AddToGroup {
+                    session: session(),
+                    group: other.id.clone(),
+                };
+                MenuEntry {
+                    swatch: Some(other.color.clone()),
+                    ..MenuEntry::new(other.name.clone(), action)
+                }
+            })
+            .collect();
+        vec![
+            self.entry("session.rename", MenuAction::RenameSession(session()), cx),
+            MenuEntry {
+                separator: true,
+                enabled: group.is_none(),
+                ..self.entry("menu.newGroup", MenuAction::NewGroup(session()), cx)
+            },
+            MenuEntry {
+                label: self.text("menu.addToGroup", cx),
+                enabled: !others.is_empty(),
+                checked: false,
+                swatch: None,
+                separator: false,
+                action: None,
+                children: others,
+            },
+            MenuEntry {
+                enabled: group.is_some(),
+                ..self.entry("menu.removeFromGroup", MenuAction::RemoveFromGroup(session()), cx)
+            },
+        ]
+    }
+
+    /// A group's menu, or (`colors_only`) just the colours it can have.
+    pub fn group_menu(&self, group_id: &str, colors_only: bool, cx: &App) -> Vec<MenuEntry> {
+        let layout = self.window_state(cx).and_then(|window| window.layout.as_ref());
+        let Some(LayoutNode::Group(group)) = find_node(layout, group_id) else {
+            return Vec::new();
+        };
+        let id = || group_id.to_owned();
+        let colors: Vec<MenuEntry> = GROUP_COLORS
+            .iter()
+            .map(|color| {
+                let action = MenuAction::RecolorGroup {
+                    group: id(),
+                    color: color.hex.to_owned(),
+                };
+                MenuEntry {
+                    checked: color.hex == group.color,
+                    swatch: Some(color.hex.to_owned()),
+                    ..self.entry(color.label, action, cx)
+                }
+            })
+            .collect();
+        if colors_only {
+            return colors;
+        }
+        vec![
+            self.entry("group.rename", MenuAction::RenameGroup(id()), cx),
+            MenuEntry {
+                label: self.text("group.color", cx),
+                enabled: true,
+                checked: false,
+                swatch: None,
+                separator: false,
+                action: None,
+                children: colors,
+            },
+            MenuEntry {
+                separator: true,
+                ..self.entry("group.dissolve", MenuAction::DissolveGroup(id()), cx)
+            },
+            self.entry("group.endAll", MenuAction::EndGroup(id()), cx),
+        ]
+    }
+
+    /// Opens a menu at a place in the window.
+    pub fn show_menu(
+        &mut self,
+        entries: Vec<MenuEntry>,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if entries.is_empty() {
+            return;
+        }
+        let shell = cx.weak_entity();
+        let view = PopupMenu::build(window, cx, |menu, window, cx| {
+            menu_items(menu, &entries, &shell, window, cx)
+        });
+        let dismissed = cx.subscribe(&view, |this, _, _: &DismissEvent, cx| {
+            this.menu = None;
+            cx.notify();
+        });
+        self.focus_next = None;
+        let focus = view.read(cx).focus_handle(cx);
+        window.focus(&focus, cx);
+        self.menu = Some(OpenMenu {
+            entries,
+            view,
+            position,
+            _dismissed: dismissed,
+        });
+        cx.notify();
+    }
+
+    /// The open menu's entries.
+    pub fn menu(&self) -> Option<&[MenuEntry]> {
+        self.menu.as_ref().map(|menu| menu.entries.as_slice())
+    }
+
+    /// Picks the entry with that label in the open menu, as a click would. For tests.
+    pub fn click_menu_item(&mut self, label: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        fn find<'a>(entries: &'a [MenuEntry], label: &str) -> Option<&'a MenuEntry> {
+            entries.iter().find_map(|entry| {
+                if entry.label == label && entry.enabled && entry.action.is_some() {
+                    Some(entry)
+                } else if entry.enabled {
+                    find(&entry.children, label)
+                } else {
+                    None
+                }
+            })
+        }
+        let Some(menu) = self.menu.take() else { return false };
+        cx.notify();
+        match find(&menu.entries, label).and_then(|entry| entry.action.clone()) {
+            Some(action) => {
+                self.run_menu_action(&action, window, cx);
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn run_menu_action(&mut self, action: &MenuAction, window: &mut Window, cx: &mut Context<Self>) {
+        let controller = self.controller.clone();
+        match action {
+            MenuAction::RenameSession(session) => self.start_rename(session.clone(), window, cx),
+            MenuAction::NewGroup(session) => {
+                controller.update(cx, |controller, cx| controller.create_group(session, cx))
+            }
+            MenuAction::AddToGroup { session, group } => {
+                controller.update(cx, |controller, cx| {
+                    controller.add_session_to_group(session, group, cx);
+                });
+            }
+            MenuAction::RemoveFromGroup(session) => {
+                controller.update(cx, |controller, cx| {
+                    controller.remove_session_from_group(session, cx);
+                });
+            }
+            MenuAction::RenameGroup(group) => self.start_group_rename(group.clone(), window, cx),
+            MenuAction::RecolorGroup { group, color } => {
+                controller.update(cx, |controller, cx| controller.recolor_group(group, color, cx));
+            }
+            MenuAction::DissolveGroup(group) => {
+                controller.update(cx, |controller, cx| controller.dissolve_group(group, cx));
+            }
+            MenuAction::EndGroup(group) => controller.update(cx, |controller, cx| controller.end_group(group, cx)),
+        }
+    }
+
+    // ---------- dragging tiles and groups ----------
+
+    /// The key of the tile or group that is being dragged.
+    fn dragged(&self) -> Option<&str> {
+        self.node_drag
+            .as_ref()
+            .filter(|drag| drag.started)
+            .map(|drag| drag.key.as_str())
+    }
+
+    /// The button went down on a tile's or group's bar: a drag begins once the pointer moves.
+    fn press_node(&mut self, key: String, kind: DragKind, position: Point<Pixels>, cx: &mut Context<Self>) {
+        let renamed = match self.renaming.as_ref().map(|renaming| &renaming.target) {
+            Some(RenameTarget::Session(id)) => tile_key(id) == key,
+            Some(RenameTarget::Group(id)) => *id == key,
+            None => false,
+        };
+        if renamed {
+            return;
+        }
+        let found = match kind {
+            DragKind::Tile => self
+                .placement
+                .tiles
+                .iter()
+                .find(|tile| tile_key(&tile.session_id) == key)
+                .and_then(|tile| {
+                    let view = self.controller.read(cx).session_view(&tile.session_id, cx)?;
+                    Some((tile.rect, view.label))
+                }),
+            DragKind::Group => self
+                .placement
+                .groups
+                .iter()
+                .find(|group| group.id == key)
+                .and_then(|group| {
+                    let layout = self.window_state(cx).and_then(|window| window.layout.as_ref());
+                    match find_node(layout, &key) {
+                        Some(LayoutNode::Group(node)) => Some((group.rect, node.name.clone())),
+                        _ => None,
+                    }
+                }),
+        };
+        let Some((rect, label)) = found else { return };
+        self.node_drag = Some(NodeDrag {
+            key,
+            kind,
+            label,
+            from: position,
+            at: position,
+            size: (rect.width, rect.height),
+            started: false,
+            preview_in: None,
+        });
+        cx.notify();
+    }
+
+    /// The window of reframe under a point of this window (which may lie outside it), in front
+    /// of the others, with the point in that window.
+    fn window_at(
+        &self,
+        position: Point<Pixels>,
+        me: EntityId,
+        window: &Window,
+        cx: &App,
+    ) -> Option<(String, Point<Pixels>)> {
+        let size = window.viewport_size();
+        if position.x >= px(0.0) && position.y >= px(0.0) && position.x < size.width && position.y < size.height {
+            return Some((self.window_id.clone(), position));
+        }
+        let screen = window.bounds().origin + position;
+        window_at_screen(screen, Some(me), cx)
+    }
+
+    /// Where a tile or group dropped at a point of this window would go, and the area to show
+    /// for it. Without an area the point takes no drop.
+    pub fn drop_spot_at(
+        &self,
+        position: Point<Pixels>,
+        key: &str,
+        kind: DragKind,
+        cx: &App,
+    ) -> (Option<DropTarget>, Option<Rect>) {
+        let (x, y) = (f64::from(f32::from(position.x)), f64::from(f32::from(position.y)));
+        let empty = self.window_state(cx).is_none_or(|window| window.layout.is_none());
+        if empty {
+            // An empty window takes it as a whole.
+            return (None, self.area.contains(x, y).then_some(self.area));
+        }
+        let half = |rect: Rect, side: Side| match side {
+            Side::Left => Rect::new(rect.x, rect.y, rect.width / 2.0, rect.height),
+            Side::Right => Rect::new(rect.x + rect.width / 2.0, rect.y, rect.width / 2.0, rect.height),
+            Side::Top => Rect::new(rect.x, rect.y, rect.width, rect.height / 2.0),
+            Side::Bottom => Rect::new(rect.x, rect.y + rect.height / 2.0, rect.width, rect.height / 2.0),
+        };
+        // The edges of a group's frame take what goes next to the group.
+        const BAND: f64 = 14.0;
+        const OUTSIDE: f64 = 2.0;
+        for group in self.placement.groups.iter().filter(|group| group.id != key) {
+            let rect = group.rect;
+            let (right, bottom) = (rect.x + rect.width, rect.y + rect.height);
+            let across = y >= rect.y && y < bottom;
+            let along = x >= rect.x && x < right;
+            let side = if along && y >= bottom + OUTSIDE - BAND && y < bottom + OUTSIDE {
+                Side::Bottom
+            } else if along && y >= rect.y - OUTSIDE && y < rect.y - OUTSIDE + BAND {
+                Side::Top
+            } else if across && x >= right + OUTSIDE - BAND && x < right + OUTSIDE {
+                Side::Right
+            } else if across && x >= rect.x - OUTSIDE && x < rect.x - OUTSIDE + BAND {
+                Side::Left
+            } else {
+                continue;
+            };
+            let target = DropTarget {
+                key: group.id.clone(),
+                side,
+            };
+            return (Some(target), Some(half(rect, side)));
+        }
+        for tile in &self.placement.tiles {
+            if !tile.rect.contains(x, y) {
+                continue;
+            }
+            let tile_key = tile_key(&tile.session_id);
+            // Not onto itself, and a group never lands inside another group.
+            let own = tile_key == key || tile.group.as_deref() == Some(key);
+            if own || (kind == DragKind::Group && tile.group.is_some()) {
+                return (None, None);
+            }
+            // The nearest edge of the tile's body says on which side.
+            let body = tile.rect.inset(0.0, f64::from(theme::TILE_HEADER), 0.0, 0.0);
+            let across = ((x - body.x) / body.width.max(1.0)).clamp(0.0, 1.0);
+            let down = ((y - body.y) / body.height.max(1.0)).clamp(0.0, 1.0);
+            let mut side = (Side::Left, across);
+            for other in [
+                (Side::Right, 1.0 - across),
+                (Side::Top, down),
+                (Side::Bottom, 1.0 - down),
+            ] {
+                if other.1 < side.1 {
+                    side = other;
+                }
+            }
+            let target = DropTarget {
+                key: tile_key,
+                side: side.0,
+            };
+            return (Some(target), Some(half(body, side.0)));
+        }
+        (None, None)
+    }
+
+    /// Shows where a drop from another window would go (or takes that away).
+    pub fn set_drop_preview(&mut self, preview: Option<Rect>, cx: &mut Context<Self>) {
+        if self.drop_preview != preview {
+            self.drop_preview = preview;
+            cx.notify();
+        }
+    }
+
+    pub fn drop_preview(&self) -> Option<Rect> {
+        self.drop_preview
+    }
+
+    /// The name that follows the pointer while a tile or group is dragged.
+    pub fn dragging(&self) -> Option<&str> {
+        self.node_drag
+            .as_ref()
+            .filter(|drag| drag.started)
+            .map(|drag| drag.label.as_str())
+    }
+
+    /// The running session that files are dragged over.
+    pub fn files_over(&self) -> Option<&str> {
+        self.files_over.as_deref()
+    }
+
+    fn clear_previews(&mut self, foreign: Option<String>, cx: &mut Context<Self>) {
+        self.set_drop_preview(None, cx);
+        if let Some(other) = foreign.and_then(|id| shell(&id, cx)) {
+            other.update(cx, |other, cx| other.set_drop_preview(None, cx));
+        }
+    }
+
+    /// The pointer moved with the button held on a tile's or group's bar.
+    fn move_node_drag(&mut self, position: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(drag) = &mut self.node_drag else { return };
+        if !drag.started {
+            let moved = position - drag.from;
+            if moved.x.abs() < px(5.0) && moved.y.abs() < px(5.0) {
+                return;
+            }
+            drag.started = true;
+        }
+        drag.at = position;
+        let (key, kind, shown_in) = (drag.key.clone(), drag.kind, drag.preview_in.clone());
+        let place = self.window_at(position, cx.entity_id(), window, cx);
+        let (mut here, mut there) = (None, None);
+        match place {
+            Some((id, local)) if id == self.window_id => here = self.drop_spot_at(local, &key, kind, cx).1,
+            Some((id, local)) => {
+                if let Some(other) = shell(&id, cx) {
+                    let preview = other.read(cx).drop_spot_at(local, &key, kind, cx).1;
+                    other.update(cx, |other, cx| other.set_drop_preview(preview, cx));
+                    there = Some(id);
+                }
+            }
+            None => {}
+        }
+        if shown_in != there
+            && let Some(other) = shown_in.and_then(|id| shell(&id, cx))
+        {
+            other.update(cx, |other, cx| other.set_drop_preview(None, cx));
+        }
+        if let Some(drag) = &mut self.node_drag {
+            drag.preview_in = there;
+        }
+        self.drop_preview = here;
+        cx.notify();
+    }
+
+    /// The button was let go: the tile or group goes where the pointer is.
+    fn finish_node_drag(&mut self, position: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(drag) = self.node_drag.take() else { return };
+        self.clear_previews(drag.preview_in.clone(), cx);
+        cx.notify();
+        if !drag.started {
+            return;
+        }
+        let place = self.window_at(position, cx.entity_id(), window, cx);
+        let screen = window.bounds().origin + position;
+        self.drop_node(&drag.key, drag.kind, place, screen, Some(drag.size), cx);
+    }
+
+    /// A drag given up (Escape): nothing moves.
+    fn cancel_node_drag(&mut self, cx: &mut Context<Self>) {
+        if let Some(drag) = self.node_drag.take() {
+            self.clear_previews(drag.preview_in, cx);
+            cx.notify();
+        }
+    }
+
+    /// Lets a tile or group of this window go at a place: in this window it moves, in another
+    /// one it goes over there, and outside of reframe's windows (`place` is `None`) it gets a
+    /// window of its own at that point of the screen. Says what happened.
+    pub fn drop_node(
+        &mut self,
+        key: &str,
+        kind: DragKind,
+        place: Option<(String, Point<Pixels>)>,
+        screen: Point<Pixels>,
+        size: Option<(f64, f64)>,
+        cx: &mut Context<Self>,
+    ) -> &'static str {
+        let from = self.window_id.clone();
+        match place {
+            Some((id, local)) if id == from => {
+                let (target, _) = self.drop_spot_at(local, key, kind, cx);
+                let Some(target) = target.filter(|target| target.key != key) else {
+                    return "nothing";
+                };
+                self.dispatch(
+                    LayoutAction::NodeMove {
+                        key: key.to_owned(),
+                        target: Some(target),
+                    },
+                    cx,
+                );
+                "moved"
+            }
+            Some((id, local)) => {
+                let spot = shell(&id, cx).map(|other| other.read(cx).drop_spot_at(local, key, kind, cx));
+                // Only where the other window shows that it takes the drop.
+                let Some((target, Some(_))) = spot else {
+                    return "nothing";
+                };
+                let moved = self.controller.update(cx, |controller, cx| {
+                    controller.transfer_node(&id, key, &from, target.as_ref(), cx)
+                });
+                if moved { "transferred" } else { "nothing" }
+            }
+            None => {
+                let point = (f64::from(f32::from(screen.x)), f64::from(f32::from(screen.y)));
+                let torn = self
+                    .controller
+                    .update(cx, |controller, cx| controller.tear_out(&from, key, point, size, cx));
+                if torn.is_some() { "tornOut" } else { "nothing" }
+            }
+        }
+    }
+
+    // ---------- files dropped onto a tile ----------
+
+    /// Files are dragged over the window: the running session under the pointer says that it
+    /// takes them.
+    fn files_hover(&mut self, session_id: &str, inside: bool, cx: &mut Context<Self>) {
+        let over = self.files_over.as_deref() == Some(session_id);
+        if inside && !over {
+            self.files_over = Some(session_id.to_owned());
+            cx.notify();
+        } else if !inside && over {
+            self.files_over = None;
+            cx.notify();
+        }
+    }
+
+    /// Files dropped onto a running session are typed in as their paths, like in a terminal.
+    pub fn drop_files(&mut self, session_id: &str, paths: &[std::path::PathBuf], cx: &mut Context<Self>) {
+        self.files_over = None;
+        if let Some(view) = self.views.get(session_id) {
+            view.update(cx, |view, cx| view.type_paths(paths, cx));
+        }
+        self.focus_tile(session_id.to_owned(), cx);
     }
 
     // ---------- keyboard ----------
@@ -331,6 +1171,16 @@ impl Shell {
     fn on_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         // Dialogs keep their keys.
         if window.has_active_dialog(cx) {
+            return;
+        }
+        // Escape gives up a drag.
+        if self.dragged().is_some() && event.keystroke.key == "escape" {
+            cx.stop_propagation();
+            self.cancel_node_drag(cx);
+            return;
+        }
+        // An open menu keeps its keys.
+        if self.menu.is_some() {
             return;
         }
         let Some(shortcut) = keys::shortcut_of(&event.keystroke) else {
@@ -416,9 +1266,11 @@ impl Shell {
                     self.open_find(id, window, cx);
                 }
             }
-            // Windows, the session list and "the next session that needs you" follow with their
-            // milestones.
-            Shortcut::NewWindow | Shortcut::NextWaiting | Shortcut::ToggleSidebar => {}
+            Shortcut::NewWindow => {
+                self.new_window(cx);
+            }
+            // The session list and "the next session that needs you" follow with their milestones.
+            Shortcut::NextWaiting | Shortcut::ToggleSidebar => {}
         }
     }
 
@@ -599,15 +1451,16 @@ impl Shell {
 
     // ---------- renaming ----------
 
-    /// Puts a field in place of a session's name.
-    pub fn start_rename(&mut self, session_id: String, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(view) = self.controller.read(cx).session_view(&session_id, cx) else {
-            return;
-        };
+    fn begin_rename(
+        &mut self,
+        target: RenameTarget,
+        initial: String,
+        placeholder: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         // The field takes the keyboard, also from a tile that was about to get it.
         self.focus_next = None;
-        let placeholder = self.text("session.automaticName", cx);
-        let initial = view.label;
         let input = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder(placeholder)
@@ -623,7 +1476,7 @@ impl Shell {
             }
         });
         self.renaming = Some(Renaming {
-            session_id,
+            target,
             initial,
             input,
             _events: events,
@@ -631,22 +1484,53 @@ impl Shell {
         cx.notify();
     }
 
+    /// Puts a field in place of a session's name.
+    pub fn start_rename(&mut self, session_id: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(view) = self.controller.read(cx).session_view(&session_id, cx) else {
+            return;
+        };
+        let placeholder = self.text("session.automaticName", cx);
+        self.begin_rename(RenameTarget::Session(session_id), view.label, placeholder, window, cx);
+    }
+
+    /// Puts a field in place of a group's name.
+    pub fn start_group_rename(&mut self, group_id: String, window: &mut Window, cx: &mut Context<Self>) {
+        let layout = self.window_state(cx).and_then(|window| window.layout.as_ref());
+        let Some(LayoutNode::Group(group)) = find_node(layout, &group_id) else {
+            return;
+        };
+        let name = group.name.clone();
+        self.begin_rename(RenameTarget::Group(group_id), name, String::new(), window, cx);
+    }
+
     /// Keeps the name (when it changed) or drops the change; the session is typed in again. Once
     /// kept or dropped, that is it: the field losing the focus afterwards does not keep it again.
     pub fn finish_rename(&mut self, keep: bool, cx: &mut Context<Self>) {
         let Some(renaming) = self.renaming.take() else { return };
         let name = renaming.input.read(cx).value().trim().to_owned();
-        if keep && name != renaming.initial {
-            self.controller.update(cx, |controller, cx| {
-                controller.rename_session(&renaming.session_id, &name, cx);
-            });
+        let changed = keep && name != renaming.initial;
+        match renaming.target {
+            RenameTarget::Session(session_id) => {
+                if changed {
+                    self.controller.update(cx, |controller, cx| {
+                        controller.rename_session(&session_id, &name, cx);
+                    });
+                }
+                self.focus_tile(session_id, cx);
+            }
+            RenameTarget::Group(group_id) => {
+                // A group always has a name.
+                if changed && !name.is_empty() {
+                    self.dispatch(LayoutAction::GroupRename { group_id, name }, cx);
+                }
+                cx.notify();
+            }
         }
-        self.focus_tile(renaming.session_id, cx);
     }
 
-    /// The name being edited, for tests to type into.
-    pub fn renaming(&self) -> Option<&str> {
-        self.renaming.as_ref().map(|renaming| renaming.session_id.as_str())
+    /// What is being renamed, for tests to type into.
+    pub fn renaming(&self) -> Option<&RenameTarget> {
+        self.renaming.as_ref().map(|renaming| &renaming.target)
     }
 
     // ---------- dialogs ----------
@@ -789,37 +1673,14 @@ impl Shell {
             let Some(LayoutNode::Group(node)) = find_node(state_layout.as_ref(), &group.id) else {
                 continue;
             };
-            let color = theme::parse_color(&node.color);
-            let count = leaves(Some(&node.child)).len();
-            let frame = div()
-                .size_full()
-                .rounded(px(8.0))
-                .border_2()
-                .border_color(color)
-                .bg(color.opacity(0.07))
-                .child(
-                    div()
-                        .h(px(28.0))
-                        .px(px(6.0))
-                        .flex()
-                        .items_center()
-                        .gap(px(6.0))
-                        .child(div().size(px(12.0)).rounded_full().bg(color))
-                        .child(div().font_weight(FontWeight::SEMIBOLD).child(node.name.clone()))
-                        .child(
-                            div()
-                                .text_color(rgb(theme::MUTED))
-                                .text_size(px(12.0))
-                                .child(count.to_string()),
-                        ),
-                );
-            elements.push((group.rect, frame.into_any_element()));
+            let node = node.clone();
+            elements.push((group.rect, self.group_frame(&node, cx)));
         }
         for placed in &placement.tiles {
             let Some(view) = self.controller.read(cx).session_view(&placed.session_id, cx) else {
                 continue;
             };
-            elements.push((placed.rect, self.tile(&view, window, cx)));
+            elements.push((placed.rect, self.tile(&view, placed.group.as_deref(), window, cx)));
         }
         if self.zoomed.is_none() {
             for separator in &placement.separators {
@@ -854,6 +1715,152 @@ impl Shell {
         self.placement = placement;
         self.area = area;
         elements
+    }
+
+    /// The field a name is edited in, in a tile's or a group's bar.
+    fn name_field(&self, renaming: &Renaming, cx: &mut Context<Self>) -> AnyElement {
+        div()
+            .w(px(180.0))
+            .flex_none()
+            // Clicks and keys here belong to the field, not to what is around it.
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .capture_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                if event.keystroke.key == "escape" {
+                    cx.stop_propagation();
+                    this.finish_rename(false, cx);
+                }
+            }))
+            .child(Input::new(&renaming.input).small())
+            .into_any_element()
+    }
+
+    /// Six dots that say: this bar is what you drag by.
+    fn grip(&self) -> Div {
+        let dot = || div().size(px(2.0)).rounded_full().bg(rgb(theme::MUTED));
+        let column = || {
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(2.0))
+                .child(dot())
+                .child(dot())
+                .child(dot())
+        };
+        div()
+            .flex_none()
+            .flex()
+            .gap(px(2.0))
+            .opacity(0.6)
+            .child(column())
+            .child(column())
+    }
+
+    /// A group's coloured frame with its bar: collapse, colour, name, how many tiles, options.
+    fn group_frame(&self, node: &GroupNode, cx: &mut Context<Self>) -> AnyElement {
+        let id = node.id.clone();
+        let color = theme::parse_color(&node.color);
+        let count = leaves(Some(&node.child)).len();
+        let target = RenameTarget::Group(id.clone());
+        let name = match self.renaming.as_ref().filter(|renaming| renaming.target == target) {
+            Some(renaming) => self.name_field(renaming, cx),
+            None => {
+                let hint = self.text("group.renameHint", cx);
+                let id = id.clone();
+                div()
+                    .id("name")
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .tooltip(move |window, cx| Tooltip::new(hint.clone()).build(window, cx))
+                    .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                        if event.click_count() == 2 {
+                            this.start_group_rename(id.clone(), window, cx);
+                        }
+                    }))
+                    .child(node.name.clone())
+                    .into_any_element()
+            }
+        };
+        let color_hint = self.text("group.color", cx);
+        let header = div()
+            .h(px(28.0))
+            .px(px(4.0))
+            .flex()
+            .items_center()
+            .gap(px(6.0))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener({
+                    let id = id.clone();
+                    move |this, event: &MouseDownEvent, _, cx| {
+                        this.press_node(id.clone(), DragKind::Group, event.position, cx);
+                    }
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener({
+                    let id = id.clone();
+                    move |this, event: &MouseDownEvent, window, cx| {
+                        let entries = this.group_menu(&id, false, cx);
+                        this.show_menu(entries, event.position, window, cx);
+                    }
+                }),
+            )
+            .child(
+                self.icon_button("collapse", icon::COLLAPSE, self.text("group.collapse", cx), cx, {
+                    let id = id.clone();
+                    move |this, _, cx| this.dispatch(LayoutAction::GroupCollapse { group_id: id.clone() }, cx)
+                }),
+            )
+            .child(self.grip())
+            .child(
+                div()
+                    .id("color")
+                    .size(px(12.0))
+                    .flex_none()
+                    .rounded_full()
+                    .bg(color)
+                    .cursor_pointer()
+                    .tooltip(move |window, cx| Tooltip::new(color_hint.clone()).build(window, cx))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener({
+                        let id = id.clone();
+                        move |this, _, window, cx| {
+                            let entries = this.group_menu(&id, true, cx);
+                            this.show_menu(entries, window.mouse_position(), window, cx);
+                        }
+                    })),
+            )
+            .child(name)
+            .child(
+                div()
+                    .flex_none()
+                    .text_color(rgb(theme::MUTED))
+                    .text_size(px(12.0))
+                    .child(count.to_string()),
+            )
+            .child(div().flex_1())
+            .child(
+                self.icon_button("options", icon::MORE, self.text("group.options", cx), cx, {
+                    let id = id.clone();
+                    move |this, window, cx| {
+                        let entries = this.group_menu(&id, false, cx);
+                        this.show_menu(entries, window.mouse_position(), window, cx);
+                    }
+                }),
+            );
+        div()
+            .id(SharedString::from(format!("group-{id}")))
+            .size_full()
+            .rounded(px(8.0))
+            .border_2()
+            .border_color(color)
+            .bg(color.opacity(0.07))
+            .when(self.dragged() == Some(id.as_str()), |frame| frame.opacity(0.5))
+            .child(header)
+            .into_any_element()
     }
 
     fn icon_button(
@@ -930,8 +1937,18 @@ impl Shell {
     }
 
     /// A session's tile: its header, its terminal and, without a process, the card saying why.
-    fn tile(&mut self, view: &SessionView, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn tile(
+        &mut self,
+        view: &SessionView,
+        group: Option<&str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let id = view.id.clone();
+        // Dragged itself, or with its group.
+        let dragged = self
+            .dragged()
+            .is_some_and(|key| key == tile_key(&id) || Some(key) == group);
         let terminal = self.views.get(&id).cloned();
         let focused = terminal
             .as_ref()
@@ -949,28 +1966,41 @@ impl Shell {
             .bg(rgb(if focused { theme::SURFACE_2 } else { theme::SURFACE }))
             .border_b_1()
             .border_color(rgb(theme::BORDER))
+            // The bar is what a tile is dragged by, and where its menu is.
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener({
+                    let id = id.clone();
+                    move |this, event: &MouseDownEvent, _, cx| {
+                        this.press_node(tile_key(&id), DragKind::Tile, event.position, cx);
+                    }
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener({
+                    let id = id.clone();
+                    move |this, event: &MouseDownEvent, window, cx| {
+                        let entries = this.tile_menu(&id, cx);
+                        this.show_menu(entries, event.position, window, cx);
+                    }
+                }),
+            )
             .child(
                 self.icon_button("collapse", icon::COLLAPSE, self.text("tile.collapse", cx), cx, {
                     let id = id.clone();
                     move |this, _, cx| this.dispatch(LayoutAction::TileCollapse { session_id: id.clone() }, cx)
                 }),
             )
+            .child(self.grip())
             .child(self.status_dot(view.status, cx))
             .child(
-                match self.renaming.as_ref().filter(|renaming| renaming.session_id == id) {
-                    Some(renaming) => div()
-                        .w(px(180.0))
-                        .flex_none()
-                        // Clicks and keys here belong to the field, not to the terminal around it.
-                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .capture_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
-                            if event.keystroke.key == "escape" {
-                                cx.stop_propagation();
-                                this.finish_rename(false, cx);
-                            }
-                        }))
-                        .child(Input::new(&renaming.input).small())
-                        .into_any_element(),
+                match self
+                    .renaming
+                    .as_ref()
+                    .filter(|renaming| renaming.target == RenameTarget::Session(id.clone()))
+                {
+                    Some(renaming) => self.name_field(renaming, cx),
                     None => {
                         let hint = self.text("session.renameHint", cx);
                         let id = id.clone();
@@ -1040,6 +2070,36 @@ impl Shell {
         if let Some(find) = self.find.as_ref().filter(|find| find.session_id == id) {
             body = body.child(self.find_bar(find, cx));
         }
+        // Files dropped onto a running session are typed in as their paths.
+        if running {
+            body = body
+                .on_drag_move(cx.listener({
+                    let id = id.clone();
+                    move |this, event: &DragMoveEvent<ExternalPaths>, _, cx| {
+                        this.files_hover(&id, event.bounds.contains(&event.event.position), cx);
+                    }
+                }))
+                .on_drop(cx.listener({
+                    let id = id.clone();
+                    move |this, paths: &ExternalPaths, _, cx| this.drop_files(&id, paths.paths(), cx)
+                }));
+            if self.files_over.as_deref() == Some(id.as_str()) {
+                body = body.child(
+                    div()
+                        .absolute()
+                        .inset(px(6.0))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(theme::RADIUS))
+                        .border_2()
+                        .border_dashed()
+                        .border_color(rgb(theme::ACCENT))
+                        .bg(rgb(theme::TERMINAL).opacity(0.85))
+                        .child(self.text("tile.dropFiles", cx)),
+                );
+            }
+        }
 
         div()
             .id(SharedString::from(format!("tile-{id}")))
@@ -1047,6 +2107,7 @@ impl Shell {
             .flex()
             .flex_col()
             .overflow_hidden()
+            .when(dragged, |tile| tile.opacity(0.5))
             .rounded(px(theme::RADIUS))
             .border_1()
             .border_color(rgb(if focused { theme::ACCENT } else { theme::BORDER }))
@@ -1142,6 +2203,8 @@ impl Shell {
         let locale = self.locale(cx);
         let new_session = self.text("toolbar.newSession", cx);
         let hint = format!("{new_session} ({})", keys::label(locale, "T", true));
+        let new_window = self.text("toolbar.newWindow", cx);
+        let window_hint = format!("{new_window} ({})", keys::label(locale, "N", true));
         let settings = format!(
             "{} ({})",
             self.text("settings.title", cx),
@@ -1165,6 +2228,12 @@ impl Shell {
                 .items_center()
                 .gap(px(6.0))
                 .tooltip(move |window, cx| Tooltip::new(hint.clone()).build(window, cx)),
+            )
+            .child(
+                self.button("new-window", new_window, false, cx, |this, _, cx| {
+                    this.new_window(cx);
+                })
+                .tooltip(move |window, cx| Tooltip::new(window_hint.clone()).build(window, cx)),
             )
             .child(div().flex_1())
             .when(window.is_fullscreen(), |bar| {
@@ -1327,6 +2396,14 @@ impl Render for Shell {
         };
         window.set_window_title(&self.title(cx));
         self.drawn += 1;
+        // The question about closing is over however its dialog went (Escape, a click beside it).
+        if self.asking_to_close && !window.has_active_dialog(cx) {
+            self.asking_to_close = false;
+        }
+        // Files that were dragged over a tile left the window again.
+        if self.files_over.is_some() && !cx.has_active_drag() {
+            self.files_over = None;
+        }
         if let Some(id) = &self.focus_next {
             self.last_active = Some(id.clone());
         }
@@ -1346,6 +2423,7 @@ impl Render for Shell {
             }
         }
         let mut root = div()
+            .relative()
             .size_full()
             .flex()
             .flex_col()
@@ -1359,25 +2437,84 @@ impl Render for Shell {
         if !dock.is_empty() {
             root = root.child(self.dock(&dock, cx));
         }
-        let area = div().flex_1().min_h_0().p(px(theme::LAYOUT_PADDING));
-        root.child(if empty {
-            area.flex()
-                .flex_col()
-                .items_center()
-                .justify_center()
-                .gap(px(6.0))
-                .child(div().text_size(px(18.0)).child(self.text("empty.title", cx)))
-                .child(div().text_color(rgb(theme::MUTED)).child(self.text("empty.hint", cx)))
-                .child(div().mt(px(10.0)).child(self.button(
-                    "empty-new-session",
-                    self.text("toolbar.newSession", cx),
-                    true,
-                    cx,
-                    |this, window, cx| this.open_new_session(window, cx),
-                )))
-        } else {
-            area.child(LayoutElement { shell: cx.entity() })
-        })
+        // The layout element is there without tiles too: it says where the area is, which takes
+        // a tile dropped into an empty window.
+        let mut area = div()
+            .relative()
+            .flex_1()
+            .min_h_0()
+            .p(px(theme::LAYOUT_PADDING))
+            .child(LayoutElement { shell: cx.entity() });
+        if empty {
+            area = area.child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .justify_center()
+                    .gap(px(6.0))
+                    .child(div().text_size(px(18.0)).child(self.text("empty.title", cx)))
+                    .child(div().text_color(rgb(theme::MUTED)).child(self.text("empty.hint", cx)))
+                    .child(div().mt(px(10.0)).child(self.button(
+                        "empty-new-session",
+                        self.text("toolbar.newSession", cx),
+                        true,
+                        cx,
+                        |this, window, cx| this.open_new_session(window, cx),
+                    ))),
+            );
+        }
+        root = root.child(area);
+        // Over everything: where a drop would go, what is being dragged, and an open menu.
+        if let Some(rect) = self.drop_preview {
+            root = root.child(
+                div()
+                    .absolute()
+                    .left(px(rect.x as f32))
+                    .top(px(rect.y as f32))
+                    .w(px(rect.width as f32))
+                    .h(px(rect.height as f32))
+                    .rounded(px(theme::RADIUS))
+                    .border_2()
+                    .border_color(rgb(theme::ACCENT))
+                    .bg(rgb(theme::ACCENT).opacity(0.22)),
+            );
+        }
+        if let Some(drag) = self.node_drag.as_ref().filter(|drag| drag.started) {
+            root = root.child(
+                div()
+                    .absolute()
+                    .left(drag.at.x + px(14.0))
+                    .top(drag.at.y + px(16.0))
+                    .max_w(px(240.0))
+                    .px(px(8.0))
+                    .py(px(3.0))
+                    .rounded(px(theme::RADIUS))
+                    .border_1()
+                    .border_color(rgb(theme::ACCENT))
+                    .bg(rgb(theme::SURFACE_2))
+                    .shadow_md()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(drag.label.clone()),
+            );
+        }
+        if let Some(menu) = &self.menu {
+            root = root.child(
+                deferred(
+                    anchored()
+                        .position(menu.position)
+                        .snap_to_window_with_margin(px(8.0))
+                        .child(menu.view.clone()),
+                )
+                .with_priority(1),
+            );
+        }
+        root
     }
 }
 
@@ -1457,6 +2594,40 @@ impl Element for LayoutElement {
         for element in elements {
             element.paint(window, cx);
         }
+        // While a tile's or group's bar is held, the pointer is followed wherever it goes, also
+        // out of the window. A press that never moves stays a click for whatever is under it.
+        if self.shell.read(cx).node_drag.is_some() {
+            let shell = self.shell.clone();
+            window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
+                if phase == DispatchPhase::Capture {
+                    let started = shell.update(cx, |shell, cx| {
+                        if event.pressed_button == Some(MouseButton::Left) {
+                            shell.move_node_drag(event.position, window, cx);
+                        } else {
+                            // Released where the window did not hear of it.
+                            shell.finish_node_drag(event.position, window, cx);
+                        }
+                        shell.dragged().is_some()
+                    });
+                    if started {
+                        cx.stop_propagation();
+                    }
+                }
+            });
+            let shell = self.shell.clone();
+            window.on_mouse_event(move |event: &MouseUpEvent, phase, window, cx| {
+                if phase == DispatchPhase::Capture && event.button == MouseButton::Left {
+                    let started = shell.update(cx, |shell, cx| {
+                        let started = shell.dragged().is_some();
+                        shell.finish_node_drag(event.position, window, cx);
+                        started
+                    });
+                    if started {
+                        cx.stop_propagation();
+                    }
+                }
+            });
+        }
         // While a separator is held, the pointer is followed wherever it goes in the window.
         if self.shell.read(cx).drag.is_some() {
             let shell = self.shell.clone();
@@ -1528,6 +2699,11 @@ pub fn open(controller: &Entity<Controller>, window_id: &str, shown: bool, cx: &
     let opened = gpui_kit::open_window(options, cx, |window, cx| {
         window.set_window_title("reframe");
         let shell = cx.new(|cx| Shell::new(controller, window_id.clone(), window, cx));
+        // Closing asks reframe, which ends the sessions or puts the window away.
+        window.on_window_should_close(cx, {
+            let shell = shell.downgrade();
+            move |window, cx| shell.update(cx, |shell, cx| shell.request_close(window, cx)).is_err()
+        });
         cx.default_global::<Shells>().0.insert(window_id, shell.downgrade());
         shell
     });

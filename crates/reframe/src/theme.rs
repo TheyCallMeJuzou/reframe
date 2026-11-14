@@ -36,6 +36,8 @@ pub mod icon {
     pub const UP: &str = "\u{E70E}";
     pub const DOWN: &str = "\u{E70D}";
     pub const SETTINGS: &str = "\u{E713}";
+    pub const MORE: &str = "\u{E712}";
+    pub const CHECK: &str = "\u{E73E}";
     pub const INFO: &str = "\u{E946}";
     pub const EXIT_FULLSCREEN: &str = "\u{E73F}";
 }

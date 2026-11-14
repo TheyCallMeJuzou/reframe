@@ -85,6 +85,7 @@ fn main() {
                 for (id, shown) in &windows {
                     window::open(&controller, id, *shown, cx);
                 }
+                window::init(&controller, cx);
                 controller.update(cx, |controller, cx| {
                     controller.resume_sessions(cx);
                     let first = windows.first().map(|(id, _)| id.clone()).unwrap_or_default();

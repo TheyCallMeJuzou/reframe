@@ -26,6 +26,7 @@ use reframe_core::state::{
 use crate::app::{AppEvent, Controller, NewSessionRequest};
 use crate::keys;
 use crate::theme;
+use crate::window::Shell;
 
 type Choice = SelectState<Vec<SharedString>>;
 
@@ -759,6 +760,99 @@ pub fn open_settings(controller: &Entity<Controller>, window: &mut Window, cx: &
     window.open_dialog(cx, move |dialog, _, cx| {
         let title = words(controller.read(cx).locale())("settings.title");
         dialog.title(title).w(px(560.0)).child(form.clone())
+    });
+}
+
+// ---------- closing a window ----------
+
+/// Asks what to do with the sessions of a window that is being closed: end them, keep them
+/// running, or leave the window open. The answer can be kept.
+pub struct CloseForm {
+    shell: WeakEntity<Shell>,
+    controller: Entity<Controller>,
+    /// How many sessions are in the window.
+    count: usize,
+    remember: bool,
+}
+
+impl CloseForm {
+    fn answer(&mut self, choice: Option<CloseWindow>, window: &mut Window, cx: &mut Context<Self>) {
+        let remember = self.remember;
+        let _ = self
+            .shell
+            .update(cx, |shell, cx| shell.answer_close(choice, remember, window, cx));
+    }
+}
+
+impl Render for CloseForm {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let locale = self.controller.read(cx).locale();
+        let text = words(locale);
+        let message = if self.count == 1 {
+            text("closeWindow.messageOne")
+        } else {
+            t(locale, "closeWindow.message", &[("count", &self.count.to_string())]).unwrap_or_default()
+        };
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(10.0))
+            .child(div().font_weight(FontWeight::SEMIBOLD).child(message))
+            .child(div().text_color(rgb(theme::MUTED)).child(text("closeWindow.detail")))
+            .child(
+                Checkbox::new("remember")
+                    .label(text("closeWindow.remember"))
+                    .checked(self.remember)
+                    .on_click(cx.listener(|this, on: &bool, _, cx| {
+                        this.remember = *on;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                div()
+                    .mt(px(6.0))
+                    .flex()
+                    .justify_end()
+                    .gap(px(8.0))
+                    .child(Button::new("end").label(text("closeWindow.end")).on_click(cx.listener(
+                        |this, _, window, cx| {
+                            this.answer(Some(CloseWindow::End), window, cx);
+                        },
+                    )))
+                    .child(
+                        Button::new("keep")
+                            .primary()
+                            .label(text("closeWindow.keep"))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.answer(Some(CloseWindow::Keep), window, cx);
+                            })),
+                    )
+                    .child(
+                        Button::new("cancel")
+                            .label(text("dialog.cancel"))
+                            .on_click(cx.listener(|this, _, window, cx| this.answer(None, window, cx))),
+                    ),
+            )
+    }
+}
+
+pub fn open_close_window(
+    shell: WeakEntity<Shell>,
+    controller: &Entity<Controller>,
+    count: usize,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let form = cx.new(|_| CloseForm {
+        shell,
+        controller: controller.clone(),
+        count,
+        remember: false,
+    });
+    let controller = controller.clone();
+    window.open_dialog(cx, move |dialog, _, cx| {
+        let title = words(controller.read(cx).locale())("closeWindow.title");
+        dialog.title(title).w(px(480.0)).child(form.clone())
     });
 }
 

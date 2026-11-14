@@ -36,12 +36,17 @@ there right away, without the dialog.
 Done: sessions (start, resume, restart, end), the window with its split layout, separators that
 snap, zoom, collapsed tiles, the toolbar, the New session, Settings and About dialogs, all
 shortcuts except those named below, text size, the find bar, renaming a session in its tile, web
-links, the window's place and size.
+links, the window's place and size; tiles and groups dragged by their bar (within a window, into
+another one, or out into a window of their own), groups with their menus and colours, files
+dropped onto a tile, more than one window (Ctrl+Shift+N), and what closing a window does.
 
-Still to come, in this order: dragging tiles and groups, group menus, more than one window and
-what closing one does (Ctrl+Shift+N); tray, notifications, autostart and "the next session that
-needs you" (Ctrl+Shift+Space); the session list (Ctrl+Shift+L) and workspaces; sessions in WSL and
-taking over a session from another terminal; installer and updater.
+Until the tray icon is there, a window that is closed with its sessions kept is minimized, and
+closing the last window on screen quits reframe (its sessions come back with the next start).
+
+Still to come, in this order: tray, notifications, autostart and "the next session that needs
+you" (Ctrl+Shift+Space); the session list (Ctrl+Shift+L) and workspaces; sessions in WSL and
+taking over a session from another terminal; installer and updater. A file that exists only in
+memory (a picture dragged out of a browser) is not taken by a tile yet.
 
 Ctrl+Shift+D writes the focused terminal's screen to a text file in the temp folder.
 

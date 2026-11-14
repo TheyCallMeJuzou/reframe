@@ -15,21 +15,25 @@ use futures::FutureExt;
 use futures::channel::mpsc::unbounded;
 use gpui_kit::*;
 use reframe_core::actions::{
-    LayoutAction, add_tile, apply_layout_action, drop_session, is_window_empty, window_has_session, windows_to_restore,
+    LayoutAction, add_tile, apply_layout_action, drop_session, is_window_empty, patch_group, put_node, take_node,
+    window_groups, window_has_session, window_sessions, windows_to_restore,
 };
 use reframe_core::claude::args::LaunchMode;
 use reframe_core::claude::registry::claude_home;
 use reframe_core::claude::resolve::{self, ClaudeBinary, NodeRunner, Platform, ResolveOptions, resolve_claude};
 use reframe_core::cleanup::{clean_up, drops_dir};
+use reframe_core::groups::{is_group_color, next_group_color, next_group_number};
 use reframe_core::hooks::HookServer;
-use reframe_core::i18n::{Locale, locale_of, resolve_locale};
-use reframe_core::layout::DropTarget;
+use reframe_core::i18n::{Locale, locale_of, resolve_locale, t};
+use reframe_core::layout::{
+    DropTarget, GroupPatch, NewGroup, add_to_group, dissolve_group, group_tile, leaves, remove_from_group,
+};
 use reframe_core::log::Logger;
 use reframe_core::paths::home_relative;
 use reframe_core::session_logic::{IdentityPatch, SessionError, SessionStatus};
 use reframe_core::shortcuts::{TextSizeChange, font_size_after};
 use reframe_core::state::{
-    AppState, LaunchOptions, Lifecycle, PermissionMode, Preferences, SessionRecord, WindowState,
+    AppState, CloseWindow, GroupNode, LaunchOptions, Lifecycle, PermissionMode, Preferences, SessionRecord, WindowState,
 };
 use reframe_core::store::{LoadSource, SAVE_DELAY, StateStore};
 use reframe_core::wsl::parse_wsl_path;
@@ -108,15 +112,19 @@ pub struct NewSessionRequest {
     pub target: Option<DropTarget>,
 }
 
-// Whose it is: read by the window that follows with the next milestone.
-#[allow(dead_code)]
 pub enum AppEvent {
     /// Something about a session changed that its tile shows.
     Session(String),
     /// A window's layout changed.
     Window(String),
-    /// A window is gone.
+    /// There is a new window to open.
+    WindowOpened(String),
+    /// A window is gone for good.
     WindowClosed(String),
+    /// A window was closed by the user and stays: it goes out of sight, its sessions run on.
+    WindowPutAway(String),
+    /// A window comes to the front, and one of its sessions gets the keyboard.
+    FocusTile { window: String, session: String },
     /// A preference changed that windows show (the language, the text size, …).
     Preferences,
 }
@@ -412,6 +420,260 @@ impl Controller {
             .windows
             .iter()
             .find(|window| window_has_session(window, session_id))
+    }
+
+    // ---------- windows ----------
+
+    /// A new, empty window, a little offset from another one's place. It stays until something
+    /// leaves it empty again (like a window a tile was torn out into) and comes back after a
+    /// restart like any other.
+    pub fn new_window(&mut self, near: Option<reframe_core::state::Bounds>, cx: &mut Context<Self>) -> String {
+        let mut window = WindowState::empty(Uuid::new_v4().to_string());
+        window.bounds = near.map(|near| reframe_core::state::Bounds {
+            x: near.x + 40.0,
+            y: near.y + 40.0,
+            ..near
+        });
+        let id = window.id.clone();
+        self.state.windows.push(window);
+        self.save(cx);
+        self.log.info("new window", Some(json!({ "window": id })));
+        cx.emit(AppEvent::WindowOpened(id.clone()));
+        id
+    }
+
+    /// Moves a tile or group from another window into this one; without a target it goes to
+    /// the end. Its sessions run on.
+    pub fn transfer_node(
+        &mut self,
+        to_id: &str,
+        key: &str,
+        from_id: &str,
+        target: Option<&DropTarget>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(from) = self.find_window(from_id) else {
+            return false;
+        };
+        if from_id == to_id || self.find_window(to_id).is_none() {
+            return false;
+        }
+        let taken = take_node(from, key);
+        let Some(node) = taken.node else { return false };
+        let first = leaves(Some(&node)).into_iter().next();
+        for window in &mut self.state.windows {
+            if window.id == from_id {
+                *window = taken.win.clone();
+            } else if window.id == to_id {
+                *window = put_node(window, node.clone(), target);
+            }
+        }
+        self.save(cx);
+        self.log.info(
+            "moved to another window",
+            Some(json!({ "node": key, "from": from_id, "to": to_id })),
+        );
+        cx.emit(AppEvent::Window(from_id.to_owned()));
+        cx.emit(AppEvent::Window(to_id.to_owned()));
+        self.close_if_empty(from_id, cx);
+        if let Some(session) = first {
+            cx.emit(AppEvent::FocusTile {
+                window: to_id.to_owned(),
+                session,
+            });
+        }
+        true
+    }
+
+    /// Gives a tile or group a window of its own at a point of the screen. `size` is how big
+    /// it was where it came from. Whether the point is free of reframe's windows is for the
+    /// caller to say. The new window's id, if there is one.
+    pub fn tear_out(
+        &mut self,
+        from_id: &str,
+        key: &str,
+        point: (f64, f64),
+        size: Option<(f64, f64)>,
+        cx: &mut Context<Self>,
+    ) -> Option<String> {
+        let taken = take_node(self.find_window(from_id)?, key);
+        let node = taken.node?;
+        let (width, height) = size.unwrap_or((800.0, 500.0));
+        let mut window = WindowState::empty(Uuid::new_v4().to_string());
+        // Room for the window's toolbar and padding around the tile; the title bar lands under
+        // the pointer.
+        window.bounds = Some(reframe_core::state::Bounds {
+            x: (point.0 - 60.0).round(),
+            y: (point.1 - 16.0).round(),
+            width: (width + 24.0).clamp(480.0, 2400.0).round(),
+            height: (height + 90.0).clamp(320.0, 1600.0).round(),
+        });
+        window.layout = Some(node);
+        let id = window.id.clone();
+        for window in &mut self.state.windows {
+            if window.id == from_id {
+                *window = taken.win.clone();
+            }
+        }
+        self.state.windows.push(window);
+        self.save(cx);
+        self.log.info(
+            "torn out into a new window",
+            Some(json!({ "node": key, "from": from_id, "window": id })),
+        );
+        cx.emit(AppEvent::Window(from_id.to_owned()));
+        cx.emit(AppEvent::WindowOpened(id.clone()));
+        self.close_if_empty(from_id, cx);
+        Some(id)
+    }
+
+    /// What closing a window does without a question: nothing is asked for an empty window or
+    /// when an answer was kept. `None`: the user is asked.
+    pub fn close_choice(&self, window_id: &str) -> Option<CloseWindow> {
+        let window = self.find_window(window_id)?;
+        if window_sessions(window).is_empty() {
+            return Some(CloseWindow::Keep);
+        }
+        match self.state.preferences.close_window {
+            CloseWindow::Ask => None,
+            choice => Some(choice),
+        }
+    }
+
+    /// The user closes a window: its sessions are ended and it goes (the first one stays,
+    /// empty), or they run on and the window is put away. An empty secondary window is gone for
+    /// good. `remember`: this is the answer from now on.
+    pub fn close_window(&mut self, window_id: &str, choice: CloseWindow, remember: bool, cx: &mut Context<Self>) {
+        if remember && choice != CloseWindow::Ask {
+            self.update_preferences(cx, |preferences| preferences.close_window = choice);
+            let choice = serde_json::to_value(choice).unwrap_or_default();
+            self.log.info(
+                "closing windows with sessions from now on",
+                Some(json!({ "choice": choice })),
+            );
+        }
+        // What is in the window now (the question may have been open for a while).
+        let Some(window) = self.find_window(window_id) else {
+            return;
+        };
+        if choice == CloseWindow::End {
+            let ending = window_sessions(window);
+            self.log.info(
+                "window closed, its sessions ended",
+                Some(json!({ "window": window_id, "sessions": ending.len() })),
+            );
+            // Ending the last one closes a secondary window for good; the first one stays, empty.
+            for id in ending {
+                self.end_session(&id, cx);
+            }
+        }
+        self.close_if_empty(window_id, cx);
+        if self.find_window(window_id).is_some() {
+            cx.emit(AppEvent::WindowPutAway(window_id.to_owned()));
+        }
+    }
+
+    // ---------- groups ----------
+
+    fn window_of_group(&self, group_id: &str) -> Option<&WindowState> {
+        self.state
+            .windows
+            .iter()
+            .find(|window| window_groups(window).iter().any(|group| group.id == group_id))
+    }
+
+    fn find_group(&self, group_id: &str) -> Option<&GroupNode> {
+        self.state
+            .windows
+            .iter()
+            .flat_map(window_groups)
+            .find(|group| group.id == group_id)
+    }
+
+    /// Frames a tile as a new group, named "Group n" with the next free colour.
+    pub fn create_group(&mut self, session_id: &str, cx: &mut Context<Self>) {
+        let Some(window_id) = self.window_of(session_id).map(|window| window.id.clone()) else {
+            return;
+        };
+        let locale = self.locale();
+        let name_for = |n: u32| t(locale, "group.defaultName", &[("n", &n.to_string())]).unwrap_or_default();
+        let existing: Vec<&GroupNode> = self.state.windows.iter().flat_map(window_groups).collect();
+        let names: Vec<&str> = existing.iter().map(|group| group.name.as_str()).collect();
+        let colors: Vec<&str> = existing.iter().map(|group| group.color.as_str()).collect();
+        let name = name_for(next_group_number(&names, name_for));
+        let color = next_group_color(&colors).to_owned();
+        self.log.info(
+            "group created",
+            Some(json!({ "session": session_id, "name": name, "color": color })),
+        );
+        let group = NewGroup { id: None, name, color };
+        self.mutate_window(&window_id, cx, |window| WindowState {
+            layout: group_tile(window.layout.as_ref(), session_id, group),
+            ..window.clone()
+        });
+    }
+
+    pub fn add_session_to_group(&mut self, session_id: &str, group_id: &str, cx: &mut Context<Self>) {
+        let Some(window_id) = self.window_of(session_id).map(|window| window.id.clone()) else {
+            return;
+        };
+        if self.window_of_group(group_id).map(|window| window.id.as_str()) != Some(window_id.as_str()) {
+            return;
+        }
+        self.mutate_window(&window_id, cx, |window| WindowState {
+            layout: add_to_group(window.layout.as_ref(), session_id, group_id),
+            ..window.clone()
+        });
+    }
+
+    pub fn remove_session_from_group(&mut self, session_id: &str, cx: &mut Context<Self>) {
+        let Some(window_id) = self.window_of(session_id).map(|window| window.id.clone()) else {
+            return;
+        };
+        self.mutate_window(&window_id, cx, |window| WindowState {
+            layout: remove_from_group(window.layout.as_ref(), session_id),
+            ..window.clone()
+        });
+    }
+
+    /// Takes the frame away; its tiles stay where they are.
+    pub fn dissolve_group(&mut self, group_id: &str, cx: &mut Context<Self>) {
+        let Some(window_id) = self.window_of_group(group_id).map(|window| window.id.clone()) else {
+            return;
+        };
+        self.mutate_window(&window_id, cx, |window| WindowState {
+            layout: dissolve_group(window.layout.as_ref(), group_id),
+            ..window.clone()
+        });
+    }
+
+    pub fn recolor_group(&mut self, group_id: &str, color: &str, cx: &mut Context<Self>) {
+        let Some(window_id) = self.window_of_group(group_id).map(|window| window.id.clone()) else {
+            return;
+        };
+        if !is_group_color(color) {
+            return;
+        }
+        let patch = GroupPatch {
+            name: None,
+            color: Some(color.to_owned()),
+        };
+        self.mutate_window(&window_id, cx, |window| patch_group(window, group_id, &patch));
+    }
+
+    /// Ends every session of the group; like a tile's ×, they stay in the session list.
+    pub fn end_group(&mut self, group_id: &str, cx: &mut Context<Self>) {
+        let Some(group) = self.find_group(group_id) else {
+            return;
+        };
+        let sessions = leaves(Some(&group.child));
+        self.log.info(
+            "ending all sessions of a group",
+            Some(json!({ "group": group_id, "sessions": sessions.len() })),
+        );
+        for session_id in sessions {
+            self.end_session(&session_id, cx);
+        }
     }
 
     // ---------- start ----------

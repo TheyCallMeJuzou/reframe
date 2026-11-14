@@ -13,6 +13,8 @@ use alacritty_terminal::term::{TermMode, viewport_to_point};
 use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor, Rgb};
 use gpui_kit::*;
 
+use reframe_core::paste::{Quoting, format_paths};
+
 use crate::find::{self, Step};
 use crate::pty::{Pty, TermSize};
 use crate::terminal::Terminal;
@@ -302,16 +304,7 @@ impl TerminalView {
         for entry in item.entries() {
             match entry {
                 ClipboardEntry::ExternalPaths(paths) => {
-                    let mut text = String::new();
-                    for path in paths.paths() {
-                        let path = path.to_string_lossy();
-                        if path.contains(|c: char| c.is_whitespace() || "&()^'\"`,;=!%".contains(c)) {
-                            text.push_str(&format!("\"{path}\" "));
-                        } else {
-                            text.push_str(&format!("{path} "));
-                        }
-                    }
-                    self.type_bytes(input::paste_bytes(&text, bracketed), cx);
+                    self.type_paths(paths.paths(), cx);
                     return;
                 }
                 // An image is saved to a file here and pasted as its path, which Claude Code
@@ -330,6 +323,18 @@ impl TerminalView {
                 _ => {}
             }
         }
+    }
+
+    /// Files (copied, or dropped onto the tile) are typed in as their paths, like in a terminal.
+    pub fn type_paths(&mut self, paths: &[std::path::PathBuf], cx: &mut Context<Self>) {
+        let paths: Vec<String> = paths.iter().map(|path| self.path_for_session(path)).collect();
+        let quoting = if self.wsl { Quoting::Posix } else { Quoting::Windows };
+        let text = format_paths(&paths, quoting);
+        if text.is_empty() {
+            return;
+        }
+        let bracketed = self.mode().contains(TermMode::BRACKETED_PASTE);
+        self.type_bytes(input::paste_bytes(&text, bracketed), cx);
     }
 
     /// A Windows path as the session's program sees it.

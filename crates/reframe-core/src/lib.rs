@@ -27,6 +27,7 @@ pub mod claude;
 pub mod cleanup;
 pub mod hooks;
 pub mod log;
+pub mod paste;
 pub mod paths;
 
 pub mod discovery;

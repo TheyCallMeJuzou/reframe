@@ -18,10 +18,12 @@ use serde_json::{Value, json};
 
 use reframe_core::actions::LayoutAction;
 use reframe_core::geometry::Rect;
+use reframe_core::layout::{DropTarget, find_node, tile_key};
+use reframe_core::state::{CloseWindow, Side};
 
 use crate::app::{Controller, NewSessionRequest};
 use crate::sessions::status_name;
-use crate::window::{self, Shell};
+use crate::window::{self, DragKind, MenuEntry, RenameTarget, Shell};
 
 type Command = (Value, Sender<Value>);
 
@@ -81,8 +83,225 @@ fn accept(listener: &TcpListener, sender: &UnboundedSender<Command>) {
 fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value {
     let text = |name: &str| command.get(name).and_then(Value::as_str).map(str::to_owned);
     let flag = |name: &str| command.get(name).and_then(Value::as_bool).unwrap_or(false);
+    let number = |name: &str| command.get(name).and_then(Value::as_f64).unwrap_or(0.0);
     let session = text("session").unwrap_or_default();
+    // A tile (by its session) or a group, as the layout names them.
+    let key = text("key")
+        .or_else(|| text("group"))
+        .unwrap_or_else(|| tile_key(&session));
+    let kind = if key.starts_with("tile:") {
+        DragKind::Tile
+    } else {
+        DragKind::Group
+    };
+    let target = command
+        .get("target")
+        .filter(|target| target.is_object())
+        .and_then(|target| {
+            Some(DropTarget {
+                key: target.get("key")?.as_str()?.to_owned(),
+                side: serde_json::from_value::<Side>(target.get("side")?.clone()).ok()?,
+            })
+        });
+    let rect = |rect: &Rect| json!([rect.x, rect.y, rect.width, rect.height]);
     match text("cmd").as_deref() {
+        // The open windows, in the state's order.
+        Some("windows") => {
+            let ids: Vec<String> = controller
+                .read(cx)
+                .state()
+                .windows
+                .iter()
+                .map(|window| window.id.clone())
+                .collect();
+            let windows: Vec<Value> = ids
+                .iter()
+                .map(|id| {
+                    let shell = window::shell(id, cx);
+                    json!({
+                        "id": id,
+                        "open": shell.is_some(),
+                        "away": shell.is_some_and(|shell| shell.read(cx).is_away()),
+                    })
+                })
+                .collect();
+            json!(windows)
+        }
+        Some("new_window") => match shell_of(controller, text("window"), cx) {
+            Some(shell) => json!({ "window": shell.update(cx, |shell, cx| shell.new_window(cx)) }),
+            None => json!({ "error": "no window" }),
+        },
+        // What dropping a tile or group from another window does: it moves over.
+        Some("transfer") => {
+            let (from, to) = (text("from").unwrap_or_default(), text("to").unwrap_or_default());
+            let moved = controller.update(cx, |controller, cx| {
+                controller.transfer_node(&to, &key, &from, target.as_ref(), cx)
+            });
+            json!({ "ok": moved })
+        }
+        // What letting a tile or group go at a point of the screen does: a window of its own,
+        // unless one of reframe's windows is there.
+        Some("tear_out") => {
+            let point = point(px(number("x") as f32), px(number("y") as f32));
+            if window::window_at_screen(point, None, cx).is_some() {
+                return json!({ "ok": false });
+            }
+            let torn = controller.update(cx, |controller, cx| {
+                let from = controller
+                    .state()
+                    .windows
+                    .iter()
+                    .find(|window| find_node(window.layout.as_ref(), &key).is_some())
+                    .map(|window| window.id.clone())?;
+                controller.tear_out(&from, &key, (number("x"), number("y")), None, cx)
+            });
+            json!({ "ok": torn.is_some(), "window": torn })
+        }
+        // Lets a tile or group of a window go at a point of a window ("to"), as the pointer
+        // would.
+        Some("drop") => match shell_of(controller, text("window"), cx) {
+            Some(shell) => {
+                let to = text("to").unwrap_or_else(|| shell.read(cx).window_id().to_owned());
+                let at = point(px(number("x") as f32), px(number("y") as f32));
+                let result = shell.update(cx, |shell, cx| {
+                    shell.drop_node(&key, kind, Some((to, at)), at, None, cx)
+                });
+                json!({ "result": result })
+            }
+            None => json!({ "error": "no window" }),
+        },
+        // Where a tile or group dragged over a point of a window would go.
+        Some("spot") => match shell_of(controller, text("window"), cx) {
+            Some(shell) => {
+                let at = point(px(number("x") as f32), px(number("y") as f32));
+                let (target, preview) = shell.read(cx).drop_spot_at(at, &key, kind, cx);
+                json!({
+                    "target": target.map(|target| json!({ "key": target.key, "side": target.side })),
+                    "preview": preview.as_ref().map(rect),
+                })
+            }
+            None => json!({ "error": "no window" }),
+        },
+        // What the tiles' and groups' menus do.
+        Some("group") => {
+            let group = text("group").unwrap_or_default();
+            let color = text("color").unwrap_or_default();
+            controller.update(cx, |controller, cx| match text("action").as_deref() {
+                Some("create") => controller.create_group(&session, cx),
+                Some("add") => controller.add_session_to_group(&session, &group, cx),
+                Some("remove") => controller.remove_session_from_group(&session, cx),
+                Some("dissolve") => controller.dissolve_group(&group, cx),
+                Some("recolor") => controller.recolor_group(&group, &color, cx),
+                Some("endAll") => controller.end_group(&group, cx),
+                _ => {}
+            });
+            json!({ "ok": true })
+        }
+        // Opens a tile's menu ("session"), a group's ("group") or its colours ("colors").
+        Some("menu") => in_window(controller, text("window"), cx, |shell, window, cx| {
+            shell.update(cx, |shell, cx| {
+                let entries = match text("group") {
+                    Some(group) => shell.group_menu(&group, flag("colors"), cx),
+                    None => shell.tile_menu(&session, cx),
+                };
+                let labels = menu_json(&entries);
+                shell.show_menu(entries, point(px(40.0), px(80.0)), window, cx);
+                json!({ "menu": labels })
+            })
+        }),
+        Some("menu_click") => in_window(controller, text("window"), cx, |shell, window, cx| {
+            let label = text("label").unwrap_or_default();
+            json!({ "ok": shell.update(cx, |shell, cx| shell.click_menu_item(&label, window, cx)) })
+        }),
+        // A double click on a group's name: the field to rename it in.
+        Some("rename_group") => in_window(controller, text("window"), cx, |shell, window, cx| {
+            let group = text("group").unwrap_or_default();
+            shell.update(cx, |shell, cx| shell.start_group_rename(group, window, cx));
+            json!({ "ok": true })
+        }),
+        // The window's X.
+        Some("close") => in_window(controller, text("window"), cx, |shell, window, cx| {
+            shell.update(cx, |shell, cx| shell.request_close(window, cx));
+            json!({ "ok": true })
+        }),
+        // The answer to the question the X asks: "end", "keep", or nothing for Cancel.
+        Some("close_answer") => in_window(controller, text("window"), cx, |shell, window, cx| {
+            let choice = match text("choice").as_deref() {
+                Some("end") => Some(CloseWindow::End),
+                Some("keep") => Some(CloseWindow::Keep),
+                _ => None,
+            };
+            shell.update(cx, |shell, cx| shell.answer_close(choice, flag("remember"), window, cx));
+            json!({ "ok": true })
+        }),
+        // The pointer in a window: "down", "move" (with the left button held) and "up" at a
+        // point, as the system would report them. "button": "right" for the other one.
+        Some("mouse") => in_window(controller, text("window"), cx, |_, window, cx| {
+            let position = point(px(number("x") as f32), px(number("y") as f32));
+            let button = if text("button").as_deref() == Some("right") {
+                MouseButton::Right
+            } else {
+                MouseButton::Left
+            };
+            let modifiers = Modifiers::default();
+            let click_count = command.get("clicks").and_then(Value::as_u64).unwrap_or(1) as usize;
+            let event = match text("type").as_deref() {
+                Some("down") => PlatformInput::MouseDown(MouseDownEvent {
+                    button,
+                    position,
+                    modifiers,
+                    click_count,
+                    first_mouse: false,
+                }),
+                Some("up") => PlatformInput::MouseUp(MouseUpEvent {
+                    button,
+                    position,
+                    modifiers,
+                    click_count,
+                }),
+                _ => PlatformInput::MouseMove(MouseMoveEvent {
+                    position,
+                    pressed_button: flag("held").then_some(button),
+                    modifiers,
+                }),
+            };
+            window.dispatch_event(event, cx);
+            json!({ "ok": true })
+        }),
+        // Files dragged from outside over a window: "enter" with their paths, "move", "drop",
+        // or "exit".
+        Some("file_drag") => in_window(controller, text("window"), cx, |_, window, cx| {
+            let position = point(px(number("x") as f32), px(number("y") as f32));
+            let paths: Vec<std::path::PathBuf> = command
+                .get("paths")
+                .and_then(Value::as_array)
+                .map(|paths| paths.iter().filter_map(Value::as_str).map(Into::into).collect())
+                .unwrap_or_default();
+            let event = match text("type").as_deref() {
+                Some("enter") => FileDropEvent::Entered {
+                    position,
+                    paths: ExternalPaths(paths.into_iter().collect()),
+                },
+                Some("drop") => FileDropEvent::Submit { position },
+                Some("exit") => FileDropEvent::Exited,
+                _ => FileDropEvent::Pending { position },
+            };
+            window.dispatch_event(PlatformInput::FileDrop(event), cx);
+            json!({ "ok": true })
+        }),
+        // Files dropped onto a session's tile.
+        Some("drop_files") => match shell_of(controller, text("window"), cx) {
+            Some(shell) => {
+                let paths: Vec<std::path::PathBuf> = command
+                    .get("paths")
+                    .and_then(Value::as_array)
+                    .map(|paths| paths.iter().filter_map(Value::as_str).map(Into::into).collect())
+                    .unwrap_or_default();
+                shell.update(cx, |shell, cx| shell.drop_files(&session, &paths, cx));
+                json!({ "ok": true })
+            }
+            None => json!({ "error": "no window" }),
+        },
         // The state as it would be saved now.
         Some("state") => serde_json::from_str(&controller.read(cx).state().to_json()).unwrap_or(Value::Null),
         // What the tiles show of each session with a process.
@@ -150,20 +369,23 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
             controller.update(cx, |controller, cx| controller.remove_session(&session, cx));
             json!({ "ok": true })
         }
-        // A change to the first window's layout, as its tiles and its strip ask for it.
+        // A change to a window's layout, as its tiles, groups and its strip ask for it.
         Some("layout") => {
+            let group_id = text("group").unwrap_or_default();
             let action = match text("action").as_deref() {
                 Some("collapse") => LayoutAction::TileCollapse { session_id: session },
                 Some("expand") => LayoutAction::TileExpand { session_id: session },
+                Some("groupCollapse") => LayoutAction::GroupCollapse { group_id },
+                Some("groupExpand") => LayoutAction::GroupExpand { group_id },
                 _ => return json!({ "error": "unknown layout action" }),
             };
             controller.update(cx, |controller, cx| {
-                let window = controller.state().windows[0].id.clone();
+                let window = text("window").unwrap_or_else(|| controller.state().windows[0].id.clone());
                 controller.dispatch(&window, &action, cx);
             });
             json!({ "ok": true })
         }
-        Some("zoom") => match first_shell(controller, cx) {
+        Some("zoom") => match shell_of(controller, text("window"), cx) {
             Some(shell) => {
                 shell.update(cx, |shell, cx| shell.toggle_zoom(&session, cx));
                 json!({ "ok": true })
@@ -171,22 +393,22 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
             None => json!({ "ok": false }),
         },
         // Where the first window drew its tiles and separators in its last frame.
-        Some("placement") => match first_shell(controller, cx) {
+        Some("placement") => match shell_of(controller, text("window"), cx) {
             Some(shell) => {
                 let shell = shell.read(cx);
-                let rect = |rect: &Rect| json!([rect.x, rect.y, rect.width, rect.height]);
                 let placement = shell.placement();
                 json!({
                     "area": rect(&shell.area()),
                     "zoomed": shell.zoomed(),
-                    "tiles": placement.tiles.iter().map(|tile| json!({ "session": tile.session_id, "rect": rect(&tile.rect) })).collect::<Vec<_>>(),
+                    "tiles": placement.tiles.iter().map(|tile| json!({ "session": tile.session_id, "rect": rect(&tile.rect), "group": tile.group })).collect::<Vec<_>>(),
+                    "groups": placement.groups.iter().map(|group| json!({ "id": group.id, "rect": rect(&group.rect) })).collect::<Vec<_>>(),
                     "separators": placement.separators.iter().map(|separator| json!({ "split": separator.split_id, "index": separator.index, "rect": rect(&separator.rect) })).collect::<Vec<_>>(),
                 })
             }
             None => Value::Null,
         },
         // Drags a separator by so many pixels ("free": with Alt held, off the grid).
-        Some("drag") => match first_shell(controller, cx) {
+        Some("drag") => match shell_of(controller, text("window"), cx) {
             Some(shell) => {
                 let split = text("split").unwrap_or_default();
                 let index = command.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
@@ -200,7 +422,7 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
             None => json!({ "ok": false }),
         },
         // A key pressed in the first window, written as GPUI does ("ctrl-shift-t", "enter").
-        Some("key") => in_first_window(controller, cx, |_, window, cx| {
+        Some("key") => in_window(controller, text("window"), cx, |_, window, cx| {
             // Kept for good: a handful of short strings in a test run.
             let keys: &'static str = Box::leak(text("keys").unwrap_or_default().into_boxed_str());
             match Keystroke::parse(keys) {
@@ -209,7 +431,7 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
             }
         }),
         // Text typed into whatever has the keyboard in the first window.
-        Some("type") => in_first_window(controller, cx, |_, window, cx| {
+        Some("type") => in_window(controller, text("window"), cx, |_, window, cx| {
             for character in text("text").unwrap_or_default().chars() {
                 let keystroke = Keystroke {
                     modifiers: Modifiers::default(),
@@ -220,7 +442,7 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
             }
             json!({ "ok": true })
         }),
-        Some("open") => in_first_window(controller, cx, |shell, window, cx| {
+        Some("open") => in_window(controller, text("window"), cx, |shell, window, cx| {
             shell.update(cx, |shell, cx| match text("dialog").as_deref() {
                 Some("settings") => shell.open_settings(window, cx),
                 Some("about") => shell.open_about(window, cx),
@@ -229,18 +451,24 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
             json!({ "ok": true })
         }),
         // A double click on a tile's name: the field to rename it in.
-        Some("rename") => in_first_window(controller, cx, |shell, window, cx| {
+        Some("rename") => in_window(controller, text("window"), cx, |shell, window, cx| {
             shell.update(cx, |shell, cx| shell.start_rename(session.clone(), window, cx));
             json!({ "ok": true })
         }),
         // The first window made this big, as dragging its edge would.
-        Some("resize") => in_first_window(controller, cx, |_, window, _| {
+        Some("resize") => in_window(controller, text("window"), cx, |_, window, _| {
             let side = |name: &str| px(command.get(name).and_then(Value::as_f64).unwrap_or(800.0) as f32);
             window.resize(size(side("width"), side("height")));
             json!({ "ok": true })
         }),
         // What the first window shows beyond its layout.
-        Some("window") => in_first_window(controller, cx, |shell, window, cx| {
+        Some("window") => in_window(controller, text("window"), cx, |shell, window, cx| {
+            let renaming = match shell.read(cx).renaming() {
+                Some(RenameTarget::Session(id)) => (Some(id.clone()), None),
+                Some(RenameTarget::Group(id)) => (None, Some(id.clone())),
+                None => (None, None),
+            };
+            let screen = window.bounds();
             json!({
                 "dialog": window.has_active_dialog(cx),
                 "focused": shell.read(cx).active_tile(window, cx),
@@ -251,7 +479,15 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
                 // The window or one of its tiles has the keyboard, so keys reach reframe's shortcuts.
                 "keyboard": shell.read(cx).has_keyboard(window, cx),
                 "size": [f32::from(window.bounds().size.width), f32::from(window.bounds().size.height)],
-                "renaming": shell.read(cx).renaming(),
+                "renaming": renaming.0,
+                "renamingGroup": renaming.1,
+                "menu": shell.read(cx).menu().map(menu_json),
+                "asking": shell.read(cx).asking_to_close(),
+                "away": shell.read(cx).is_away(),
+                "preview": shell.read(cx).drop_preview().as_ref().map(rect),
+                "dragging": shell.read(cx).dragging(),
+                "filesOver": shell.read(cx).files_over(),
+                "screen": [f32::from(screen.origin.x), f32::from(screen.origin.y), f32::from(screen.size.width), f32::from(screen.size.height)],
                 "find": shell.read(cx).find_state(cx).map(|(session, text, result)| json!({
                     "session": session,
                     "text": text,
@@ -268,12 +504,29 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
     }
 }
 
-fn in_first_window(
+/// A menu as tests read it: every entry's label, whether it can be picked, and its submenu.
+fn menu_json(entries: &[MenuEntry]) -> Value {
+    entries
+        .iter()
+        .map(|entry| {
+            json!({
+                "label": entry.label,
+                "enabled": entry.enabled,
+                "checked": entry.checked,
+                "children": menu_json(&entry.children),
+            })
+        })
+        .collect()
+}
+
+/// Runs something in a window: the one with that id, or the first one.
+fn in_window(
     controller: &Entity<Controller>,
+    window_id: Option<String>,
     cx: &mut App,
     run: impl FnOnce(&Entity<Shell>, &mut Window, &mut App) -> Value,
 ) -> Value {
-    let Some(shell) = first_shell(controller, cx) else {
+    let Some(shell) = shell_of(controller, window_id, cx) else {
         return json!({ "error": "no window" });
     };
     let handle = shell.read(cx).handle();
@@ -282,7 +535,11 @@ fn in_first_window(
         .unwrap_or_else(|error| json!({ "error": error.to_string() }))
 }
 
-fn first_shell(controller: &Entity<Controller>, cx: &App) -> Option<Entity<Shell>> {
-    let id = controller.read(cx).state().windows.first()?.id.clone();
+/// The window with that id, or the first one.
+fn shell_of(controller: &Entity<Controller>, window_id: Option<String>, cx: &App) -> Option<Entity<Shell>> {
+    let id = match window_id {
+        Some(id) => id,
+        None => controller.read(cx).state().windows.first()?.id.clone(),
+    };
     window::shell(&id, cx)
 }
