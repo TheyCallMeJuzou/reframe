@@ -461,17 +461,21 @@ fn closing_a_window_with_sessions_asks_and_empty_windows_just_go() {
         (starts_and_exits(&setup).1 == 1).then_some(())
     });
 
-    // From now on without a question: closing the first window ends alpha. The window stays
-    // in the state, empty; with no window left on screen, reframe quits.
+    // From now on without a question: closing the first window ends alpha. The window
+    // stays, empty and in the tray, and reframe runs on.
     app.cmd(json!({ "cmd": "close", "window": main }));
-    let child = &mut app.child;
-    let status = wait_for("reframe to quit", || child.try_wait().unwrap());
-    assert!(status.success());
-    let saved = setup.saved_state();
-    assert_eq!(saved["windows"].as_array().unwrap().len(), 1);
-    assert_eq!(saved["windows"][0]["layout"], Value::Null);
-    assert_eq!(saved["sessions"][&alpha]["lifecycle"], "ended");
-    assert_eq!(starts_and_exits(&setup), (2, 2));
+    assert_eq!(app.record(&alpha)["lifecycle"], "ended");
+    wait_for("the first window to be in the tray", || {
+        let state = app.state();
+        (state["windows"][0]["hidden"] == true).then_some(())
+    });
+    let state = app.state();
+    assert_eq!(state["windows"].as_array().unwrap().len(), 1);
+    assert_eq!(state["windows"][0]["layout"], Value::Null);
+    wait_for("alpha's claude to exit", || {
+        (starts_and_exits(&setup) == (2, 2)).then_some(())
+    });
+    app.quit();
 }
 
 #[test]

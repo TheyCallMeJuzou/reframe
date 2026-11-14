@@ -5218,11 +5218,13 @@ dependencies = [
  "futures",
  "gpui-kit",
  "image",
+ "raw-window-handle",
  "reframe-core",
  "serde",
  "serde_json",
  "tempfile",
  "uuid",
+ "windows 0.62.2",
  "windows-sys 0.59.0",
 ]
 

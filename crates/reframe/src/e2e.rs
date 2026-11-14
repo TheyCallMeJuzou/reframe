@@ -23,6 +23,8 @@ use reframe_core::state::{CloseWindow, Side};
 
 use crate::app::{Controller, NewSessionRequest};
 use crate::sessions::status_name;
+use crate::tray;
+use crate::win::{self, TrayEntry, TrayEvent};
 use crate::window::{self, DragKind, MenuEntry, RenameTarget, Shell};
 
 type Command = (Value, Sender<Value>);
@@ -121,12 +123,48 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
                     json!({
                         "id": id,
                         "open": shell.is_some(),
-                        "away": shell.is_some_and(|shell| shell.read(cx).is_away()),
+                        "away": shell.as_ref().is_some_and(|shell| shell.read(cx).is_away()),
+                        // Whether Windows shows it.
+                        "visible": shell.is_some_and(|shell| shell.read(cx).is_on_screen()),
                     })
                 })
                 .collect();
             json!(windows)
         }
+        // The tray icon's tooltip and menu; a separator is null.
+        Some("tray") => {
+            let (tooltip, menu) = win::tray();
+            let menu: Vec<Value> = menu
+                .iter()
+                .map(|entry| match entry {
+                    TrayEntry::Separator => Value::Null,
+                    TrayEntry::Item { label, checked, .. } => json!({ "label": label, "checked": checked }),
+                })
+                .collect();
+            json!({ "tooltip": tooltip, "menu": menu })
+        }
+        // A click on the tray icon ("icon") or on the entry of its menu with that label.
+        Some("tray_click") => {
+            let event = if flag("icon") {
+                Some(TrayEvent::Clicked)
+            } else {
+                let label = text("label").unwrap_or_default();
+                win::tray().1.iter().find_map(|entry| match entry {
+                    TrayEntry::Item { id, label: found, .. } if *found == label => Some(TrayEvent::Command(*id)),
+                    _ => None,
+                })
+            };
+            match event {
+                Some(event) => {
+                    tray::handle(controller, event, cx);
+                    json!({ "ok": true })
+                }
+                None => json!({ "ok": false }),
+            }
+        }
+        // The window that takes what Windows tells reframe (a second start, the system going
+        // down).
+        Some("control") => json!({ "hwnd": tray::control_window(cx) }),
         Some("new_window") => match shell_of(controller, text("window"), cx) {
             Some(shell) => json!({ "window": shell.update(cx, |shell, cx| shell.new_window(cx)) }),
             None => json!({ "error": "no window" }),

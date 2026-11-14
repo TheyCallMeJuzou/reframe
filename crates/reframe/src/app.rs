@@ -18,6 +18,7 @@ use reframe_core::actions::{
     LayoutAction, add_tile, apply_layout_action, drop_session, is_window_empty, patch_group, put_node, take_node,
     window_groups, window_has_session, window_sessions, windows_to_restore,
 };
+use reframe_core::attention::next_waiting;
 use reframe_core::claude::args::LaunchMode;
 use reframe_core::claude::registry::claude_home;
 use reframe_core::claude::resolve::{self, ClaudeBinary, NodeRunner, Platform, ResolveOptions, resolve_claude};
@@ -30,10 +31,11 @@ use reframe_core::layout::{
 };
 use reframe_core::log::Logger;
 use reframe_core::paths::home_relative;
-use reframe_core::session_logic::{IdentityPatch, SessionError, SessionStatus};
+use reframe_core::session_logic::{IdentityPatch, NotifyKind, SessionError, SessionStatus};
 use reframe_core::shortcuts::{TextSizeChange, font_size_after};
 use reframe_core::state::{
-    AppState, CloseWindow, GroupNode, LaunchOptions, Lifecycle, PermissionMode, Preferences, SessionRecord, WindowState,
+    AppState, CloseWindow, DockEntry, GroupNode, LaunchOptions, Lifecycle, PermissionMode, Preferences, SessionRecord,
+    WindowState,
 };
 use reframe_core::store::{LoadSource, SAVE_DELAY, StateStore};
 use reframe_core::wsl::parse_wsl_path;
@@ -46,6 +48,14 @@ use crate::terminal_view::TerminalFontSize;
 const MAX_RECENT_FOLDERS: usize = 8;
 /// How long a session gets to end on Ctrl+C before its process tree is killed.
 const STOP_MS: Duration = Duration::from_millis(5000);
+/// How long after the system said it is going down sessions that end still count as ended by
+/// it.
+const SYSTEM_ENDING_MS: Duration = Duration::from_millis(60_000);
+/// What Windows knows reframe by among the programs it starts when the user logs in. The native
+/// app has a name of its own until it takes over from the Electron one.
+const AUTOSTART_NAME: &str = "reframe-native";
+/// Marks a start by the system: reframe then stays in the tray.
+pub const AUTOSTART_ARG: &str = "--autostart";
 /// How long quitting waits for the sessions to end (each gets Ctrl+C, then its process tree is
 /// killed).
 const SHUTDOWN_MS: Duration = Duration::from_millis(15_000);
@@ -125,6 +135,10 @@ pub enum AppEvent {
     WindowPutAway(String),
     /// A window comes to the front, and one of its sessions gets the keyboard.
     FocusTile { window: String, session: String },
+    /// A window was hidden or shown.
+    Visibility,
+    /// A session is done, or needs the user.
+    Notify(String, NotifyKind),
     /// A preference changed that windows show (the language, the text size, …).
     Preferences,
 }
@@ -147,6 +161,12 @@ pub struct Controller {
     /// The claude chosen in Settings, where the session manager's resolver reads it.
     claude_bin: Rc<RefCell<Option<String>>>,
     shutting_down: bool,
+    /// Set for a while after the system said it goes down: sessions that end meanwhile were
+    /// ended by it, not by the user.
+    system_ending: Option<Task<()>>,
+    ended_while_system_ending: HashSet<String>,
+    /// Whether Windows starts reframe when the user logs in.
+    starts_with_system: bool,
     /// The write that follows frequent changes after a moment.
     save_soon: Option<Task<()>>,
     _session_events: Subscription,
@@ -278,13 +298,18 @@ impl Controller {
         let session_events = cx.subscribe(&sessions, |this, _, event, cx| match event {
             SessionEvent::Changed(id) => cx.emit(AppEvent::Session(id.clone())),
             SessionEvent::Identity(id, patch) => this.update_identity(id, patch, cx),
-            // Notifications follow with the tray (milestone 5).
-            SessionEvent::Notify(..) => {}
+            SessionEvent::Notify(id, kind) => cx.emit(AppEvent::Notify(id.clone(), *kind)),
             SessionEvent::Used(id) => this.session_used(id, cx),
             SessionEvent::Ended(id) => this.session_ended(id, cx),
         });
 
+        // The end-to-end tests leave the system alone.
+        let starts_with_system =
+            !config.e2e && crate::win::registry_text(crate::win::RUN_KEY, AUTOSTART_NAME).is_some();
         Ok(Self {
+            starts_with_system,
+            system_ending: None,
+            ended_while_system_ending: HashSet::new(),
             config,
             store,
             state,
@@ -308,6 +333,150 @@ impl Controller {
 
     pub fn config(&self) -> &Config {
         &self.config
+    }
+
+    pub fn log(&self) -> &Logger {
+        &self.log
+    }
+
+    /// How many of a window's sessions need the user.
+    pub fn waiting_in(&self, window: &WindowState, cx: &App) -> usize {
+        let sessions = self.sessions.read(cx);
+        window_sessions(window)
+            .iter()
+            .filter(|id| sessions.status(id) == Some(SessionStatus::Waiting))
+            .count()
+    }
+
+    /// How many sessions need the user, in all windows.
+    pub fn waiting_total(&self, cx: &App) -> usize {
+        self.state
+            .windows
+            .iter()
+            .map(|window| self.waiting_in(window, cx))
+            .sum()
+    }
+
+    /// Whether Windows starts reframe when the user logs in.
+    pub fn starts_with_system(&self) -> bool {
+        self.starts_with_system
+    }
+
+    /// Has Windows start reframe when the user logs in (in the tray, see [`AUTOSTART_ARG`]), or
+    /// no longer.
+    pub fn set_start_with_system(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        let command = std::env::current_exe()
+            .map(|exe| format!("\"{}\" {AUTOSTART_ARG}", exe.display()))
+            .map_err(|error| error.to_string());
+        let changed = if self.config.e2e {
+            Ok(())
+        } else {
+            command.and_then(|command| {
+                let command = enabled.then_some(command.as_str());
+                crate::win::set_registry_text(crate::win::RUN_KEY, AUTOSTART_NAME, command)
+            })
+        };
+        match changed {
+            Ok(()) => {
+                self.starts_with_system = enabled;
+                let message = if enabled {
+                    "starts with the system now"
+                } else {
+                    "no longer starts with the system"
+                };
+                self.log.info(message, None);
+            }
+            Err(error) => self.log.warn(
+                "could not change starting with the system",
+                Some(json!({ "error": error })),
+            ),
+        }
+        cx.emit(AppEvent::Preferences);
+    }
+
+    /// A window was hidden (closed into the tray) or shown again: remembered, so that it stays
+    /// that way over a restart.
+    pub fn set_window_hidden(&mut self, window_id: &str, hidden: bool, cx: &mut Context<Self>) {
+        let Some(window) = self.state.windows.iter_mut().find(|window| window.id == window_id) else {
+            return;
+        };
+        if window.hidden != hidden {
+            window.hidden = hidden;
+            self.save_later(cx);
+        }
+        cx.emit(AppEvent::Visibility);
+        // A secondary window hidden while it is empty is gone for good, as when its last tile
+        // leaves it.
+        if hidden {
+            self.close_if_empty(window_id, cx);
+        }
+    }
+
+    /// Brings a session up: its window shown and in front, its tile back from the strip, and
+    /// the keyboard in it.
+    pub fn focus_session(&mut self, session_id: &str, cx: &mut Context<Self>) {
+        let Some(window) = self.window_of(session_id) else {
+            return;
+        };
+        let window_id = window.id.clone();
+        let collapsed = window.dock.iter().find_map(|entry| match entry {
+            DockEntry::Tile { session_id: id, .. } if id == session_id => {
+                Some(LayoutAction::TileExpand { session_id: id.clone() })
+            }
+            DockEntry::Group { node, .. } if leaves(Some(&node.child)).iter().any(|id| id == session_id) => {
+                Some(LayoutAction::GroupExpand {
+                    group_id: node.id.clone(),
+                })
+            }
+            _ => None,
+        });
+        if let Some(action) = collapsed {
+            self.dispatch(&window_id, &action, cx);
+        }
+        cx.emit(AppEvent::FocusTile {
+            window: window_id,
+            session: session_id.to_owned(),
+        });
+    }
+
+    /// Brings up the next session that needs the user: in this window first (after `after`),
+    /// then in the others.
+    pub fn focus_next_waiting(&mut self, window_id: &str, after: Option<&str>, cx: &mut Context<Self>) {
+        let here = self.state.windows.iter().filter(|window| window.id == window_id);
+        let others = self.state.windows.iter().filter(|window| window.id != window_id);
+        let order: Vec<String> = here.chain(others).flat_map(window_sessions).collect();
+        let sessions = self.sessions.read(cx);
+        let waiting: HashSet<String> = order
+            .iter()
+            .filter(|id| sessions.status(id) == Some(SessionStatus::Waiting))
+            .cloned()
+            .collect();
+        if let Some(next) = next_waiting(&order, &waiting, after).map(str::to_owned) {
+            self.focus_session(&next, cx);
+        }
+    }
+
+    /// The system is shutting down, restarting or logging the user off. Sessions it ends now
+    /// were not ended by the user: they stay open and resume on the next start. Should the
+    /// system not go down after all (another program objected), the ones that ended meanwhile
+    /// count as ended a minute later.
+    pub fn system_ending(&mut self, cx: &mut Context<Self>) {
+        if self.system_ending.is_none() {
+            self.log
+                .info("the system is going down, sessions it ends stay open", None);
+        }
+        self.system_ending = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(SYSTEM_ENDING_MS).await;
+            let _ = this.update(cx, |this, cx| {
+                this.system_ending = None;
+                for id in std::mem::take(&mut this.ended_while_system_ending) {
+                    if !this.sessions.read(cx).is_running(&id) {
+                        this.update_session(&id, true, cx, |record| record.lifecycle = Lifecycle::Ended);
+                    }
+                }
+            });
+        }));
+        self.save(cx);
     }
 
     /// The language reframe speaks: the one chosen in Settings, else the system's.
@@ -531,7 +700,8 @@ impl Controller {
     /// when an answer was kept. `None`: the user is asked.
     pub fn close_choice(&self, window_id: &str) -> Option<CloseWindow> {
         let window = self.find_window(window_id)?;
-        if window_sessions(window).is_empty() {
+        // While the system goes down nothing is asked.
+        if window_sessions(window).is_empty() || self.system_ending.is_some() {
             return Some(CloseWindow::Keep);
         }
         match self.state.preferences.close_window {
@@ -863,6 +1033,16 @@ impl Controller {
 
     /// A session ended by itself (not by reframe): it stays in its tile as ended.
     fn session_ended(&mut self, session_id: &str, cx: &mut Context<Self>) {
+        // Unless the system ended it on its way down.
+        if self.system_ending.is_some() {
+            self.ended_while_system_ending.insert(session_id.to_owned());
+            self.log.info(
+                "session ended while the system goes down, stays open",
+                Some(json!({ "session": session_id })),
+            );
+            cx.emit(AppEvent::Session(session_id.to_owned()));
+            return;
+        }
         self.update_session(session_id, true, cx, |record| record.lifecycle = Lifecycle::Ended);
     }
 
@@ -1030,6 +1210,7 @@ impl Controller {
                 this.save(cx);
                 this.log.info("reframe stopped", None);
             });
+            crate::win::remove_tray_icon();
             cx.update(|cx| cx.quit());
         })
         .detach();

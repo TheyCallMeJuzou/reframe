@@ -73,9 +73,14 @@ impl Setup {
     }
 
     pub fn launch(&self) -> App {
+        self.launch_with(&[])
+    }
+
+    /// Starts the app with arguments (`--autostart`).
+    pub fn launch_with(&self, args: &[&str]) -> App {
         let port_file = self.path("user-data").join("e2e-port");
         let _ = std::fs::remove_file(&port_file);
-        let child = self.command().spawn().expect("the app did not start");
+        let child = self.command().args(args).spawn().expect("the app did not start");
         let port: u16 = wait_for("the app to be ready", || {
             std::fs::read_to_string(&port_file).ok()?.parse().ok()
         });
@@ -94,6 +99,11 @@ impl Setup {
         text.lines()
             .filter_map(|line| serde_json::from_str(line).ok())
             .collect()
+    }
+
+    /// What reframe wrote to its log.
+    pub fn log(&self) -> String {
+        std::fs::read_to_string(self.path("user-data").join("logs").join("main.log")).unwrap_or_default()
     }
 
     pub fn saved_state(&self) -> Value {

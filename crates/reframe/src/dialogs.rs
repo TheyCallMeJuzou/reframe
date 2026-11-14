@@ -726,6 +726,19 @@ impl Render for SettingsForm {
                     })),
             )
             .child(hint(text("settings.snapHint")))
+            .child(
+                Checkbox::new("autostart")
+                    .label(text("settings.autostart"))
+                    .checked(self.controller.read(cx).starts_with_system())
+                    .on_click(cx.listener(|this, on: &bool, _, cx| {
+                        let on = *on;
+                        this.controller.update(cx, |controller, cx| {
+                            controller.set_start_with_system(on, cx);
+                        });
+                        cx.notify();
+                    })),
+            )
+            .child(hint(text("settings.autostartHint")))
             .child(setting(
                 text("settings.closeWindow"),
                 div().w(px(220.0)).child(Select::new(&self.close_window)),

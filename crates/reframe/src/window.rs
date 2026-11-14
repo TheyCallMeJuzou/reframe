@@ -34,6 +34,7 @@ use crate::find::Step;
 use crate::keys;
 use crate::terminal_view::TerminalView;
 use crate::theme::{self, icon};
+use crate::win;
 
 /// A separator being dragged.
 struct SeparatorDrag {
@@ -235,6 +236,10 @@ pub struct Shell {
     asking_to_close: bool,
     /// Closed by the user and out of sight, its sessions running on.
     away: bool,
+    /// The window is the one the user works in.
+    active: bool,
+    /// What Windows knows the window by.
+    hwnd: Option<isize>,
     /// When the window was last the active one (a running count): of reframe's windows, the
     /// one that was active last is in front.
     focused_at: usize,
@@ -308,7 +313,13 @@ fn along(dir: SplitDir, position: Point<Pixels>) -> f64 {
 }
 
 impl Shell {
-    fn new(controller: Entity<Controller>, window_id: String, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(
+        controller: Entity<Controller>,
+        window_id: String,
+        shown: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let handle = window.window_handle();
         cx.observe_window_bounds(window, |this, window, cx| this.bounds_changed(window, cx))
             .detach();
@@ -334,13 +345,13 @@ impl Shell {
             AppEvent::WindowPutAway(id) if *id == this.window_id => this.put_away(cx),
             AppEvent::FocusTile { window, session } if *window == this.window_id => {
                 this.focus_tile(session.clone(), cx);
-                this.come_forward(cx);
+                this.show(true, cx);
             }
             _ => {}
         });
         cx.observe_window_activation(window, |this, window, cx| {
-            if window.is_window_active() {
-                this.away = false;
+            this.active = window.is_window_active();
+            if this.active {
                 this.focused_at = FOCUS_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
                 cx.notify();
             }
@@ -363,7 +374,9 @@ impl Shell {
             drop_preview: None,
             files_over: None,
             asking_to_close: false,
-            away: false,
+            away: !shown,
+            active: window.is_window_active(),
+            hwnd: win::hwnd_of(window),
             focused_at: FOCUS_COUNT.fetch_add(1, Ordering::Relaxed) + 1,
             screen: window.bounds(),
             drawn: 0,
@@ -615,24 +628,62 @@ impl Shell {
         self.asking_to_close
     }
 
-    /// The window goes out of sight and its sessions run on. Until reframe has its tray icon to
-    /// wait in, that is the taskbar: the window is minimized. When no other window is left on
-    /// screen, reframe quits instead, as closing its last window always did; the sessions come
-    /// back with the next start.
-    fn put_away(&mut self, cx: &mut Context<Self>) {
-        let me = cx.entity_id();
-        let others = shells(cx)
-            .iter()
-            .any(|other| other.entity_id() != me && !other.read(cx).away);
-        if !others {
-            self.controller.update(cx, |controller, cx| controller.shutdown(cx));
-            return;
-        }
+    /// The window goes out of sight, into the tray, and its sessions run on.
+    pub fn put_away(&mut self, cx: &mut Context<Self>) {
         self.away = true;
-        let handle = self.handle;
-        cx.defer(move |cx| {
-            let _ = handle.update(cx, |_, window, _| window.minimize_window());
+        let window_id = self.window_id.clone();
+        self.controller.update(cx, |controller, cx| {
+            controller.set_window_hidden(&window_id, true, cx);
         });
+        if let Some(hwnd) = self.hwnd {
+            // Posted: Windows tells the window at once that it is hidden.
+            cx.foreground_executor().spawn(async move { win::hide(hwnd) }).detach();
+        }
+        cx.notify();
+    }
+
+    /// The window is on screen again. `activate`: and in front, with the keyboard (not when a
+    /// test drives the app: that would take the keyboard from whoever is working).
+    pub fn show(&mut self, activate: bool, cx: &mut Context<Self>) {
+        self.away = false;
+        let window_id = self.window_id.clone();
+        self.controller.update(cx, |controller, cx| {
+            controller.set_window_hidden(&window_id, false, cx);
+        });
+        let activate = activate && !self.controller.read(cx).config().e2e;
+        let (hwnd, handle) = (self.hwnd, self.handle);
+        cx.spawn(async move |_, cx| {
+            if let Some(hwnd) = hwnd {
+                win::show(hwnd, activate);
+            }
+            if activate {
+                let _ = cx.update(|cx| handle.update(cx, |_, window, _| window.activate_window()));
+            }
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Whether the user is looking at this window right now.
+    pub fn is_attentive(&self) -> bool {
+        !self.away && self.active
+    }
+
+    /// What Windows knows the window by.
+    pub fn hwnd(&self) -> Option<isize> {
+        self.hwnd
+    }
+
+    /// Whether Windows shows the window (minimized counts).
+    pub fn is_on_screen(&self) -> bool {
+        self.hwnd.is_some_and(win::is_visible)
+    }
+
+    /// The window's taskbar button flashes until the window is looked at.
+    pub fn flash(&self, cx: &App) {
+        if let Some(hwnd) = self.hwnd {
+            cx.foreground_executor().spawn(async move { win::flash(hwnd) }).detach();
+        }
     }
 
     /// The window is gone for good (it was a secondary one and nothing is left in it).
@@ -641,19 +692,6 @@ impl Shell {
         cx.defer(move |cx| {
             cx.default_global::<Shells>().0.remove(&window_id);
             let _ = handle.update(cx, |_, window, _| window.remove_window());
-        });
-    }
-
-    /// Comes to the front (not when a test drives the app: that would take the keyboard from
-    /// whoever is working).
-    fn come_forward(&mut self, cx: &mut Context<Self>) {
-        self.away = false;
-        if self.controller.read(cx).config().e2e {
-            return;
-        }
-        let handle = self.handle;
-        cx.defer(move |cx| {
-            let _ = handle.update(cx, |_, window, _| window.activate_window());
         });
     }
 
@@ -1269,8 +1307,14 @@ impl Shell {
             Shortcut::NewWindow => {
                 self.new_window(cx);
             }
-            // The session list and "the next session that needs you" follow with their milestones.
-            Shortcut::NextWaiting | Shortcut::ToggleSidebar => {}
+            Shortcut::NextWaiting => {
+                let window_id = self.window_id.clone();
+                self.controller.update(cx, |controller, cx| {
+                    controller.focus_next_waiting(&window_id, active.as_deref(), cx);
+                });
+            }
+            // The session list follows with its milestone.
+            Shortcut::ToggleSidebar => {}
         }
     }
 
@@ -2698,7 +2742,7 @@ pub fn open(controller: &Entity<Controller>, window_id: &str, shown: bool, cx: &
     let (controller, window_id) = (controller.clone(), window_id.to_owned());
     let opened = gpui_kit::open_window(options, cx, |window, cx| {
         window.set_window_title("reframe");
-        let shell = cx.new(|cx| Shell::new(controller, window_id.clone(), window, cx));
+        let shell = cx.new(|cx| Shell::new(controller, window_id.clone(), shown, window, cx));
         // Closing asks reframe, which ends the sessions or puts the window away.
         window.on_window_should_close(cx, {
             let shell = shell.downgrade();

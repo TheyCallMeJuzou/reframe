@@ -40,13 +40,16 @@ links, the window's place and size; tiles and groups dragged by their bar (withi
 another one, or out into a window of their own), groups with their menus and colours, files
 dropped onto a tile, more than one window (Ctrl+Shift+N), and what closing a window does.
 
-Until the tray icon is there, a window that is closed with its sessions kept is minimized, and
-closing the last window on screen quits reframe (its sessions come back with the next start).
+Around the window: the tray icon with its menu (windows shown and hidden, new session, new
+window, about, quit), windows that stay in the tray when they are closed, one reframe per profile
+(a second start shows the windows of the first), "Start with the system" in Settings,
+notifications with a click that brings the session up, the taskbar button that flashes and
+carries a badge, Ctrl+Shift+Space for the next session that needs you, and sessions that stay
+open when Windows goes down.
 
-Still to come, in this order: tray, notifications, autostart and "the next session that needs
-you" (Ctrl+Shift+Space); the session list (Ctrl+Shift+L) and workspaces; sessions in WSL and
-taking over a session from another terminal; installer and updater. A file that exists only in
-memory (a picture dragged out of a browser) is not taken by a tile yet.
+Still to come, in this order: the session list (Ctrl+Shift+L) and workspaces; sessions in WSL
+and taking over a session from another terminal; installer and updater. A file that exists only
+in memory (a picture dragged out of a browser) is not taken by a tile yet.
 
 Ctrl+Shift+D writes the focused terminal's screen to a text file in the temp folder.
 

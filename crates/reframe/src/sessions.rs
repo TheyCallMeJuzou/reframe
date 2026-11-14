@@ -42,7 +42,6 @@ pub enum SessionEvent {
     /// Persisted identity changed: claude session id (after /clear), folder (worktrees), pid, or
     /// first use.
     Identity(String, IdentityPatch),
-    #[allow(dead_code)] // read once there are notifications
     Notify(String, NotifyKind),
     /// The session was just used: a prompt sent, or Claude done or asking something.
     Used(String),

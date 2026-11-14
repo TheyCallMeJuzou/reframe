@@ -15,6 +15,8 @@ mod sessions;
 mod terminal;
 mod terminal_view;
 mod theme;
+mod tray;
+mod win;
 mod window;
 
 use gpui_kit::*;
@@ -25,14 +27,20 @@ struct Args {
     /// Folders to start a new session in, once the app is up. A stand-in for the New session
     /// dialog until the window has one.
     new: Vec<String>,
+    /// Started by the system when the user logged in: reframe stays in the tray.
+    autostart: bool,
 }
 
 fn parse_args() -> Args {
-    let mut args = Args { new: Vec::new() };
+    let mut args = Args {
+        new: Vec::new(),
+        autostart: false,
+    };
     let mut input = std::env::args().skip(1);
     while let Some(arg) = input.next() {
         match arg.as_str() {
             "--new" => args.new.extend(input.next()),
+            app::AUTOSTART_ARG => args.autostart = true,
             other => {
                 eprintln!("unknown argument: {other}");
                 std::process::exit(2);
@@ -47,6 +55,28 @@ fn main() {
     let args = parse_args();
     let config = Config::from_environment();
 
+    // One reframe per profile: the running one shows its windows and this one leaves.
+    let profile = win::profile_key(&config.user_data);
+    if !win::claim_profile(&profile) {
+        let build = if cfg!(debug_assertions) {
+            "development"
+        } else {
+            "installed"
+        };
+        reframe_core::log::Logger::new(config.user_data.join("logs")).info(
+            "reframe already runs, showing its windows",
+            Some(serde_json::json!({ "build": build })),
+        );
+        // It may still be starting.
+        for _ in 0..50 {
+            if win::reveal_running(&profile, if cfg!(debug_assertions) { 1 } else { 2 }) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        return;
+    }
+
     gpui_kit::application().run(move |cx| {
         gpui_kit::init(cx);
         dialogs::apply_theme(cx);
@@ -54,17 +84,6 @@ fn main() {
         cx.set_quit_mode(QuitMode::Explicit);
         let e2e = config.e2e;
         let controller = cx.new(|cx| Controller::new(config, cx).unwrap_or_else(|error| report(&error)));
-
-        // Closing the last window quits (until there is a tray to stay in).
-        cx.on_window_closed({
-            let controller = controller.clone();
-            move |cx, _| {
-                if cx.windows().is_empty() {
-                    controller.update(cx, |controller, cx| controller.shutdown(cx));
-                }
-            }
-        })
-        .detach();
 
         let orphans = controller.update(cx, |controller, cx| controller.cleanup_orphans(cx));
         cx.spawn(async move |cx| {
@@ -74,7 +93,9 @@ fn main() {
                     let state = controller.read(cx).state();
                     // The windows that were open (not closed into the tray); the first one if all were.
                     let any_open = state.windows.iter().any(|window| !window.hidden);
-                    let shown = |index: usize, hidden: bool| if any_open { !hidden } else { index == 0 };
+                    // Started by the system, all of them stay in the tray.
+                    let autostart = args.autostart;
+                    let shown = |index: usize, hidden: bool| !autostart && if any_open { !hidden } else { index == 0 };
                     state
                         .windows
                         .iter()
@@ -86,6 +107,7 @@ fn main() {
                     window::open(&controller, id, *shown, cx);
                 }
                 window::init(&controller, cx);
+                tray::start(&controller, cx);
                 controller.update(cx, |controller, cx| {
                     controller.resume_sessions(cx);
                     let first = windows.first().map(|(id, _)| id.clone()).unwrap_or_default();
