@@ -30,6 +30,9 @@ use crate::window::{self, DragKind, MenuEntry, RenameTarget, Shell};
 
 type Command = (Value, Sender<Value>);
 
+/// The answer to the last "new" that was checked first.
+static LAST_NEW: std::sync::Mutex<Option<Value>> = std::sync::Mutex::new(None);
+
 /// Starts listening and answering. Call when the app is ready for commands.
 pub fn start(controller: Entity<Controller>, cx: &mut App) {
     let listener = match TcpListener::bind((Ipv4Addr::LOCALHOST, 0)) {
@@ -339,7 +342,9 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
             let sessions = controller.read(cx).sessions().read(cx);
             let mut list = serde_json::Map::new();
             for id in sessions.active() {
+                let cwd_label = controller.read(cx).session_view(&id, cx).map(|view| view.cwd_label);
                 let view = json!({
+                    "cwdLabel": cwd_label,
                     "status": sessions.status(&id).map(status_name),
                     "error": sessions.error(&id).map(|error| error.key()),
                     "pid": sessions.pid(&id),
@@ -361,12 +366,34 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
             controller.update(cx, |controller, cx| {
                 let window =
                     text("window").or_else(|| controller.state().windows.first().map(|window| window.id.clone()));
+                // Checked first, as the New session dialog does it: the answer comes with
+                // "new_result".
+                if flag("check") {
+                    let created = controller.create_session_checked(&window.unwrap_or_default(), request, cx);
+                    cx.spawn(async move |_, _| {
+                        let answer = match created.await {
+                            Ok(id) => json!({ "ok": true, "session": id }),
+                            Err((error, distro)) => json!({ "ok": false, "error": error.key(), "distro": distro }),
+                        };
+                        if let Ok(mut last) = LAST_NEW.lock() {
+                            *last = Some(answer);
+                        }
+                    })
+                    .detach();
+                    return json!({ "ok": true, "pending": true });
+                }
                 match controller.create_session(&window.unwrap_or_default(), request, cx) {
                     Ok(id) => json!({ "ok": true, "session": id }),
                     Err(error) => json!({ "ok": false, "error": error.key() }),
                 }
             })
         }
+        // The answer to a "new" with "check", once it is there (null until then).
+        Some("new_result") => LAST_NEW
+            .lock()
+            .ok()
+            .and_then(|mut last| last.take())
+            .unwrap_or(Value::Null),
         // Types into a session, as keys would.
         Some("write") => {
             let terminal = controller.read(cx).sessions().read(cx).terminal(&session);
@@ -605,6 +632,12 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
             }
             None => json!({ "error": "no window" }),
         },
+        // The list's Start button for a WSL distribution that is not running.
+        Some("wsl_start") => {
+            let distro = text("distro").unwrap_or_default();
+            controller.update(cx, |controller, cx| controller.start_wsl(&distro, cx));
+            json!({ "ok": true })
+        }
         // Answers the open question.
         Some("answer") => in_window(controller, text("window"), cx, |shell, window, cx| {
             shell.update(cx, |shell, cx| shell.answer_question(flag("yes"), window, cx));
@@ -697,6 +730,7 @@ fn list_json(list: &SessionList) -> Value {
             "modifiedAt": item.modified_at,
         })).collect::<Vec<_>>(),
         "hasMore": list.has_more,
+        "wslStopped": list.wsl_stopped,
     })
 }
 

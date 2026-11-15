@@ -22,6 +22,7 @@ use reframe_core::session_list::{ListItemRef, OpenMode, folder_name};
 use reframe_core::session_logic::SessionError;
 use reframe_core::state::{DockEntry, GroupNode, LaunchOptions, LayoutNode, Lifecycle, SessionRecord};
 use reframe_core::workspaces::{snapshot_window, window_from_workspace};
+use reframe_core::wsl::wsl_windows_path;
 use serde_json::json;
 use uuid::Uuid;
 
@@ -66,25 +67,59 @@ impl Controller {
         drop(window::ask(window_id, question, cx));
     }
 
-    /// Ends a claude that runs outside reframe (off the UI thread); whether it is gone.
-    fn stop_outside(&self, pid: u32, cx: &mut Context<Self>) -> Task<bool> {
+    /// Ends a claude that runs outside reframe (off the UI thread), in a WSL distribution by its
+    /// Linux id; whether it is gone.
+    fn stop_outside(&self, pid: u32, distro: Option<String>, cx: &mut Context<Self>) -> Task<bool> {
         let log = self.log.clone();
+        let wsl = self.wsl.clone();
         cx.background_executor().spawn(async move {
-            let warn = |what: &str, detail: String| log.warn(what, Some(json!({ "pid": pid, "detail": detail })));
-            stop_external_claude(pid, &warn) != StopResult::Failed
+            match distro {
+                Some(distro) => wsl.stop_claude(&distro, pid),
+                None => {
+                    let warn =
+                        |what: &str, detail: String| log.warn(what, Some(json!({ "pid": pid, "detail": detail })));
+                    stop_external_claude(pid, &warn) != StopResult::Failed
+                }
+            }
         })
     }
 
     /// The conversation of a session, running outside reframe: someone resumed it in a terminal
-    /// of their own.
-    fn running_elsewhere(&self, record: &SessionRecord, cx: &mut Context<Self>) -> Task<Option<RegistryEntry>> {
-        let home = self.claude_home.clone();
+    /// of their own (in WSL, for a session in a WSL folder). Its entry, the distribution it runs
+    /// in, and Claude Code's folder there.
+    fn running_elsewhere(&self, record: &SessionRecord, cx: &mut Context<Self>) -> Task<Option<Outside>> {
         let own = self.sessions.read(cx).own_pids();
         let claude_id = record.claude_session_id.clone();
+        let place = self.wsl_place(&record.cwd);
+        let (home, wsl) = (self.claude_home.clone(), self.wsl.clone());
+        // Its own claude of a previous run is ended when it starts, not taken over.
+        let own_linux = record.linux_pid;
         cx.background_executor().spawn(async move {
-            let alive =
-                |entry: &RegistryEntry| !own.contains(&entry.pid) && is_running_entry(entry, &is_alive, &process_start);
-            find_registry_entry(&home, &claude_id, Some(&alive))
+            match place {
+                Some(place) => {
+                    let info = wsl.info(&place.distro)?;
+                    let home = PathBuf::from(wsl_windows_path(&place.distro, &info.claude_home, &wsl.share));
+                    let alive =
+                        |entry: &RegistryEntry| Some(entry.pid) != own_linux && wsl.is_claude(&place.distro, entry.pid);
+                    let entry = find_registry_entry(&home, &claude_id, Some(&alive))?;
+                    Some(Outside {
+                        entry,
+                        distro: Some(place.distro),
+                        home,
+                    })
+                }
+                None => {
+                    let alive = |entry: &RegistryEntry| {
+                        !own.contains(&entry.pid) && is_running_entry(entry, &is_alive, &process_start)
+                    };
+                    let entry = find_registry_entry(&home, &claude_id, Some(&alive))?;
+                    Some(Outside {
+                        entry,
+                        distro: None,
+                        home,
+                    })
+                }
+            }
         })
     }
 
@@ -114,7 +149,7 @@ impl Controller {
                 Some(outside) => outside.await,
                 None => None,
             };
-            if let Some(entry) = outside {
+            if let Some(Outside { entry, distro, home }) = outside {
                 let asked = match &window_id {
                     Some(window_id) => {
                         let label = this.update(cx, |this, cx| {
@@ -133,11 +168,11 @@ impl Controller {
                 let _ = this.update(cx, |this, _| {
                     this.log.info(
                         "session runs elsewhere already",
-                        Some(json!({ "session": id, "pid": entry.pid, "asked": asked })),
+                        Some(json!({ "session": id, "pid": entry.pid, "wsl": distro, "asked": asked })),
                     );
                 });
                 let stopped = if asked {
-                    match this.update(cx, |this, cx| this.stop_outside(entry.pid, cx)) {
+                    match this.update(cx, |this, cx| this.stop_outside(entry.pid, distro.clone(), cx)) {
                         Ok(stopping) => stopping.await,
                         Err(_) => false,
                     }
@@ -159,20 +194,19 @@ impl Controller {
                 }
                 // Resumed in another folder, the conversation went on there; so it does here. It
                 // was used there, too.
-                let home = this.update(cx, |this, _| this.claude_home.clone()).ok();
                 let claude_id = record.claude_session_id.clone();
-                let used_there = match home {
-                    Some(home) => {
-                        cx.background_executor()
-                            .spawn(async move { transcript_modified(&home, &claude_id) })
-                            .await
-                    }
-                    None => None,
-                };
+                let used_there = cx
+                    .background_executor()
+                    .spawn(async move { transcript_modified(&home, &claude_id) })
+                    .await;
                 let _ = this.update(cx, |this, cx| {
+                    let share = this.wsl.share.clone();
                     this.update_session(&id, true, cx, |latest| {
                         if let Some(cwd) = entry.cwd.clone().filter(|cwd| !cwd.is_empty()) {
-                            latest.cwd = cwd;
+                            latest.cwd = match &distro {
+                                Some(distro) => wsl_windows_path(distro, &cwd, &share),
+                                None => cwd,
+                            };
                         }
                         if let Some(used) = used_there.filter(|used| *used > latest.last_active_at) {
                             latest.last_active_at = used;
@@ -247,8 +281,23 @@ impl Controller {
         confirmed: bool,
         cx: &mut Context<Self>,
     ) -> Task<Option<SessionRecord>> {
-        let home = self.claude_home.clone();
-        let transcripts = self.transcripts.clone();
+        let distro = match item {
+            ListItemRef::App { .. } => return Task::ready(None),
+            ListItemRef::Running { distro, .. } | ListItemRef::Found { distro, .. } => distro.clone(),
+        };
+        let Some(source) = self.source_of(distro.as_deref()) else {
+            return Task::ready(None);
+        };
+        let (home, transcripts) = (source.home, source.transcripts);
+        let (wsl, share) = (self.wsl.clone(), self.wsl.share.clone());
+        // A folder of the source as Windows reaches it.
+        let windows_path = {
+            let distro = distro.clone();
+            move |cwd: String| match &distro {
+                Some(distro) => wsl_windows_path(distro, &cwd, &share),
+                None => cwd,
+            }
+        };
         let window_id = window_id.to_owned();
         match item.clone() {
             ListItemRef::App { .. } => Task::ready(None),
@@ -259,7 +308,7 @@ impl Controller {
                     .spawn(async move { transcripts.lock().ok().and_then(|mut index| index.find(&id)) })
                     .await;
                 match info.and_then(|info| info.cwd).filter(|cwd| !cwd.is_empty()) {
-                    Some(cwd) => Some(adopted(&home, claude_session_id, cwd, None, cx).await),
+                    Some(cwd) => Some(adopted(&home, claude_session_id, windows_path(cwd), None, cx).await),
                     None => {
                         let _ = this.update(cx, |this, _| {
                             this.log.warn(
@@ -274,12 +323,14 @@ impl Controller {
             ListItemRef::Running {
                 pid, claude_session_id, ..
             } => cx.spawn(async move |this, cx| {
-                let look = home.clone();
+                let (look, in_distro) = (home.clone(), distro.clone());
                 let entry = cx
                     .background_executor()
                     .spawn(async move {
-                        read_registry_entry(&look, pid)
-                            .filter(|entry| is_running_entry(entry, &is_alive, &process_start))
+                        read_registry_entry(&look, pid).filter(|entry| match &in_distro {
+                            Some(distro) => wsl.is_claude(distro, entry.pid),
+                            None => is_running_entry(entry, &is_alive, &process_start),
+                        })
                     })
                     .await;
                 let Some(entry) = entry.filter(|entry| {
@@ -288,7 +339,7 @@ impl Controller {
                     let _ = this.update(cx, |this, _| {
                         this.log.info(
                             "running session is gone, nothing to take over",
-                            Some(json!({ "pid": pid })),
+                            Some(json!({ "pid": pid, "wsl": distro })),
                         );
                     });
                     return None;
@@ -307,9 +358,9 @@ impl Controller {
                     .update(cx, |this, cx| {
                         this.log.info(
                             "taking over session from another terminal",
-                            Some(json!({ "pid": pid, "claudeSession": entry.session_id })),
+                            Some(json!({ "pid": pid, "claudeSession": entry.session_id, "wsl": distro })),
                         );
-                        this.stop_outside(pid, cx)
+                        this.stop_outside(pid, distro.clone(), cx)
                     })
                     .ok()?;
                 if !stopping.await {
@@ -324,7 +375,7 @@ impl Controller {
                     .name
                     .clone()
                     .filter(|_| entry.name_source.as_deref() == Some("user"));
-                Some(adopted(&home, entry.session_id, cwd, name, cx).await)
+                Some(adopted(&home, entry.session_id, windows_path(cwd), name, cx).await)
             }),
         }
     }
@@ -394,24 +445,23 @@ impl Controller {
         cx: &mut Context<Self>,
     ) {
         let window_id = window_id.to_owned();
-        let home = self.claude_home.clone();
+        let running: Vec<(u32, PathBuf)> = items
+            .iter()
+            .filter_map(|item| match item {
+                ListItemRef::Running { pid, distro, .. } => Some((*pid, self.source_of(distro.as_deref())?.home)),
+                _ => None,
+            })
+            .collect();
         cx.spawn(async move |this, cx| {
             let mut wanted = items;
-            let running: Vec<u32> = wanted
-                .iter()
-                .filter_map(|item| match item {
-                    ListItemRef::Running { pid, .. } => Some(*pid),
-                    _ => None,
-                })
-                .collect();
             if !running.is_empty() {
                 let labels = cx
                     .background_executor()
                     .spawn(async move {
                         running
                             .iter()
-                            .map(|pid| {
-                                let entry = read_registry_entry(&home, *pid);
+                            .map(|(pid, home)| {
+                                let entry = read_registry_entry(home, *pid);
                                 entry
                                     .as_ref()
                                     .and_then(|entry| entry.name.clone())
@@ -776,6 +826,15 @@ impl Controller {
             })
             .collect()
     }
+}
+
+/// A claude running outside reframe with the conversation of one of reframe's sessions.
+struct Outside {
+    entry: RegistryEntry,
+    /// The WSL distribution it runs in (`entry.pid` is a Linux one there).
+    distro: Option<String>,
+    /// Claude Code's folder where it runs, as Windows reaches it.
+    home: PathBuf,
 }
 
 /// A new record for a Claude Code session started outside reframe. `home`: where its Claude Code

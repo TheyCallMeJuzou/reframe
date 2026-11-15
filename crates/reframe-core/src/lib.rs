@@ -19,6 +19,7 @@ pub mod snap;
 pub mod i18n;
 pub mod links;
 pub mod wsl;
+pub mod wsl_distro;
 
 pub mod store;
 

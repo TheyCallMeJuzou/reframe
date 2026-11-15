@@ -56,7 +56,12 @@ reframe's own that someone resumed elsewhere. Workspaces: a window saved under a
 opened again as a window of its own, renamed and deleted, from the toolbar, the list and the
 tray.
 
-Still to come, in this order: sessions in WSL and terminal windows dragged onto reframe;
+Sessions in WSL folders run their claude in that distribution (asked through the user's login
+shell, its status from Claude Code's registry there, dropped files as Linux paths); the list shows
+the sessions of running distributions, says which known one is not running and starts it, and
+takes over a session running in a WSL terminal.
+
+Still to come, in this order: terminal windows and Windows Terminal tabs dragged onto reframe;
 installer and updater. A file that exists only in memory (a picture dragged out of a browser) is
 not taken by a tile yet.
 

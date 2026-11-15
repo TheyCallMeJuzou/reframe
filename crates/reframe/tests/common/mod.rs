@@ -38,6 +38,9 @@ impl Setup {
     pub fn new() -> Setup {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir(dir.path().join("project")).unwrap();
+        // A WSL of its own (the stand-in, with no distributions until a test makes folders for
+        // them), not the real one.
+        std::fs::create_dir(dir.path().join("wsl")).unwrap();
         Setup { dir }
     }
 
@@ -65,6 +68,17 @@ impl Setup {
                     .trim_start_matches(r"\\?\"),
             )
             .env("REFRAME_NODE", node())
+            .env(
+                "REFRAME_WSL_EXE",
+                root.join("test")
+                    .join("fake-wsl")
+                    .join("fake-wsl.mjs")
+                    .canonicalize()
+                    .unwrap()
+                    .to_string_lossy()
+                    .trim_start_matches(r"\\?\"),
+            )
+            .env("REFRAME_WSL_SHARE", self.path("wsl"))
             .env("REFRAME_FAKE_LOG", self.path("fake.log"))
             .env("REFRAME_LOCALE", "en")
             .env("REFRAME_DISABLE_NOTIFICATIONS", "1")

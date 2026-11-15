@@ -121,7 +121,11 @@ pub struct NewSessionForm {
     worktree: bool,
     advanced: bool,
     recent: Vec<String>,
-    error: Option<SessionError>,
+    /// Why the last start did not work, and the WSL distribution claude is missing in.
+    error: Option<(SessionError, Option<String>)>,
+    /// The folder (and a WSL distribution) is being looked at.
+    busy: bool,
+    pending: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -210,6 +214,8 @@ impl NewSessionForm {
             advanced: false,
             recent,
             error: None,
+            busy: false,
+            pending: None,
             _subscriptions: subscriptions,
         }
     }
@@ -272,7 +278,7 @@ impl NewSessionForm {
     fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let value = |input: &Entity<InputState>| input.read(cx).value().trim().to_owned();
         let cwd = value(&self.folder);
-        if cwd.is_empty() {
+        if cwd.is_empty() || self.busy {
             return;
         }
         let some = |text: String| Some(text).filter(|text| !text.is_empty());
@@ -290,16 +296,26 @@ impl NewSessionForm {
             target: None,
         };
         let window_id = self.window_id.clone();
-        let created = self
-            .controller
-            .update(cx, |controller, cx| controller.create_session(&window_id, request, cx));
-        match created {
-            Ok(_) => window.close_dialog(cx),
-            Err(error) => {
-                self.error = Some(error);
+        let created = self.controller.update(cx, |controller, cx| {
+            controller.create_session_checked(&window_id, request, cx)
+        });
+        self.busy = true;
+        self.error = None;
+        cx.notify();
+        let handle = window.window_handle();
+        self.pending = Some(cx.spawn(async move |this, cx| {
+            let created = created.await;
+            let _ = this.update(cx, |this, cx| {
+                this.busy = false;
+                match created {
+                    Ok(_) => {
+                        let _ = handle.update(cx, |_, window, cx| window.close_dialog(cx));
+                    }
+                    Err(error) => this.error = Some(error),
+                }
                 cx.notify();
-            }
-        }
+            });
+        }));
     }
 }
 
@@ -398,13 +414,20 @@ impl Render for NewSessionForm {
                 .child(suggestions)
                 .child(field(text("dialog.permissionMode"), Select::new(&self.permission)));
         }
-        if let Some(error) = self.error {
+        if let Some((error, distro)) = &self.error {
             let key = format!("dialog.error.{}", error.key());
             let locale = self.controller.read(cx).locale();
-            let mut message = t(locale, &key, &[]).unwrap_or_else(|| text(&format!("tile.error.{}", error.key())));
-            if error == SessionError::ClaudeNotFound {
-                message = format!("{message} {}", text("error.claudeOnlyInWsl"));
-            }
+            let message = match distro {
+                Some(distro) => t(locale, "error.claudeNotFoundInWsl", &[("distro", distro)]).unwrap_or_default(),
+                None => {
+                    let message = t(locale, &key, &[]).unwrap_or_else(|| text(&format!("tile.error.{}", error.key())));
+                    if *error == SessionError::ClaudeNotFound {
+                        format!("{message} {}", text("error.claudeOnlyInWsl"))
+                    } else {
+                        message
+                    }
+                }
+            };
             form = form.child(div().text_color(rgb(theme::DANGER)).child(message));
         }
         form.child(
@@ -422,7 +445,7 @@ impl Render for NewSessionForm {
                     Button::new("start")
                         .primary()
                         .label(text("dialog.start"))
-                        .disabled(folder.trim().is_empty())
+                        .disabled(folder.trim().is_empty() || self.busy)
                         .on_click(cx.listener(|this, _, window, cx| this.submit(window, cx))),
                 ),
         )

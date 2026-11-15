@@ -26,7 +26,7 @@ use reframe_core::actions::{
 };
 use reframe_core::attention::next_waiting;
 use reframe_core::claude::args::LaunchMode;
-use reframe_core::claude::registry::{RegistryEntry, claude_home};
+use reframe_core::claude::registry::claude_home;
 use reframe_core::claude::resolve::{self, ClaudeBinary, NodeRunner, Platform, ResolveOptions, resolve_claude};
 use reframe_core::cleanup::{clean_up, drops_dir};
 use reframe_core::discovery::TranscriptIndex;
@@ -52,6 +52,7 @@ use uuid::Uuid;
 
 use crate::sessions::{SessionEvent, SessionManager, SessionManagerDeps};
 use crate::terminal_view::TerminalFontSize;
+use crate::wsl::WslDistros;
 
 const MAX_RECENT_FOLDERS: usize = 8;
 /// How long a session gets to end on Ctrl+C before its process tree is killed.
@@ -190,10 +191,15 @@ pub struct Controller {
     transcripts: Arc<Mutex<TranscriptIndex>>,
     /// Claudes running outside reframe (with a folder), as last looked at; `None` before the
     /// first look.
-    outside: Option<Vec<RegistryEntry>>,
-    /// A look at what runs outside reframe is under way; another one follows it (`rescan`).
+    outside: Option<list::OutsideScan>,
+    /// When WSL was last looked at, and the transcript indexes of its distributions.
+    wsl_looked_at: Option<std::time::Instant>,
+    wsl_transcripts: HashMap<PathBuf, Arc<Mutex<TranscriptIndex>>>,
+    /// A look at what runs outside reframe is under way; another one follows it (`rescan`, and
+    /// in WSL too after `rescan_wsl`).
     scanning: bool,
     rescan: bool,
+    rescan_wsl: Option<Duration>,
     scan_waiters: Vec<oneshot::Sender<()>>,
     /// The list's first page as the windows got it last.
     list_sent: Option<Rc<SessionList>>,
@@ -206,6 +212,8 @@ pub struct Controller {
     adopting: HashMap<String, Shared<Task<Option<SessionRecord>>>>,
     /// Sessions whose start waits for an answer (whether to take one over that runs elsewhere).
     starts_pending: HashSet<String>,
+    /// WSL distributions, and running claude in them.
+    wsl: Arc<WslDistros>,
     _session_events: Subscription,
 }
 
@@ -321,7 +329,9 @@ impl Controller {
         })
         .map_err(StartError::Hooks)?;
 
+        let wsl = Arc::new(WslDistros::new(&config.env, log.clone()));
         let deps = SessionManagerDeps {
+            wsl: wsl.clone(),
             claude_home: claude_home.clone(),
             settings_dir: config.user_data.join("hooks"),
             hooks_port: hooks.port(),
@@ -352,14 +362,18 @@ impl Controller {
             claude_home,
             transcripts,
             outside: None,
+            wsl_looked_at: None,
+            wsl_transcripts: HashMap::new(),
             scanning: false,
             rescan: false,
+            rescan_wsl: None,
             scan_waiters: Vec::new(),
             list_sent: None,
             list_push: false,
             list_tasks: Vec::new(),
             adopting: HashMap::new(),
             starts_pending: HashSet::new(),
+            wsl,
             starts_with_system,
             system_ending: None,
             ended_while_system_ending: HashSet::new(),
@@ -392,6 +406,15 @@ impl Controller {
 
     pub fn log(&self) -> &Logger {
         &self.log
+    }
+
+    pub fn wsl(&self) -> &Arc<WslDistros> {
+        &self.wsl
+    }
+
+    /// Where a folder is in WSL, if it is in a distribution.
+    pub fn wsl_place(&self, folder: &str) -> Option<reframe_core::wsl::WslPath> {
+        parse_wsl_path(folder, Some(&self.wsl.share))
     }
 
     /// How many of a window's sessions need the user.
@@ -549,7 +572,7 @@ impl Controller {
 
     /// The folders sessions were started in last, without those that are gone.
     pub fn recent_folders(&self) -> Vec<String> {
-        let there = |folder: &&String| parse_wsl_path(folder, None).is_some() || Path::new(folder.as_str()).is_dir();
+        let there = |folder: &&String| self.wsl_place(folder).is_some() || Path::new(folder.as_str()).is_dir();
         self.state.recent_folders.iter().filter(there).cloned().collect()
     }
 
@@ -1124,10 +1147,9 @@ impl Controller {
         if !Path::new(&cwd).is_dir() {
             return Err(SessionError::FolderMissing);
         }
-        // Sessions in WSL folders follow with the WSL milestone.
-        if parse_wsl_path(&cwd, None).is_some()
-            || find_claude(&self.config, self.claude_bin.borrow().as_deref()).is_none()
-        {
+        // In a WSL folder claude runs in its distribution, which is asked when the session starts
+        // (see `create_session_checked` for asking first).
+        if self.wsl_place(&cwd).is_none() && find_claude(&self.config, self.claude_bin.borrow().as_deref()).is_none() {
             return Err(SessionError::ClaudeNotFound);
         }
         if self.find_window(window_id).is_none() {
@@ -1164,6 +1186,64 @@ impl Controller {
         self.sessions
             .update(cx, |sessions, cx| sessions.start(&record, LaunchMode::New, cx));
         Ok(id)
+    }
+
+    /// Like `create_session`, after looking off the UI thread whether the folder is there and claude
+    /// can run in it: a WSL folder's distribution is asked (which starts it). The error names the
+    /// distribution claude is missing in.
+    pub fn create_session_checked(
+        &mut self,
+        window_id: &str,
+        request: NewSessionRequest,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<String, (SessionError, Option<String>)>> {
+        let cwd = request.cwd.trim().to_owned();
+        let place = self.wsl_place(&cwd);
+        let wsl = self.wsl.clone();
+        let window_id = window_id.to_owned();
+        cx.spawn(async move |this, cx| {
+            let checked = cx
+                .background_executor()
+                .spawn(async move {
+                    if !Path::new(&cwd).is_dir() {
+                        return Err((SessionError::FolderMissing, None));
+                    }
+                    match place {
+                        Some(place) if wsl.info(&place.distro).and_then(|info| info.claude).is_none() => {
+                            Err((SessionError::ClaudeNotFound, Some(place.distro)))
+                        }
+                        _ => Ok(()),
+                    }
+                })
+                .await;
+            checked?;
+            this.update(cx, |this, cx| {
+                this.remember_wsl_distros(cx);
+                this.create_session(&window_id, request, cx)
+            })
+            .map_err(|_| (SessionError::SpawnFailed, None))?
+            .map_err(|error| (error, None))
+        })
+    }
+
+    /// Distributions Claude Code was found in are remembered, so the list can tell when one of
+    /// them is not running.
+    fn remember_wsl_distros(&mut self, cx: &mut Context<Self>) {
+        let found = self.wsl.take_found();
+        if found.is_empty() {
+            return;
+        }
+        let known = self.state.wsl_distros.get_or_insert_with(Vec::new);
+        let mut changed = false;
+        for distro in found {
+            if !known.iter().any(|name| name.eq_ignore_ascii_case(&distro)) {
+                known.push(distro);
+                changed = true;
+            }
+        }
+        if changed {
+            self.save(cx);
+        }
     }
 
     /// Starts an ended session again: its conversation resumed, or (`fresh`) a new one in its
@@ -1254,6 +1334,7 @@ impl Controller {
                 () = cx.background_executor().timer(SHUTDOWN_MS).fuse() => false,
             };
             let _ = this.update(cx, |this, cx| {
+                this.wsl.release();
                 if !ended {
                     let left = this.sessions.read(cx).active();
                     this.log.warn(
@@ -1309,7 +1390,16 @@ impl Controller {
             id: record.id.clone(),
             label,
             cwd: record.cwd.clone(),
-            cwd_label: home_relative(&record.cwd, &self.config.home.to_string_lossy(), true),
+            cwd_label: match self.wsl_place(&record.cwd) {
+                Some(place) => {
+                    let path = match self.wsl.cached(&place.distro) {
+                        Some(info) => home_relative(&place.path, &info.home, false),
+                        None => place.path.clone(),
+                    };
+                    format!("{} {path}", place.distro)
+                }
+                None => home_relative(&record.cwd, &self.config.home.to_string_lossy(), true),
+            },
             status: sessions.status(session_id).unwrap_or(ended),
             error: sessions.error(session_id),
         })

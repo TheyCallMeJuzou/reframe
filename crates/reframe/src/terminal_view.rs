@@ -71,8 +71,8 @@ const CURRENT_MATCH: u32 = 0x7a5f24;
 pub struct TerminalView {
     pub terminal: Entity<Terminal>,
     pub pty: Pty,
-    /// The program runs in WSL and sees Windows paths under /mnt.
-    wsl: bool,
+    /// The program runs in this WSL distribution and sees Windows paths as Linux ones there.
+    wsl: Option<WslView>,
     pub focus: FocusHandle,
     layout: Option<Layout>,
     /// Text the IME is still composing, shown at the cursor.
@@ -90,8 +90,18 @@ pub struct TerminalView {
     _terminal: Subscription,
 }
 
+/// Where a session in WSL runs, as far as the paths typed into it go.
+#[derive(Clone, Debug)]
+pub struct WslView {
+    pub distro: String,
+    /// Where the Windows drives are there, e.g. `/mnt/`.
+    pub mount_root: String,
+    /// Where Windows shows the distributions' files.
+    pub share: String,
+}
+
 impl TerminalView {
-    pub fn new(terminal: Entity<Terminal>, wsl: bool, cx: &mut Context<Self>) -> Self {
+    pub fn new(terminal: Entity<Terminal>, wsl: Option<WslView>, cx: &mut Context<Self>) -> Self {
         let pty = terminal.read(cx).pty().clone();
         // Whatever the terminal reports (new output, its title, its exit) is drawn.
         let subscription = cx.observe(&terminal, |this, _, cx| {
@@ -328,7 +338,11 @@ impl TerminalView {
     /// Files (copied, or dropped onto the tile) are typed in as their paths, like in a terminal.
     pub fn type_paths(&mut self, paths: &[std::path::PathBuf], cx: &mut Context<Self>) {
         let paths: Vec<String> = paths.iter().map(|path| self.path_for_session(path)).collect();
-        let quoting = if self.wsl { Quoting::Posix } else { Quoting::Windows };
+        let quoting = if self.wsl.is_some() {
+            Quoting::Posix
+        } else {
+            Quoting::Windows
+        };
         let text = format_paths(&paths, quoting);
         if text.is_empty() {
             return;
@@ -337,15 +351,14 @@ impl TerminalView {
         self.type_bytes(input::paste_bytes(&text, bracketed), cx);
     }
 
-    /// A Windows path as the session's program sees it.
+    /// A Windows path as the session's program sees it: in WSL a drive under the mount root, a
+    /// file of the distribution itself as its Linux path.
     fn path_for_session(&self, file: &std::path::Path) -> String {
         let text = file.to_string_lossy();
-        let bytes = text.as_bytes();
-        if self.wsl && bytes.len() > 2 && bytes[1] == b':' {
-            let drive = (bytes[0] as char).to_ascii_lowercase();
-            format!("/mnt/{drive}{}", text[2..].replace('\\', "/"))
-        } else {
-            text.into_owned()
+        match &self.wsl {
+            Some(wsl) => reframe_core::wsl::linux_path_of(&text, &wsl.distro, &wsl.mount_root, Some(&wsl.share))
+                .unwrap_or_else(|| text.into_owned()),
+            None => text.into_owned(),
         }
     }
 

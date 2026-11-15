@@ -1,15 +1,17 @@
 //! The session list: what it shows, and keeping it up to date. Windows get it from here when it
 //! changed, instead of each asking every few seconds: that read every registry entry and looked
-//! at every transcript's time (thousands in a long history) all the time, with or without
-//! anything changing. Claude Code's folder is watched instead; what runs outside reframe is
-//! looked at again every little while too (a killed claude changes no file).
+//! at every transcript's time (thousands in a long history) and asked wsl.exe which distributions
+//! run, all the time, with or without anything changing. Windows' own Claude Code folder is
+//! watched instead; what runs outside reframe (and in WSL) is looked at again every little while.
 //!
-//! Ported from the Electron version's `src/main/app.ts` (`sessionList`, `watchList`,
-//! `scanOutside`, `listChanged`). WSL distributions follow with the WSL milestone.
+//! Ported from the Electron version's `src/main/app.ts` (`sessionList`, `claudeSources`,
+//! `watchList`, `scanOutside`, `listChanged`).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::rc::Rc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use futures::StreamExt;
 use futures::channel::oneshot;
@@ -17,21 +19,108 @@ use gpui_kit::*;
 use indexmap::IndexMap;
 use reframe_core::actions::window_sessions;
 use reframe_core::claude::registry::{RegistryEntry, is_running_entry};
-use reframe_core::discovery::{ListOptions, RunningExclusion, TranscriptPage, list_running};
+use reframe_core::discovery::{ListOptions, RunningExclusion, TranscriptIndex, TranscriptPage, list_running};
 use reframe_core::session_list::{
     AppListItem, FoundListItem, LIST_PAGE, LocalTime, RunningListItem, SessionList, WorkspaceListItem, matches,
     merge_found, sort_app,
 };
 use reframe_core::state::{WindowState, Workspace};
+use reframe_core::wsl::wsl_windows_path;
 
 use super::{AppEvent, Controller};
 use crate::process::{is_alive, process_start};
 use crate::watcher::{self, Changes, Timing};
+use crate::wsl::WslDistros;
 
 /// How often what runs outside reframe is looked at, besides when Claude Code's folder changes.
 const LIST_LOOK: Duration = Duration::from_millis(20_000);
+/// How often WSL is looked at: while a session list is shown, and while none is.
+const WSL_LOOK_SHOWN: Duration = Duration::from_millis(20_000);
+const WSL_LOOK_HIDDEN: Duration = Duration::from_millis(60_000);
 /// How long after a change the windows get the list (many changes come together).
 const LIST_PUSH: Duration = Duration::from_millis(300);
+
+/// Where Claude Code keeps sessions and transcripts: on Windows, or in a running WSL
+/// distribution; and what runs there outside reframe.
+#[derive(Clone)]
+pub(super) struct Source {
+    pub distro: Option<String>,
+    /// Claude Code's folder, as Windows reaches it.
+    pub home: PathBuf,
+    pub transcripts: Arc<Mutex<TranscriptIndex>>,
+    /// Claudes running outside reframe (with a known folder, as a Linux path in WSL).
+    pub running: Vec<RegistryEntry>,
+}
+
+/// What was found outside reframe the last time it was looked at.
+#[derive(Clone, Default)]
+pub(super) struct OutsideScan {
+    /// Windows first.
+    pub sources: Vec<Source>,
+    /// Distributions Claude Code was found in before that do not run now.
+    pub stopped: Vec<String>,
+}
+
+/// A folder of a source as Windows reaches it.
+fn windows_path(distro: Option<&str>, folder: &str, share: &str) -> String {
+    match distro {
+        Some(distro) => wsl_windows_path(distro, folder, share),
+        None => folder.to_owned(),
+    }
+}
+
+/// Claudes running in a source outside reframe (`own`: reframe's processes there), with a folder.
+fn running_in(home: &std::path::Path, own: HashSet<u32>, alive: &dyn Fn(&RegistryEntry) -> bool) -> Vec<RegistryEntry> {
+    let exclusion = RunningExclusion {
+        pids: own,
+        session_ids: HashSet::new(),
+    };
+    list_running(home, &exclusion, alive)
+        .into_iter()
+        .filter(|entry| entry.cwd.as_deref().is_some_and(|cwd| !cwd.is_empty()))
+        .collect()
+}
+
+/// The running distributions with Claude Code, as sources (their transcript indexes kept from
+/// `indexes`), and the known ones that do not run.
+fn scan_wsl(
+    wsl: &WslDistros,
+    max_age: Duration,
+    known: &[String],
+    own_linux: &HashSet<u32>,
+    indexes: &HashMap<PathBuf, Arc<Mutex<TranscriptIndex>>>,
+) -> (Vec<Source>, Vec<String>) {
+    let running = wsl.running(Some(max_age));
+    let mut sources = Vec::new();
+    for distro in &running {
+        let Some(info) = wsl.info(distro).filter(|info| info.claude.is_some()) else {
+            continue;
+        };
+        let home = PathBuf::from(wsl_windows_path(distro, &info.claude_home, &wsl.share));
+        let transcripts = indexes
+            .get(&home)
+            .cloned()
+            .unwrap_or_else(|| Arc::new(Mutex::new(TranscriptIndex::new(home.clone()))));
+        // Not watched: listed again with every look.
+        if let Ok(mut index) = transcripts.lock() {
+            index.invalidate_all();
+        }
+        let alive = |entry: &RegistryEntry| wsl.is_claude(distro, entry.pid);
+        let running = running_in(&home, own_linux.clone(), &alive);
+        sources.push(Source {
+            distro: Some(distro.clone()),
+            home,
+            transcripts,
+            running,
+        });
+    }
+    let stopped = known
+        .iter()
+        .filter(|name| !running.iter().any(|running| running.eq_ignore_ascii_case(name)))
+        .cloned()
+        .collect();
+    (sources, stopped)
+}
 
 impl Controller {
     /// Watches Claude Code's folder and looks at what runs outside reframe every little while.
@@ -47,7 +136,16 @@ impl Controller {
         let looking = cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(LIST_LOOK).await;
-                if this.update(cx, |this, cx| drop(this.scan_outside(cx))).is_err() {
+                let looked = this.update(cx, |this, cx| {
+                    let shown = this
+                        .state
+                        .windows
+                        .iter()
+                        .any(|window| window.sidebar_open == Some(true) && !window.hidden);
+                    let age = if shown { WSL_LOOK_SHOWN } else { WSL_LOOK_HIDDEN };
+                    drop(this.scan_outside(Some(age), cx));
+                });
+                if looked.is_err() {
                     break;
                 }
             }
@@ -67,50 +165,131 @@ impl Controller {
                 }
             })
             .detach();
-        drop(self.scan_outside(cx));
+        drop(self.scan_outside(None, cx));
     }
 
-    /// Looks again what runs outside reframe; the windows then get the list if it changed. One
-    /// look at a time: asked for meanwhile, another one follows. The answer comes once this one
-    /// is done.
-    pub(super) fn scan_outside(&mut self, cx: &mut Context<Self>) -> oneshot::Receiver<()> {
+    /// Looks again what runs outside reframe: on Windows always (cheap), in WSL when that was
+    /// last done `wsl_max_age` ago or longer (`None`: not now; the first look always). The
+    /// windows then get the list if it changed. One look at a time: asked for meanwhile, another
+    /// one follows. The answer comes once this one is done.
+    pub(super) fn scan_outside(
+        &mut self,
+        wsl_max_age: Option<Duration>,
+        cx: &mut Context<Self>,
+    ) -> oneshot::Receiver<()> {
         let (done, receiver) = oneshot::channel();
         self.scan_waiters.push(done);
         if self.scanning {
             self.rescan = true;
+            if let Some(age) = wsl_max_age {
+                self.rescan_wsl = Some(self.rescan_wsl.map_or(age, |known| known.min(age)));
+            }
             return receiver;
         }
         self.scanning = true;
+        let first = self.outside.is_none();
+        let wsl_age = if first { Some(Duration::ZERO) } else { wsl_max_age };
+        let wsl_due = wsl_age.filter(|age| self.wsl_looked_at.is_none_or(|at| at.elapsed() >= *age));
         let home = self.claude_home.clone();
-        let exclusion = RunningExclusion {
-            pids: self.sessions.read(cx).own_pids(),
-            session_ids: HashSet::new(),
+        let own = self.sessions.read(cx).own_pids();
+        // In WSL reframe's own claudes are known by their Linux ids.
+        let own_linux: HashSet<u32> = {
+            let sessions = self.sessions.read(cx);
+            self.state
+                .sessions
+                .values()
+                .filter(|record| sessions.status(&record.id).is_some())
+                .filter_map(|record| record.linux_pid)
+                .collect()
         };
+        let known = self.state.wsl_distros.clone().unwrap_or_default();
+        let previous = self.outside.clone().unwrap_or_default();
+        let indexes = self.wsl_transcripts.clone();
+        let wsl = self.wsl.clone();
+        let transcripts = self.transcripts.clone();
+        if wsl_due.is_some() {
+            self.wsl_looked_at = Some(Instant::now());
+        }
         cx.spawn(async move |this, cx| {
-            let running = cx
+            let scan = cx
                 .background_executor()
                 .spawn(async move {
                     let alive = |entry: &RegistryEntry| is_running_entry(entry, &is_alive, &process_start);
-                    list_running(&home, &exclusion, &alive)
-                        .into_iter()
-                        .filter(|entry| entry.cwd.as_deref().is_some_and(|cwd| !cwd.is_empty()))
-                        .collect::<Vec<_>>()
+                    let windows = Source {
+                        distro: None,
+                        running: running_in(&home, own, &alive),
+                        home,
+                        transcripts,
+                    };
+                    let (in_wsl, stopped) = match wsl_due {
+                        Some(age) => scan_wsl(&wsl, age, &known, &own_linux, &indexes),
+                        None => (previous.sources.into_iter().skip(1).collect(), previous.stopped),
+                    };
+                    OutsideScan {
+                        sources: std::iter::once(windows).chain(in_wsl).collect(),
+                        stopped,
+                    }
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
-                this.outside = Some(running);
+                for source in scan.sources.iter().filter(|source| source.distro.is_some()) {
+                    this.wsl_transcripts
+                        .insert(source.home.clone(), source.transcripts.clone());
+                }
+                this.outside = Some(scan);
                 this.scanning = false;
+                this.remember_wsl_distros(cx);
                 for waiter in std::mem::take(&mut this.scan_waiters) {
                     let _ = waiter.send(());
                 }
                 if std::mem::take(&mut this.rescan) {
-                    drop(this.scan_outside(cx));
+                    let age = this.rescan_wsl.take();
+                    drop(this.scan_outside(age, cx));
                 }
                 this.list_changed(cx);
             });
         })
         .detach();
         receiver
+    }
+
+    /// Starts a WSL distribution from the session list (and keeps it running), so that its
+    /// sessions show up.
+    pub fn start_wsl(&mut self, distro: &str, cx: &mut Context<Self>) {
+        let (wsl, distro) = (self.wsl.clone(), distro.to_owned());
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().spawn(async move { wsl.keep(&distro) }).await;
+            cx.background_executor().timer(Duration::from_millis(2000)).await;
+            let _ = this.update(cx, |this, cx| drop(this.scan_outside(Some(Duration::ZERO), cx)));
+        })
+        .detach();
+    }
+
+    /// Where a list entry's Claude Code keeps its sessions: on Windows, or in its WSL
+    /// distribution (if that runs).
+    pub(super) fn source_of(&self, distro: Option<&str>) -> Option<Source> {
+        let outside = self.outside.as_ref();
+        match distro {
+            None => Some(Source {
+                distro: None,
+                home: self.claude_home.clone(),
+                transcripts: self.transcripts.clone(),
+                running: outside
+                    .and_then(|scan| scan.sources.first())
+                    .map(|source| source.running.clone())
+                    .unwrap_or_default(),
+            }),
+            Some(distro) => outside?
+                .sources
+                .iter()
+                .find(|source| {
+                    source
+                        .distro
+                        .as_deref()
+                        .is_some_and(|name| name.eq_ignore_ascii_case(distro))
+                })
+                .cloned(),
+        }
     }
 
     /// Something the session list shows may have changed: the windows get it in a moment, if it
@@ -148,55 +327,57 @@ impl Controller {
     /// The session list: those of reframe's sessions the search holds, what runs outside reframe,
     /// and as many past sessions as asked for.
     pub fn session_list(&mut self, query: String, limit: usize, cx: &mut Context<Self>) -> Task<SessionList> {
-        let scanned = self.outside.is_none().then(|| self.scan_outside(cx));
+        let scanned = self.outside.is_none().then(|| self.scan_outside(None, cx));
         cx.spawn(async move |this, cx| {
             if let Some(scanned) = scanned {
                 let _ = scanned.await;
             }
-            let Ok((transcripts, running, mut exclude)) = this.update(cx, |this, _| {
+            let Ok((scan, mut exclude)) = this.update(cx, |this, _| {
                 let own: HashSet<String> = this
                     .state
                     .sessions
                     .values()
                     .map(|record| record.claude_session_id.clone())
                     .collect();
-                (this.transcripts.clone(), this.outside.clone().unwrap_or_default(), own)
+                (this.outside.clone().unwrap_or_default(), own)
             }) else {
                 return SessionList::default();
             };
-            exclude.extend(running.iter().map(|entry| entry.session_id.clone()));
+            for source in &scan.sources {
+                exclude.extend(source.running.iter().map(|entry| entry.session_id.clone()));
+            }
             let asked = query.clone();
-            let any_running = !running.is_empty();
+            let sources = scan.sources.clone();
             let read = cx.background_executor().spawn(async move {
-                let Ok(mut index) = transcripts.lock() else {
-                    return (
-                        IndexMap::new(),
-                        TranscriptPage {
+                sources
+                    .iter()
+                    .map(|source| {
+                        let empty = TranscriptPage {
                             items: Vec::new(),
                             has_more: false,
-                        },
-                    );
-                };
-                // When what runs outside reframe was last used: when its transcript was last
-                // written.
-                let times = if any_running {
-                    index.modified_times()
-                } else {
-                    IndexMap::new()
-                };
-                let options = ListOptions {
-                    query: Some(&asked),
-                    limit,
-                    exclude: &exclude,
-                };
-                let page = index.list(&options);
-                (times, page)
+                        };
+                        let Ok(mut index) = source.transcripts.lock() else {
+                            return (IndexMap::new(), empty);
+                        };
+                        // When what runs outside reframe was last used: when its transcript was
+                        // last written. Sources where nothing runs are not asked.
+                        let times = if source.running.is_empty() {
+                            IndexMap::new()
+                        } else {
+                            index.modified_times()
+                        };
+                        let options = ListOptions {
+                            query: Some(&asked),
+                            limit,
+                            exclude: &exclude,
+                        };
+                        (times, index.list(&options))
+                    })
+                    .collect::<Vec<_>>()
             });
-            let (times, page) = read.await;
-            this.update(cx, |this, cx| {
-                this.build_list(&query, limit, &running, &times, page, cx)
-            })
-            .unwrap_or_default()
+            let read = read.await;
+            this.update(cx, |this, cx| this.build_list(&query, limit, &scan, read, cx))
+                .unwrap_or_default()
         })
     }
 
@@ -204,27 +385,27 @@ impl Controller {
         &self,
         query: &str,
         limit: usize,
-        running: &[RegistryEntry],
-        times: &IndexMap<String, f64>,
-        page: TranscriptPage,
+        scan: &OutsideScan,
+        read: Vec<(IndexMap<String, f64>, TranscriptPage)>,
         cx: &App,
     ) -> SessionList {
         let sessions = self.sessions.read(cx);
+        let share = self.wsl.share.clone();
         let own: HashSet<&str> = self
             .state
             .sessions
             .values()
             .map(|record| record.claude_session_id.as_str())
             .collect();
-        // Reframe's own sessions that someone resumed elsewhere are among what runs there.
-        let resumed_elsewhere: HashSet<&str> = running.iter().map(|entry| entry.session_id.as_str()).collect();
-        let used_outside = |entry: &RegistryEntry| times.get(&entry.session_id).copied().or(entry.started_at);
-        let used_outside_of = |claude_id: &str| {
-            running
-                .iter()
-                .find(|entry| entry.session_id == claude_id)
-                .and_then(used_outside)
-        };
+        // When each claude outside reframe was last used, and where it runs. Reframe's own
+        // sessions that someone resumed elsewhere are among them.
+        let mut outside: HashMap<&str, (Option<f64>, &Source, &RegistryEntry)> = HashMap::new();
+        for (source, (times, _)) in scan.sources.iter().zip(&read) {
+            for entry in &source.running {
+                let used = times.get(&entry.session_id).copied().or(entry.started_at);
+                outside.insert(entry.session_id.as_str(), (used, source, entry));
+            }
+        }
         let app: Vec<AppListItem> = self
             .state
             .sessions
@@ -232,11 +413,14 @@ impl Controller {
             .filter_map(|record| {
                 let view = self.session_view(&record.id, cx)?;
                 let window = self.window_of(&record.id);
-                let elsewhere = resumed_elsewhere.contains(record.claude_session_id.as_str())
-                    && !sessions.keeps_running(&record.id);
+                let elsewhere =
+                    outside.contains_key(record.claude_session_id.as_str()) && !sessions.keeps_running(&record.id);
                 // Resumed in another terminal, it may have been used there since.
                 let there = if elsewhere {
-                    used_outside_of(&record.claude_session_id).unwrap_or(0.0)
+                    outside
+                        .get(record.claude_session_id.as_str())
+                        .and_then(|(used, ..)| *used)
+                        .unwrap_or(0.0)
                 } else {
                     0.0
                 };
@@ -255,33 +439,48 @@ impl Controller {
                 })
             })
             .collect();
-        let running_items: Vec<RunningListItem> = running
+        let running_items: Vec<RunningListItem> = scan
+            .sources
             .iter()
-            .filter(|entry| !own.contains(entry.session_id.as_str()))
-            .map(|entry| RunningListItem {
+            .flat_map(|source| source.running.iter().map(move |entry| (source, entry)))
+            .filter(|(_, entry)| !own.contains(entry.session_id.as_str()))
+            .map(|(source, entry)| RunningListItem {
                 pid: entry.pid,
                 claude_session_id: entry.session_id.clone(),
-                cwd: entry.cwd.clone().unwrap_or_default(),
+                cwd: windows_path(
+                    source.distro.as_deref(),
+                    entry.cwd.as_deref().unwrap_or_default(),
+                    &share,
+                ),
                 name: entry.name.clone(),
-                last_active_at: used_outside(entry),
-                distro: None,
+                last_active_at: outside.get(entry.session_id.as_str()).and_then(|(used, ..)| *used),
+                distro: source.distro.clone(),
             })
             .filter(|item| matches(query, &[item.name.as_deref(), Some(&item.cwd)]))
             .collect();
-        let found: Vec<FoundListItem> = page
-            .items
-            .into_iter()
-            .filter_map(|info| {
-                Some(FoundListItem {
-                    cwd: info.cwd.filter(|cwd| !cwd.is_empty())?,
-                    claude_session_id: info.session_id,
-                    title: info.title,
-                    modified_at: info.modified_at,
-                    distro: None,
-                })
+        let pages: Vec<(Vec<FoundListItem>, bool)> = scan
+            .sources
+            .iter()
+            .zip(read)
+            .map(|(source, (_, page))| {
+                let items = page
+                    .items
+                    .into_iter()
+                    .filter_map(|info| {
+                        let cwd = info.cwd.filter(|cwd| !cwd.is_empty())?;
+                        Some(FoundListItem {
+                            cwd: windows_path(source.distro.as_deref(), &cwd, &share),
+                            claude_session_id: info.session_id,
+                            title: info.title,
+                            modified_at: info.modified_at,
+                            distro: source.distro.clone(),
+                        })
+                    })
+                    .collect();
+                (items, page.has_more)
             })
             .collect();
-        let (found, has_more) = merge_found(vec![(found, page.has_more)], limit);
+        let (found, has_more) = merge_found(pages, limit);
         let workspaces = self
             .state
             .workspaces
@@ -300,7 +499,7 @@ impl Controller {
             running: running_items,
             found,
             has_more,
-            wsl_stopped: Vec::new(),
+            wsl_stopped: scan.stopped.clone(),
         }
     }
 

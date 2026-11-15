@@ -756,7 +756,27 @@ impl Shell {
         if let Some(list) = &list {
             for distro in &list.wsl_stopped {
                 let note = t(locale, "list.wslStopped", &[("distro", distro)]).unwrap_or_default();
-                scroll = scroll.child(Self::empty_note(note));
+                let start = distro.clone();
+                scroll = scroll.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.0))
+                        .child(Self::empty_note(note).flex_1())
+                        .child(
+                            self.button(
+                                SharedString::from(format!("wsl-start-{distro}")),
+                                text("list.wslStart"),
+                                false,
+                                cx,
+                                move |this, _, cx| {
+                                    this.controller
+                                        .update(cx, |controller, cx| controller.start_wsl(&start, cx));
+                                },
+                            )
+                            .flex_none(),
+                        ),
+                );
             }
             if list.running.is_empty() && list.found.is_empty() {
                 scroll = scroll.child(Self::empty_note(text("list.emptyFound")));

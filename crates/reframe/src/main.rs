@@ -20,6 +20,7 @@ mod tray;
 mod watcher;
 mod win;
 mod window;
+mod wsl;
 
 use gpui_kit::*;
 
@@ -55,6 +56,10 @@ fn parse_args() -> Args {
 fn main() {
     // A copy of reframe started to type into another console: it does only that.
     if let Some(code) = console::run_from_args() {
+        std::process::exit(code);
+    }
+    // A copy of reframe started through a WSL session to tell which program started that session.
+    if let Some(code) = wsl::print_parent_pid_from_args() {
         std::process::exit(code);
     }
     pty::prepare_environment();

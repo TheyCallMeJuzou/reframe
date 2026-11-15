@@ -31,7 +31,6 @@ use reframe_core::session_logic::{SessionError, SessionStatus, is_running};
 use reframe_core::shortcuts::{Shortcut, TextSizeChange};
 use reframe_core::snap::{GRID_STEPS, GridAxis, SplitAxis, snap_sizes};
 use reframe_core::state::{CloseWindow, DockEntry, GroupNode, LayoutNode, Side, SplitDir, WindowState};
-use reframe_core::wsl::parse_wsl_path;
 
 use crate::app::{AppEvent, Controller, SessionView};
 use crate::dialogs;
@@ -518,7 +517,15 @@ impl Shell {
                 .state()
                 .sessions
                 .get(&id)
-                .is_some_and(|record| parse_wsl_path(&record.cwd, None).is_some());
+                .and_then(|record| controller.wsl_place(&record.cwd))
+                .map(|place| crate::terminal_view::WslView {
+                    mount_root: controller
+                        .wsl()
+                        .cached(&place.distro)
+                        .map_or_else(|| "/mnt/".to_owned(), |info| info.mount_root),
+                    share: controller.wsl().share.clone(),
+                    distro: place.distro,
+                });
             // An ended session keeps its last screen until it is started again.
             let Some(terminal) = terminal else { continue };
             if self
