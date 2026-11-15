@@ -47,9 +47,18 @@ notifications with a click that brings the session up, the taskbar button that f
 carries a badge, Ctrl+Shift+Space for the next session that needs you, and sessions that stay
 open when Windows goes down.
 
-Still to come, in this order: the session list (Ctrl+Shift+L) and workspaces; sessions in WSL
-and taking over a session from another terminal; installer and updater. A file that exists only
-in memory (a picture dragged out of a browser) is not taken by a tile yet.
+The session list (Ctrl+Shift+L): reframe's sessions, claudes running in other terminals and past
+sessions from Claude Code's transcripts, with search, "Show more", selecting several
+(Shift/Ctrl+click) to open them together or as a group, rows dragged into the layout, renaming
+and removing; it follows Claude Code's folder as it changes. A conversation that runs in another
+terminal is taken over after asking (Ctrl+C twice there, then resumed here), also one of
+reframe's own that someone resumed elsewhere. Workspaces: a window saved under a name, updated,
+opened again as a window of its own, renamed and deleted, from the toolbar, the list and the
+tray.
+
+Still to come, in this order: sessions in WSL and terminal windows dragged onto reframe;
+installer and updater. A file that exists only in memory (a picture dragged out of a browser) is
+not taken by a tile yet.
 
 Ctrl+Shift+D writes the focused terminal's screen to a text file in the temp folder.
 

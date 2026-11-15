@@ -5,14 +5,20 @@
 //! later milestones is named where it would be: asking before a conversation that runs elsewhere
 //! is taken over, sessions in WSL, the tray, the session list, the system going down.
 
+mod list;
+mod open;
+
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures::FutureExt;
 use futures::channel::mpsc::unbounded;
+use futures::channel::oneshot;
+use futures::future::Shared;
 use gpui_kit::*;
 use reframe_core::actions::{
     LayoutAction, add_tile, apply_layout_action, drop_session, is_window_empty, patch_group, put_node, take_node,
@@ -20,9 +26,10 @@ use reframe_core::actions::{
 };
 use reframe_core::attention::next_waiting;
 use reframe_core::claude::args::LaunchMode;
-use reframe_core::claude::registry::claude_home;
+use reframe_core::claude::registry::{RegistryEntry, claude_home};
 use reframe_core::claude::resolve::{self, ClaudeBinary, NodeRunner, Platform, ResolveOptions, resolve_claude};
 use reframe_core::cleanup::{clean_up, drops_dir};
+use reframe_core::discovery::TranscriptIndex;
 use reframe_core::groups::{is_group_color, next_group_color, next_group_number};
 use reframe_core::hooks::HookServer;
 use reframe_core::i18n::{Locale, locale_of, resolve_locale, t};
@@ -31,6 +38,7 @@ use reframe_core::layout::{
 };
 use reframe_core::log::Logger;
 use reframe_core::paths::home_relative;
+use reframe_core::session_list::SessionList;
 use reframe_core::session_logic::{IdentityPatch, NotifyKind, SessionError, SessionStatus};
 use reframe_core::shortcuts::{TextSizeChange, font_size_after};
 use reframe_core::state::{
@@ -141,7 +149,15 @@ pub enum AppEvent {
     Notify(String, NotifyKind),
     /// A preference changed that windows show (the language, the text size, …).
     Preferences,
+    /// The session list's first page changed (see [`Controller::first_page`]).
+    SessionList,
+    /// Workspaces were saved, renamed, opened or deleted.
+    Workspaces,
+    /// A window is to come to the front.
+    ShowWindow(String),
 }
+
+pub use list::local_time;
 
 /// Why reframe does not start.
 #[derive(Debug)]
@@ -169,6 +185,27 @@ pub struct Controller {
     starts_with_system: bool,
     /// The write that follows frequent changes after a moment.
     save_soon: Option<Task<()>>,
+    claude_home: PathBuf,
+    /// Past sessions in Claude Code's transcripts, listed once and then as they change.
+    transcripts: Arc<Mutex<TranscriptIndex>>,
+    /// Claudes running outside reframe (with a folder), as last looked at; `None` before the
+    /// first look.
+    outside: Option<Vec<RegistryEntry>>,
+    /// A look at what runs outside reframe is under way; another one follows it (`rescan`).
+    scanning: bool,
+    rescan: bool,
+    scan_waiters: Vec<oneshot::Sender<()>>,
+    /// The list's first page as the windows got it last.
+    list_sent: Option<Rc<SessionList>>,
+    /// The windows get the list in a moment.
+    list_push: bool,
+    /// The watcher and the regular look.
+    list_tasks: Vec<Task<()>>,
+    /// Conversations being adopted from the list (by claude session id): asked for twice, it is
+    /// one adoption.
+    adopting: HashMap<String, Shared<Task<Option<SessionRecord>>>>,
+    /// Sessions whose start waits for an answer (whether to take one over that runs elsewhere).
+    starts_pending: HashSet<String>,
     _session_events: Subscription,
 }
 
@@ -255,6 +292,7 @@ impl Controller {
         }
 
         let claude_home = claude_home(&config.env, &config.home);
+        let transcripts = Arc::new(Mutex::new(TranscriptIndex::new(claude_home.clone())));
         cx.set_global(TerminalFontSize(f32::from(state.preferences.font_size)));
         let claude_bin = Rc::new(RefCell::new(state.preferences.claude_bin.clone()));
         let found = find_claude(&config, claude_bin.borrow().as_deref());
@@ -284,7 +322,7 @@ impl Controller {
         .map_err(StartError::Hooks)?;
 
         let deps = SessionManagerDeps {
-            claude_home,
+            claude_home: claude_home.clone(),
             settings_dir: config.user_data.join("hooks"),
             hooks_port: hooks.port(),
             hooks_token: hooks.token().to_owned(),
@@ -296,7 +334,11 @@ impl Controller {
         };
         let sessions = cx.new(|cx| SessionManager::new(deps, hook_receiver, cx));
         let session_events = cx.subscribe(&sessions, |this, _, event, cx| match event {
-            SessionEvent::Changed(id) => cx.emit(AppEvent::Session(id.clone())),
+            SessionEvent::Changed(id) => {
+                cx.emit(AppEvent::Session(id.clone()));
+                // Its status shows in the list.
+                this.list_changed(cx);
+            }
             SessionEvent::Identity(id, patch) => this.update_identity(id, patch, cx),
             SessionEvent::Notify(id, kind) => cx.emit(AppEvent::Notify(id.clone(), *kind)),
             SessionEvent::Used(id) => this.session_used(id, cx),
@@ -306,7 +348,18 @@ impl Controller {
         // The end-to-end tests leave the system alone.
         let starts_with_system =
             !config.e2e && crate::win::registry_text(crate::win::RUN_KEY, AUTOSTART_NAME).is_some();
-        Ok(Self {
+        let mut controller = Self {
+            claude_home,
+            transcripts,
+            outside: None,
+            scanning: false,
+            rescan: false,
+            scan_waiters: Vec::new(),
+            list_sent: None,
+            list_push: false,
+            list_tasks: Vec::new(),
+            adopting: HashMap::new(),
+            starts_pending: HashSet::new(),
             starts_with_system,
             system_ending: None,
             ended_while_system_ending: HashSet::new(),
@@ -320,7 +373,9 @@ impl Controller {
             shutting_down: false,
             save_soon: None,
             _session_events: session_events,
-        })
+        };
+        controller.watch_list(cx);
+        Ok(controller)
     }
 
     pub fn state(&self) -> &AppState {
@@ -760,18 +815,25 @@ impl Controller {
             .find(|group| group.id == group_id)
     }
 
-    /// Frames a tile as a new group, named "Group n" with the next free colour.
-    pub fn create_group(&mut self, session_id: &str, cx: &mut Context<Self>) {
-        let Some(window_id) = self.window_of(session_id).map(|window| window.id.clone()) else {
-            return;
-        };
+    /// A new group's name ("Group n") and the next free colour.
+    fn new_group_look(&self) -> (String, String) {
         let locale = self.locale();
         let name_for = |n: u32| t(locale, "group.defaultName", &[("n", &n.to_string())]).unwrap_or_default();
         let existing: Vec<&GroupNode> = self.state.windows.iter().flat_map(window_groups).collect();
         let names: Vec<&str> = existing.iter().map(|group| group.name.as_str()).collect();
         let colors: Vec<&str> = existing.iter().map(|group| group.color.as_str()).collect();
-        let name = name_for(next_group_number(&names, name_for));
-        let color = next_group_color(&colors).to_owned();
+        (
+            name_for(next_group_number(&names, name_for)),
+            next_group_color(&colors).to_owned(),
+        )
+    }
+
+    /// Frames a tile as a new group, named "Group n" with the next free colour.
+    pub fn create_group(&mut self, session_id: &str, cx: &mut Context<Self>) {
+        let Some(window_id) = self.window_of(session_id).map(|window| window.id.clone()) else {
+            return;
+        };
+        let (name, color) = self.new_group_look();
         self.log.info(
             "group created",
             Some(json!({ "session": session_id, "name": name, "color": color })),
@@ -866,8 +928,10 @@ impl Controller {
             .map(|record| record.id.clone())
             .collect();
         for id in open {
+            // On the start nobody can be asked: one whose conversation runs elsewhere now waits
+            // for "Take over".
             if self.window_of(&id).is_some() {
-                self.start_session(&id, LaunchMode::Resume, cx);
+                self.start_or_take_over(&id, LaunchMode::Resume, None, cx);
             } else {
                 self.update_session(&id, false, cx, |record| record.lifecycle = Lifecycle::Ended);
             }
@@ -896,12 +960,13 @@ impl Controller {
 
     // ---------- saving ----------
 
-    fn save(&mut self, _: &mut Context<Self>) {
+    fn save(&mut self, cx: &mut Context<Self>) {
         self.save_soon = None;
         if let Err(error) = self.store.save_now(&self.state) {
             self.log
                 .error("state could not be saved", Some(json!({ "error": error.to_string() })));
         }
+        self.list_changed(cx);
     }
 
     /// Changes that come often (a session used, a window moved): written in a moment, once.
@@ -1029,6 +1094,7 @@ impl Controller {
         record.last_active_at = now_ms();
         // Every prompt and answer: written with the next save, or in a moment.
         self.save_later(cx);
+        self.list_changed(cx);
     }
 
     /// A session ended by itself (not by reframe): it stays in its tile as ended.
@@ -1044,19 +1110,6 @@ impl Controller {
             return;
         }
         self.update_session(session_id, true, cx, |record| record.lifecycle = Lifecycle::Ended);
-    }
-
-    /// Starts a session's process. A conversation that runs outside reframe already is not looked
-    /// for yet (that comes with the session list, which knows what runs elsewhere).
-    fn start_session(&mut self, session_id: &str, mode: LaunchMode, cx: &mut Context<Self>) {
-        let Some(record) = self.state.sessions.get(session_id).cloned() else {
-            return;
-        };
-        if self.window_of(session_id).is_none() || self.sessions.read(cx).keeps_running(session_id) {
-            return;
-        }
-        self.sessions
-            .update(cx, |sessions, cx| sessions.start(&record, mode, cx));
     }
 
     /// A new session with a tile in that window; its id, or why there is none.
@@ -1132,7 +1185,9 @@ impl Controller {
         }
         record.lifecycle = Lifecycle::Open;
         self.save(cx);
-        self.start_session(session_id, if fresh { LaunchMode::New } else { LaunchMode::Resume }, cx);
+        let window_id = self.window_of(session_id).map(|window| window.id.clone());
+        let mode = if fresh { LaunchMode::New } else { LaunchMode::Resume };
+        self.start_or_take_over(session_id, mode, window_id, cx);
         cx.emit(AppEvent::Session(session_id.to_owned()));
     }
 

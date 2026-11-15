@@ -142,6 +142,7 @@ fn the_tray_shows_and_hides_windows_and_is_the_way_to_quit() {
                 Value::Null,
                 json!("New session"),
                 json!("New window"),
+                json!("Workspaces"),
                 Value::Null,
                 json!("About reframe"),
                 json!("Quit reframe"),

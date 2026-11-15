@@ -20,6 +20,8 @@ use crate::window::{self, Shell};
 
 /// What the entries of the tray menu are known by; a window's entry is this plus its place.
 const WINDOW: u32 = 1000;
+/// Saved workspaces, by their place in the state.
+const WORKSPACE: u32 = 2000;
 const NEW_SESSION: u32 = 1;
 const NEW_WINDOW: u32 = 2;
 const ABOUT: u32 = 3;
@@ -141,6 +143,29 @@ fn refresh_with(controller: &Entity<Controller>, badges: &mut Option<HashMap<Str
             }
         })
         .collect();
+    let mut workspaces: Vec<TrayEntry> = controller
+        .workspace_items()
+        .into_iter()
+        .enumerate()
+        .map(|(index, (_, name, open))| TrayEntry::Item {
+            id: WORKSPACE + index as u32,
+            label: if open {
+                format!("{name} {}", text("workspace.openMark"))
+            } else {
+                name
+            },
+            checked: None,
+            enabled: true,
+        })
+        .collect();
+    if workspaces.is_empty() {
+        workspaces.push(TrayEntry::Item {
+            id: 0,
+            label: text("workspace.none"),
+            checked: None,
+            enabled: false,
+        });
+    }
     let item = |id: u32, key: &str| TrayEntry::Item {
         id,
         label: text(key),
@@ -151,6 +176,10 @@ fn refresh_with(controller: &Entity<Controller>, badges: &mut Option<HashMap<Str
         TrayEntry::Separator,
         item(NEW_SESSION, "tray.newSession"),
         item(NEW_WINDOW, "tray.newWindow"),
+        TrayEntry::Submenu {
+            label: text("tray.workspaces"),
+            children: workspaces,
+        },
         TrayEntry::Separator,
         item(ABOUT, "tray.about"),
         item(QUIT, "tray.quit"),
@@ -254,6 +283,17 @@ pub fn handle(controller: &Entity<Controller>, event: TrayEvent, cx: &mut App) {
             }
         }
         TrayEvent::Command(QUIT) => controller.update(cx, |controller, cx| controller.shutdown(cx)),
+        TrayEvent::Command(id) if id >= WORKSPACE => {
+            let index = (id - WORKSPACE) as usize;
+            let workspace = controller
+                .read(cx)
+                .workspace_items()
+                .get(index)
+                .map(|(id, ..)| id.clone());
+            if let Some(workspace) = workspace {
+                controller.update(cx, |controller, cx| controller.open_workspace(&workspace, cx));
+            }
+        }
         // A window's entry: shown when it is hidden, hidden when it is shown.
         TrayEvent::Command(id) => {
             let index = id.saturating_sub(WINDOW) as usize;

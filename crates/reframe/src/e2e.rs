@@ -19,6 +19,7 @@ use serde_json::{Value, json};
 use reframe_core::actions::LayoutAction;
 use reframe_core::geometry::Rect;
 use reframe_core::layout::{DropTarget, find_node, tile_key};
+use reframe_core::session_list::SessionList;
 use reframe_core::state::{CloseWindow, Side};
 
 use crate::app::{Controller, NewSessionRequest};
@@ -134,13 +135,7 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
         // The tray icon's tooltip and menu; a separator is null.
         Some("tray") => {
             let (tooltip, menu) = win::tray();
-            let menu: Vec<Value> = menu
-                .iter()
-                .map(|entry| match entry {
-                    TrayEntry::Separator => Value::Null,
-                    TrayEntry::Item { label, checked, .. } => json!({ "label": label, "checked": checked }),
-                })
-                .collect();
+            let menu: Vec<Value> = menu.iter().map(tray_json).collect();
             json!({ "tooltip": tooltip, "menu": menu })
         }
         // A click on the tray icon ("icon") or on the entry of its menu with that label.
@@ -149,10 +144,7 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
                 Some(TrayEvent::Clicked)
             } else {
                 let label = text("label").unwrap_or_default();
-                win::tray().1.iter().find_map(|entry| match entry {
-                    TrayEntry::Item { id, label: found, .. } if *found == label => Some(TrayEvent::Command(*id)),
-                    _ => None,
-                })
+                tray_command(&win::tray().1, &label).map(TrayEvent::Command)
             };
             match event {
                 Some(event) => {
@@ -504,8 +496,21 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
             let renaming = match shell.read(cx).renaming() {
                 Some(RenameTarget::Session(id)) => (Some(id.clone()), None),
                 Some(RenameTarget::Group(id)) => (None, Some(id.clone())),
-                None => (None, None),
+                _ => (None, None),
             };
+            let renaming_list = match shell.read(cx).renaming() {
+                Some(RenameTarget::ListSession(id)) => json!({ "session": id }),
+                Some(RenameTarget::Workspace(id)) => json!({ "workspace": id }),
+                _ => Value::Null,
+            };
+            let question = shell.read(cx).question().map(|question| {
+                json!({
+                    "title": question.title,
+                    "message": question.message,
+                    "confirm": question.confirm,
+                    "cancel": question.cancel,
+                })
+            });
             let screen = window.bounds();
             json!({
                 "dialog": window.has_active_dialog(cx),
@@ -519,6 +524,11 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
                 "size": [f32::from(window.bounds().size.width), f32::from(window.bounds().size.height)],
                 "renaming": renaming.0,
                 "renamingGroup": renaming.1,
+                "renamingInList": renaming_list,
+                "question": question,
+                "sidebar": shell.read(cx).sidebar_open(cx),
+                "selected": shell.read(cx).selected_rows(),
+                "newFound": shell.read(cx).new_found(cx),
                 "menu": shell.read(cx).menu().map(menu_json),
                 "asking": shell.read(cx).asking_to_close(),
                 "away": shell.read(cx).is_away(),
@@ -534,6 +544,95 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
                 })),
             })
         }),
+        // The session list as a window shows it.
+        Some("list") => match shell_of(controller, text("window"), cx) {
+            Some(shell) => shell.read(cx).shown_list().map_or(Value::Null, |list| list_json(&list)),
+            None => json!({ "error": "no window" }),
+        },
+        // Shows the session list or takes it away (Ctrl+L).
+        Some("sidebar") => in_window(controller, text("window"), cx, |shell, window, cx| {
+            shell.update(cx, |shell, cx| shell.toggle_sidebar(window, cx));
+            json!({ "ok": true })
+        }),
+        // Types into the list's search box.
+        Some("search") => in_window(controller, text("window"), cx, |shell, window, cx| {
+            let value = text("text").unwrap_or_default();
+            shell.update(cx, |shell, cx| shell.set_search(value, window, cx));
+            json!({ "ok": true })
+        }),
+        // A click on a list row (by its key, as "app:<id>" or "claude:<id>").
+        Some("row_click") => in_window(controller, text("window"), cx, |shell, _, cx| {
+            let row = shell.read(cx).row_of(&text("row").unwrap_or_default());
+            match row {
+                Some(row) => {
+                    shell.update(cx, |shell, cx| shell.click_row(&row, flag("shift"), flag("ctrl"), cx));
+                    json!({ "ok": true })
+                }
+                None => json!({ "ok": false }),
+            }
+        }),
+        // A right-click on a list row: its menu opens (see "menu_click").
+        Some("row_menu") => in_window(controller, text("window"), cx, |shell, window, cx| {
+            let row = shell.read(cx).row_of(&text("row").unwrap_or_default());
+            let Some(row) = row else { return json!({ "ok": false }) };
+            shell.update(cx, |shell, cx| {
+                let entries = shell.row_menu(&row, cx);
+                shell.show_menu(entries, point(px(40.0), px(80.0)), window, cx);
+            });
+            json!({ "ok": true, "menu": shell.read(cx).menu().map(menu_json) })
+        }),
+        // The toolbar's Workspaces menu opens (see "menu_click").
+        Some("workspace_menu") => in_window(controller, text("window"), cx, |shell, window, cx| {
+            shell.update(cx, |shell, cx| {
+                let entries = shell.workspace_menu(cx);
+                shell.show_menu(entries, point(px(320.0), px(36.0)), window, cx);
+            });
+            json!({ "ok": true, "menu": shell.read(cx).menu().map(menu_json) })
+        }),
+        // List rows let go at a point of a window (`at`, by default the window itself).
+        Some("row_drop") => match shell_of(controller, text("window"), cx) {
+            Some(shell) => {
+                let keys: Vec<String> = command
+                    .get("rows")
+                    .and_then(Value::as_array)
+                    .map(|rows| rows.iter().filter_map(Value::as_str).map(str::to_owned).collect())
+                    .unwrap_or_default();
+                let refs: Vec<_> = keys.iter().filter_map(|key| shell.read(cx).row_of(key)).collect();
+                let at = text("at").or_else(|| Some(shell.read(cx).window_id().to_owned()));
+                let place = at.map(|id| (id, point(px(number("x") as f32), px(number("y") as f32))));
+                let result = shell.update(cx, |shell, cx| shell.drop_rows(refs, place, cx));
+                json!({ "result": result })
+            }
+            None => json!({ "error": "no window" }),
+        },
+        // Answers the open question.
+        Some("answer") => in_window(controller, text("window"), cx, |shell, window, cx| {
+            shell.update(cx, |shell, cx| shell.answer_question(flag("yes"), window, cx));
+            json!({ "ok": true })
+        }),
+        Some("workspace") => {
+            let window_id = text("window")
+                .or_else(|| {
+                    controller
+                        .read(cx)
+                        .state()
+                        .windows
+                        .first()
+                        .map(|window| window.id.clone())
+                })
+                .unwrap_or_default();
+            let id = text("id").unwrap_or_default();
+            let name = text("name").unwrap_or_default();
+            controller.update(cx, |controller, cx| match text("action").as_deref() {
+                Some("save") => controller.save_workspace(&window_id, &name, cx),
+                Some("update") => controller.update_workspace(&window_id, cx),
+                Some("open") => controller.open_workspace(&id, cx),
+                Some("rename") => controller.rename_workspace(&id, &name, cx),
+                Some("delete") => controller.delete_workspace(&window_id, &id, cx),
+                _ => {}
+            });
+            json!({ "ok": true })
+        }
         Some("quit") => {
             controller.update(cx, |controller, cx| controller.shutdown(cx));
             json!({ "ok": true })
@@ -543,6 +642,64 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
 }
 
 /// A menu as tests read it: every entry's label, whether it can be picked, and its submenu.
+fn tray_json(entry: &TrayEntry) -> Value {
+    match entry {
+        TrayEntry::Separator => Value::Null,
+        TrayEntry::Item { label, checked, .. } => json!({ "label": label, "checked": checked }),
+        TrayEntry::Submenu { label, children } => {
+            json!({ "label": label, "children": children.iter().map(tray_json).collect::<Vec<_>>() })
+        }
+    }
+}
+
+/// The command of the tray menu's entry with that label, in submenus too.
+fn tray_command(entries: &[TrayEntry], label: &str) -> Option<u32> {
+    entries.iter().find_map(|entry| match entry {
+        TrayEntry::Item {
+            id,
+            label: found,
+            enabled,
+            ..
+        } if found == label && *enabled => Some(*id),
+        TrayEntry::Submenu { children, .. } => tray_command(children, label),
+        _ => None,
+    })
+}
+
+fn list_json(list: &SessionList) -> Value {
+    json!({
+        "workspaces": list.workspaces.iter().map(|item| json!({
+            "id": item.id,
+            "name": item.name,
+            "sessions": item.sessions,
+            "open": item.open,
+        })).collect::<Vec<_>>(),
+        "app": list.app.iter().map(|item| json!({
+            "id": item.id,
+            "label": item.label,
+            "cwd": item.cwd,
+            "status": status_name(item.status),
+            "window": item.window_id,
+            "windowNumber": item.window_number,
+            "lastActiveAt": item.last_active_at,
+            "elsewhere": item.elsewhere,
+        })).collect::<Vec<_>>(),
+        "running": list.running.iter().map(|item| json!({
+            "pid": item.pid,
+            "claudeSessionId": item.claude_session_id,
+            "cwd": item.cwd,
+            "name": item.name,
+        })).collect::<Vec<_>>(),
+        "found": list.found.iter().map(|item| json!({
+            "claudeSessionId": item.claude_session_id,
+            "cwd": item.cwd,
+            "title": item.title,
+            "modifiedAt": item.modified_at,
+        })).collect::<Vec<_>>(),
+        "hasMore": list.has_more,
+    })
+}
+
 fn menu_json(entries: &[MenuEntry]) -> Value {
     entries
         .iter()

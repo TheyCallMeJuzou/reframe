@@ -6,9 +6,13 @@
 //! `reframe_core::geometry` rather than by flex boxes, so the same rectangles serve drawing,
 //! dragging and moving the focus.
 
+mod sidebar;
+
 use std::collections::HashMap;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+use futures::channel::oneshot;
 
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
@@ -22,6 +26,7 @@ use reframe_core::geometry::{Metrics, Placement, Rect, drag_sizes, place, shares
 use reframe_core::groups::GROUP_COLORS;
 use reframe_core::i18n::{Locale, t};
 use reframe_core::layout::{DropTarget, find_node, group_of, groups, leaves, set_split_sizes, tile, tile_key};
+use reframe_core::session_list::{ListItemRef, OpenMode};
 use reframe_core::session_logic::{SessionError, SessionStatus, is_running};
 use reframe_core::shortcuts::{Shortcut, TextSizeChange};
 use reframe_core::snap::{GRID_STEPS, GridAxis, SplitAxis, snap_sizes};
@@ -56,6 +61,9 @@ struct SeparatorDrag {
 pub enum RenameTarget {
     Session(String),
     Group(String),
+    /// A session in the session list.
+    ListSession(String),
+    Workspace(String),
 }
 
 /// A tile or a group, as something to drag.
@@ -80,6 +88,8 @@ struct NodeDrag {
     started: bool,
     /// The other window that shows where a drop would go.
     preview_in: Option<String>,
+    /// Rows of the session list are dragged, not a tile or group of the layout.
+    list: Option<Vec<ListItemRef>>,
 }
 
 /// What a menu entry does.
@@ -87,12 +97,58 @@ struct NodeDrag {
 pub enum MenuAction {
     RenameSession(String),
     NewGroup(String),
-    AddToGroup { session: String, group: String },
+    AddToGroup {
+        session: String,
+        group: String,
+    },
     RemoveFromGroup(String),
     RenameGroup(String),
-    RecolorGroup { group: String, color: String },
+    RecolorGroup {
+        group: String,
+        color: String,
+    },
     DissolveGroup(String),
     EndGroup(String),
+    /// Session list entries opened in this window.
+    OpenList {
+        refs: Vec<ListItemRef>,
+        mode: OpenMode,
+    },
+    RenameListSession(String),
+    SaveWorkspace,
+    UpdateWorkspace,
+    OpenWorkspace(String),
+    RenameWorkspace(String),
+    DeleteWorkspace(String),
+}
+
+/// A question to the user with one or two answers.
+#[derive(Clone, Debug)]
+pub struct Question {
+    pub title: String,
+    pub message: String,
+    pub detail: Option<String>,
+    pub confirm: String,
+    /// Without one, there is only the one answer (something that did not work).
+    pub cancel: Option<String>,
+    /// What it confirms cannot be undone.
+    pub danger: bool,
+}
+
+/// Asks the user in a window; the answer comes once it is given (no when the window is gone,
+/// the dialog was closed, or another question took its place).
+pub fn ask(window_id: &str, question: Question, cx: &mut App) -> oneshot::Receiver<bool> {
+    let (answer, receiver) = oneshot::channel();
+    if let Some(shell) = shell(window_id, cx) {
+        let handle = shell.read(cx).handle;
+        // Not inside another update of the window: the dialog opens right after.
+        cx.defer(move |cx| {
+            let _ = handle.update(cx, |_, window, cx| {
+                shell.update(cx, |shell, cx| shell.ask(question, answer, window, cx));
+            });
+        });
+    }
+    receiver
 }
 
 /// An entry of a tile's or group's menu. The menus only describe the choices (as the Electron
@@ -234,6 +290,10 @@ pub struct Shell {
     files_over: Option<String>,
     /// The question whether to end the window's sessions is open.
     asking_to_close: bool,
+    /// A question that waits for its answer, and where the answer goes.
+    question: Option<(Question, oneshot::Sender<bool>)>,
+    /// The session list.
+    list: sidebar::ListView,
     /// Closed by the user and out of sight, its sessions running on.
     away: bool,
     /// The window is the one the user works in.
@@ -340,7 +400,9 @@ impl Shell {
                 this.zoomed = None;
                 this.sync(cx);
             }
-            AppEvent::Preferences => cx.notify(),
+            AppEvent::Preferences | AppEvent::Workspaces => cx.notify(),
+            AppEvent::SessionList => this.first_page_changed(cx),
+            AppEvent::ShowWindow(id) if *id == this.window_id => this.show(true, cx),
             AppEvent::WindowClosed(id) if *id == this.window_id => this.close_for_good(cx),
             AppEvent::WindowPutAway(id) if *id == this.window_id => this.put_away(cx),
             AppEvent::FocusTile { window, session } if *window == this.window_id => {
@@ -357,7 +419,11 @@ impl Shell {
             }
         })
         .detach();
+        let list = sidebar::ListView::new(controller.read(cx).locale(), window, cx);
+        let first_page = controller.read(cx).first_page();
         let mut shell = Self {
+            list,
+            question: None,
             controller,
             window_id,
             handle,
@@ -386,6 +452,10 @@ impl Shell {
             _events: events,
         };
         shell.sync(cx);
+        match first_page {
+            Some(list) => shell.apply_list(list, cx),
+            None => shell.reload_list(cx),
+        }
         shell
     }
 
@@ -419,9 +489,12 @@ impl Shell {
             self.find = None;
         }
         let layout = self.window_state(cx).and_then(|window| window.layout.as_ref());
+        let state = self.controller.read(cx).state();
         let gone = match self.renaming.as_ref().map(|renaming| &renaming.target) {
             Some(RenameTarget::Session(id)) => !tiles.contains(id),
             Some(RenameTarget::Group(id)) => find_node(layout, id).is_none(),
+            Some(RenameTarget::ListSession(id)) => !state.sessions.contains_key(id),
+            Some(RenameTarget::Workspace(id)) => !state.workspaces.iter().any(|workspace| workspace.id == *id),
             None => false,
         };
         if gone {
@@ -431,7 +504,7 @@ impl Shell {
         if self
             .node_drag
             .as_ref()
-            .is_some_and(|drag| find_node(layout, &drag.key).is_none())
+            .is_some_and(|drag| drag.list.is_none() && find_node(layout, &drag.key).is_none())
         {
             self.cancel_node_drag(cx);
         }
@@ -871,6 +944,52 @@ impl Shell {
                 controller.update(cx, |controller, cx| controller.dissolve_group(group, cx));
             }
             MenuAction::EndGroup(group) => controller.update(cx, |controller, cx| controller.end_group(group, cx)),
+            MenuAction::OpenList { refs, mode } => {
+                let window_id = self.window_id.clone();
+                controller.update(cx, |controller, cx| {
+                    controller.open_sessions(&window_id, refs.clone(), *mode, None, cx);
+                });
+            }
+            MenuAction::RenameListSession(session) => {
+                let Some(view) = controller.read(cx).session_view(session, cx) else {
+                    return;
+                };
+                let placeholder = self.text("session.automaticName", cx);
+                let target = RenameTarget::ListSession(session.clone());
+                self.begin_rename(target, view.label, placeholder, window, cx);
+            }
+            MenuAction::SaveWorkspace => dialogs::open_save_workspace(&controller, &self.window_id, window, cx),
+            MenuAction::UpdateWorkspace => {
+                let window_id = self.window_id.clone();
+                controller.update(cx, |controller, cx| controller.update_workspace(&window_id, cx));
+            }
+            MenuAction::OpenWorkspace(workspace) => {
+                controller.update(cx, |controller, cx| controller.open_workspace(workspace, cx));
+            }
+            MenuAction::RenameWorkspace(workspace) => {
+                let name = controller
+                    .read(cx)
+                    .state()
+                    .workspaces
+                    .iter()
+                    .find(|saved| saved.id == *workspace)
+                    .map(|saved| saved.name.clone());
+                if let Some(name) = name {
+                    self.begin_rename(
+                        RenameTarget::Workspace(workspace.clone()),
+                        name,
+                        String::new(),
+                        window,
+                        cx,
+                    );
+                }
+            }
+            MenuAction::DeleteWorkspace(workspace) => {
+                let window_id = self.window_id.clone();
+                controller.update(cx, |controller, cx| {
+                    controller.delete_workspace(&window_id, workspace, cx)
+                });
+            }
         }
     }
 
@@ -889,7 +1008,7 @@ impl Shell {
         let renamed = match self.renaming.as_ref().map(|renaming| &renaming.target) {
             Some(RenameTarget::Session(id)) => tile_key(id) == key,
             Some(RenameTarget::Group(id)) => *id == key,
-            None => false,
+            _ => false,
         };
         if renamed {
             return;
@@ -927,6 +1046,7 @@ impl Shell {
             size: (rect.width, rect.height),
             started: false,
             preview_in: None,
+            list: None,
         });
         cx.notify();
     }
@@ -1105,6 +1225,10 @@ impl Shell {
             return;
         }
         let place = self.window_at(position, cx.entity_id(), window, cx);
+        if let Some(refs) = drag.list {
+            self.drop_rows(refs, place, cx);
+            return;
+        }
         let screen = window.bounds().origin + position;
         self.drop_node(&drag.key, drag.kind, place, screen, Some(drag.size), cx);
     }
@@ -1314,7 +1438,7 @@ impl Shell {
                 });
             }
             // The session list follows with its milestone.
-            Shortcut::ToggleSidebar => {}
+            Shortcut::ToggleSidebar => self.toggle_sidebar(window, cx),
         }
     }
 
@@ -1569,7 +1693,50 @@ impl Shell {
                 }
                 cx.notify();
             }
+            RenameTarget::ListSession(session_id) => {
+                if changed {
+                    self.controller.update(cx, |controller, cx| {
+                        controller.rename_session(&session_id, &name, cx);
+                    });
+                }
+                cx.notify();
+            }
+            RenameTarget::Workspace(workspace_id) => {
+                if changed && !name.is_empty() {
+                    self.controller.update(cx, |controller, cx| {
+                        controller.rename_workspace(&workspace_id, &name, cx);
+                    });
+                }
+                cx.notify();
+            }
         }
+    }
+
+    // ---------- questions ----------
+
+    /// Opens a question; the answer goes to `answer`. One that was open is answered with no.
+    fn ask(&mut self, question: Question, answer: oneshot::Sender<bool>, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((_, previous)) = self.question.take() {
+            let _ = previous.send(false);
+            window.close_dialog(cx);
+        }
+        self.question = Some((question.clone(), answer));
+        dialogs::open_question(cx.weak_entity(), question, window, cx);
+        cx.notify();
+    }
+
+    /// The user answered the open question.
+    pub fn answer_question(&mut self, yes: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((_, answer)) = self.question.take() {
+            let _ = answer.send(yes);
+            window.close_dialog(cx);
+        }
+        cx.notify();
+    }
+
+    /// The open question, for tests.
+    pub fn question(&self) -> Option<&Question> {
+        self.question.as_ref().map(|(question, _)| question)
     }
 
     /// What is being renamed, for tests to type into.
@@ -2273,12 +2440,86 @@ impl Shell {
                 .gap(px(6.0))
                 .tooltip(move |window, cx| Tooltip::new(hint.clone()).build(window, cx)),
             )
+            .child({
+                let open = self.sidebar_open(cx);
+                let hint = format!(
+                    "{} ({})",
+                    self.text("toolbar.sessions", cx),
+                    keys::label(locale, "L", true)
+                );
+                let dot = self.new_found(cx);
+                let dot_hint = self.text("list.newFound", cx);
+                self.button(
+                    "sessions",
+                    self.text("toolbar.sessions", cx),
+                    false,
+                    cx,
+                    |this, window, cx| {
+                        this.toggle_sidebar(window, cx);
+                    },
+                )
+                .relative()
+                .when(open, |button| {
+                    button
+                        .bg(rgb(theme::ACCENT).opacity(0.18))
+                        .border_color(rgb(theme::ACCENT))
+                })
+                .tooltip(move |window, cx| {
+                    let text = if dot {
+                        format!("{hint}\n{dot_hint}")
+                    } else {
+                        hint.clone()
+                    };
+                    Tooltip::new(text).build(window, cx)
+                })
+                .when(dot, |button| {
+                    button.child(
+                        div()
+                            .absolute()
+                            .top(px(-3.0))
+                            .right(px(-3.0))
+                            .size(px(8.0))
+                            .rounded_full()
+                            .bg(rgb(theme::ACCENT)),
+                    )
+                })
+            })
             .child(
                 self.button("new-window", new_window, false, cx, |this, _, cx| {
                     this.new_window(cx);
                 })
                 .tooltip(move |window, cx| Tooltip::new(window_hint.clone()).build(window, cx)),
             )
+            .child({
+                let current = {
+                    let controller = self.controller.read(cx);
+                    self.window_state(cx)
+                        .and_then(|window| controller.workspace_of(window))
+                        .map(|workspace| workspace.name.clone())
+                };
+                let label = current.clone().unwrap_or_else(|| self.text("toolbar.workspaces", cx));
+                let hint = match &current {
+                    Some(name) => format!("{}: {name}", self.text("toolbar.workspaces", cx)),
+                    None => self.text("toolbar.workspaces", cx),
+                };
+                // The menu opens below the button, where it was clicked.
+                self.button("workspaces", label, false, cx, |_, _, _| {})
+                    .on_click(cx.listener(|this, event: &ClickEvent, window, cx| {
+                        let entries = this.workspace_menu(cx);
+                        let at = point(event.position().x, px(theme::TOOLBAR - 4.0));
+                        this.show_menu(entries, at, window, cx);
+                    }))
+                    .max_w(px(220.0))
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .when(current.is_some(), |button| {
+                        button
+                            .bg(rgb(theme::ACCENT).opacity(0.18))
+                            .border_color(rgb(theme::ACCENT))
+                    })
+                    .tooltip(move |window, cx| Tooltip::new(hint.clone()).build(window, cx))
+            })
             .child(div().flex_1())
             .when(window.is_fullscreen(), |bar| {
                 let hint = format!("{} (F11)", self.text("fullscreen.exit", cx));
@@ -2444,6 +2685,13 @@ impl Render for Shell {
         if self.asking_to_close && !window.has_active_dialog(cx) {
             self.asking_to_close = false;
         }
+        // A question closed without an answer (Escape, a click beside it) was answered no.
+        if self.question.is_some()
+            && !window.has_active_dialog(cx)
+            && let Some((_, answer)) = self.question.take()
+        {
+            let _ = answer.send(false);
+        }
         // Files that were dragged over a tile left the window again.
         if self.files_over.is_some() && !cx.has_active_drag() {
             self.files_over = None;
@@ -2487,6 +2735,7 @@ impl Render for Shell {
             .relative()
             .flex_1()
             .min_h_0()
+            .h_full()
             .p(px(theme::LAYOUT_PADDING))
             .child(LayoutElement { shell: cx.entity() });
         if empty {
@@ -2510,7 +2759,11 @@ impl Render for Shell {
                     ))),
             );
         }
-        root = root.child(area);
+        let mut body = div().flex_1().min_h_0().flex();
+        if self.sidebar_open(cx) {
+            body = body.child(self.sidebar(window, cx));
+        }
+        root = root.child(body.child(area.min_w_0()));
         // Over everything: where a drop would go, what is being dragged, and an open menu.
         if let Some(rect) = self.drop_preview {
             root = root.child(

@@ -33,11 +33,11 @@ use windows::Win32::UI::Shell::{
 use windows::Win32::UI::WindowsAndMessaging::{
     AllowSetForegroundWindow, AppendMenuW, CreateIconFromResourceEx, CreateIconIndirect, CreatePopupMenu,
     CreateWindowExW, DefWindowProcW, DestroyMenu, FLASHW_TIMERNOFG, FLASHW_TRAY, FLASHWINFO, FindWindowW,
-    FlashWindowEx, GetCursorPos, GetSystemMetrics, GetWindowThreadProcessId, HICON, ICONINFO, IsIconic,
-    IsWindowVisible, LR_DEFAULTCOLOR, MF_CHECKED, MF_GRAYED, MF_SEPARATOR, MF_STRING, PostMessageW, RegisterClassW,
-    RegisterWindowMessageW, SM_CXSMICON, SW_HIDE, SW_RESTORE, SW_SHOW, SW_SHOWNA, SetForegroundWindow, ShowWindowAsync,
-    TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP,
-    WM_CONTEXTMENU, WM_ENDSESSION, WM_LBUTTONUP, WM_NULL, WM_QUERYENDSESSION, WM_RBUTTONUP, WNDCLASSW,
+    FlashWindowEx, GetCursorPos, GetSystemMetrics, GetWindowThreadProcessId, HICON, HMENU, ICONINFO, IsIconic,
+    IsWindowVisible, LR_DEFAULTCOLOR, MF_CHECKED, MF_GRAYED, MF_POPUP, MF_SEPARATOR, MF_STRING, PostMessageW,
+    RegisterClassW, RegisterWindowMessageW, SM_CXSMICON, SW_HIDE, SW_RESTORE, SW_SHOW, SW_SHOWNA, SetForegroundWindow,
+    ShowWindowAsync, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu, WINDOW_EX_STYLE, WINDOW_STYLE,
+    WM_APP, WM_CONTEXTMENU, WM_ENDSESSION, WM_LBUTTONUP, WM_NULL, WM_QUERYENDSESSION, WM_RBUTTONUP, WNDCLASSW,
 };
 use windows::core::{HSTRING, PCWSTR, w};
 
@@ -183,6 +183,50 @@ pub enum TrayEntry {
         enabled: bool,
     },
     Separator,
+    /// An entry that opens more entries.
+    Submenu {
+        label: String,
+        children: Vec<TrayEntry>,
+    },
+}
+
+/// Fills a native menu with entries (a submenu is a menu of its own, which its parent destroys).
+///
+/// # Safety
+/// `menu` is a menu made by `CreatePopupMenu` that has not been destroyed.
+unsafe fn fill_menu(menu: HMENU, entries: &[TrayEntry]) {
+    for entry in entries {
+        // SAFETY: as the caller promises; the strings outlive the calls.
+        unsafe {
+            match entry {
+                TrayEntry::Separator => {
+                    let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
+                }
+                TrayEntry::Item {
+                    id,
+                    label,
+                    checked,
+                    enabled,
+                } => {
+                    let mut flags = MF_STRING;
+                    if *checked == Some(true) {
+                        flags |= MF_CHECKED;
+                    }
+                    if !enabled {
+                        flags |= MF_GRAYED;
+                    }
+                    let label = wide(label);
+                    let _ = AppendMenuW(menu, flags, *id as usize, PCWSTR(label.as_ptr()));
+                }
+                TrayEntry::Submenu { label, children } => {
+                    let Ok(submenu) = CreatePopupMenu() else { continue };
+                    fill_menu(submenu, children);
+                    let label = wide(label);
+                    let _ = AppendMenuW(menu, MF_STRING | MF_POPUP, submenu.0 as usize, PCWSTR(label.as_ptr()));
+                }
+            }
+        }
+    }
 }
 
 struct Control {
@@ -339,29 +383,7 @@ fn show_tray_menu(window: HWND) {
     // SAFETY: the menu is made, shown and destroyed here; its strings outlive the calls.
     unsafe {
         let Ok(menu) = CreatePopupMenu() else { return };
-        for entry in &entries {
-            match entry {
-                TrayEntry::Separator => {
-                    let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
-                }
-                TrayEntry::Item {
-                    id,
-                    label,
-                    checked,
-                    enabled,
-                } => {
-                    let mut flags = MF_STRING;
-                    if *checked == Some(true) {
-                        flags |= MF_CHECKED;
-                    }
-                    if !enabled {
-                        flags |= MF_GRAYED;
-                    }
-                    let label = wide(label);
-                    let _ = AppendMenuW(menu, flags, *id as usize, PCWSTR(label.as_ptr()));
-                }
-            }
-        }
+        fill_menu(menu, &entries);
         let mut pointer = POINT::default();
         let _ = GetCursorPos(&mut pointer);
         // Without this the menu does not close when the user clicks somewhere else.

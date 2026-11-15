@@ -3,6 +3,7 @@
 
 mod app;
 mod colors;
+mod console;
 mod dialogs;
 mod e2e;
 mod find;
@@ -16,6 +17,7 @@ mod terminal;
 mod terminal_view;
 mod theme;
 mod tray;
+mod watcher;
 mod win;
 mod window;
 
@@ -51,6 +53,10 @@ fn parse_args() -> Args {
 }
 
 fn main() {
+    // A copy of reframe started to type into another console: it does only that.
+    if let Some(code) = console::run_from_args() {
+        std::process::exit(code);
+    }
     pty::prepare_environment();
     let args = parse_args();
     let config = Config::from_environment();

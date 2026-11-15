@@ -31,5 +31,6 @@ pub mod paste;
 pub mod paths;
 
 pub mod discovery;
+pub mod session_list;
 
 pub mod session_logic;

@@ -869,6 +869,158 @@ pub fn open_close_window(
     });
 }
 
+// ---------- a question ----------
+
+/// A question with one or two answers (taking over a session that runs elsewhere, deleting a
+/// workspace, something that did not work). The answer goes to the window that asked.
+pub struct QuestionForm {
+    shell: WeakEntity<Shell>,
+    question: crate::window::Question,
+}
+
+impl QuestionForm {
+    fn answer(&mut self, yes: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let _ = self
+            .shell
+            .update(cx, |shell, cx| shell.answer_question(yes, window, cx));
+    }
+}
+
+impl Render for QuestionForm {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let question = &self.question;
+        let mut buttons = div().mt(px(6.0)).flex().justify_end().gap(px(8.0));
+        if let Some(cancel) = &question.cancel {
+            buttons = buttons.child(
+                Button::new("cancel")
+                    .label(cancel.clone())
+                    .on_click(cx.listener(|this, _, window, cx| this.answer(false, window, cx))),
+            );
+        }
+        let confirm = Button::new("confirm")
+            .label(question.confirm.clone())
+            .on_click(cx.listener(|this, _, window, cx| this.answer(true, window, cx)));
+        // Something that cannot be undone is not the default.
+        buttons = buttons.child(if question.danger {
+            confirm.danger()
+        } else {
+            confirm.primary()
+        });
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(10.0))
+            .child(div().font_weight(FontWeight::SEMIBOLD).child(question.message.clone()))
+            .when_some(question.detail.clone(), |form, detail| {
+                form.child(div().text_color(rgb(theme::MUTED)).child(detail))
+            })
+            .child(buttons)
+    }
+}
+
+pub fn open_question(shell: WeakEntity<Shell>, question: crate::window::Question, window: &mut Window, cx: &mut App) {
+    let title = question.title.clone();
+    let form = cx.new(|_| QuestionForm { shell, question });
+    window.open_dialog(cx, move |dialog, _, _| {
+        dialog.title(title.clone()).w(px(460.0)).child(form.clone())
+    });
+}
+
+// ---------- saving a workspace ----------
+
+/// Names this window before it is saved as a workspace.
+pub struct SaveWorkspaceForm {
+    controller: Entity<Controller>,
+    window_id: String,
+    name: Entity<InputState>,
+    suggestion: String,
+    _subscriptions: Vec<Subscription>,
+}
+
+impl SaveWorkspaceForm {
+    fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let typed = self.name.read(cx).value().trim().to_owned();
+        let name = if typed.is_empty() {
+            self.suggestion.clone()
+        } else {
+            typed
+        };
+        let window_id = self.window_id.clone();
+        self.controller
+            .update(cx, |controller, cx| controller.save_workspace(&window_id, &name, cx));
+        window.close_dialog(cx);
+    }
+}
+
+impl Render for SaveWorkspaceForm {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let text = words(self.controller.read(cx).locale());
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(12.0))
+            .child(hint(text("workspace.nameHint")))
+            .child(field(text("workspace.nameLabel"), Input::new(&self.name)))
+            .child(
+                div()
+                    .mt(px(6.0))
+                    .flex()
+                    .justify_end()
+                    .gap(px(8.0))
+                    .child(
+                        Button::new("cancel")
+                            .label(text("dialog.cancel"))
+                            .on_click(|_, window, cx| window.close_dialog(cx)),
+                    )
+                    .child(
+                        Button::new("save")
+                            .primary()
+                            .label(text("workspace.saveButton"))
+                            .on_click(cx.listener(|this, _, window, cx| this.save(window, cx))),
+                    ),
+            )
+    }
+}
+
+pub fn open_save_workspace(controller: &Entity<Controller>, window_id: &str, window: &mut Window, cx: &mut App) {
+    let (locale, count) = {
+        let controller = controller.read(cx);
+        (controller.locale(), controller.state().workspaces.len())
+    };
+    let suggestion = t(locale, "workspace.defaultName", &[("n", &(count + 1).to_string())]).unwrap_or_default();
+    let form = cx.new(|cx| {
+        let name = cx.new(|cx| InputState::new(window, cx).default_value(suggestion.clone()));
+        let entered = cx.subscribe_in(
+            &name,
+            window,
+            |this: &mut SaveWorkspaceForm, _, event: &InputEvent, window, cx| {
+                if matches!(event, InputEvent::PressEnter { .. }) {
+                    this.save(window, cx);
+                }
+            },
+        );
+        SaveWorkspaceForm {
+            controller: controller.clone(),
+            window_id: window_id.to_owned(),
+            name,
+            suggestion,
+            _subscriptions: vec![entered],
+        }
+    });
+    let focus = Cell::new(true);
+    window.open_dialog(cx, move |dialog, window, cx| {
+        if focus.replace(false) {
+            let name = form.read(cx).name.clone();
+            name.update(cx, |name, cx| {
+                name.focus(window, cx);
+                name.select_all(window, cx);
+            });
+        }
+        let title = words(form.read(cx).controller.read(cx).locale())("workspace.nameTitle");
+        dialog.title(title).w(px(460.0)).child(form.clone())
+    });
+}
+
 // ---------- About ----------
 
 /// About reframe: version, where it comes from, and its license.

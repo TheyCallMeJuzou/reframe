@@ -8,7 +8,7 @@
 //! in WSL folders are not started yet (that part of the Electron version follows with the WSL
 //! milestone); they fail to start with "claude not found".
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -197,6 +197,16 @@ impl SessionManager {
         self.runtimes
             .get(session_id)
             .and_then(|runtime| runtime.terminal.clone())
+    }
+
+    /// The processes of reframe's sessions: the pty's, and claude's own once its entry was found
+    /// (through cmd.exe they differ). What runs outside reframe is everything else.
+    pub fn own_pids(&self) -> HashSet<u32> {
+        self.runtimes
+            .values()
+            .flat_map(|runtime| [runtime.pid, runtime.launched.as_ref().and_then(|launched| launched.pid)])
+            .flatten()
+            .collect()
     }
 
     /// Sessions with a process, running or on their way out.
