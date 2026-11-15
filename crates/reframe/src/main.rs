@@ -7,6 +7,7 @@ mod console;
 mod dialogs;
 mod e2e;
 mod find;
+mod foreign;
 mod glyphs;
 mod input;
 mod keys;
@@ -119,6 +120,7 @@ fn main() {
                 }
                 window::init(&controller, cx);
                 tray::start(&controller, cx);
+                foreign::start(&controller, cx);
                 controller.update(cx, |controller, cx| {
                     controller.resume_sessions(cx);
                     let first = windows.first().map(|(id, _)| id.clone()).unwrap_or_default();

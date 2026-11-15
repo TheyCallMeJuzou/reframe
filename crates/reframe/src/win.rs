@@ -16,8 +16,9 @@ use gpui_kit::Window;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::Win32::Foundation::{
     ERROR_ALREADY_EXISTS, ERROR_FILE_NOT_FOUND, ERROR_SUCCESS, GetLastError, HANDLE, HWND, LPARAM, LRESULT, POINT,
-    WPARAM,
+    RECT, WPARAM,
 };
+use windows::Win32::Graphics::Gdi::ClientToScreen;
 use windows::Win32::Graphics::Gdi::{CreateBitmap, DeleteObject};
 use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -38,6 +39,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     RegisterClassW, RegisterWindowMessageW, SM_CXSMICON, SW_HIDE, SW_RESTORE, SW_SHOW, SW_SHOWNA, SetForegroundWindow,
     ShowWindowAsync, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu, WINDOW_EX_STYLE, WINDOW_STYLE,
     WM_APP, WM_CONTEXTMENU, WM_ENDSESSION, WM_LBUTTONUP, WM_NULL, WM_QUERYENDSESSION, WM_RBUTTONUP, WNDCLASSW,
+};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GA_PARENT, GetAncestor, GetClientRect, GetDesktopWindow, GetWindowRect, GetWindowTextW, IsWindow,
 };
 use windows::core::{HSTRING, PCWSTR, w};
 
@@ -635,4 +639,149 @@ mod tests {
         assert_ne!(key, profile_key(std::path::Path::new("D:\\portable\\data")));
         assert!(key.starts_with("reframe-") && !key.contains('\\'));
     }
+}
+
+// ---------- other programs' windows ----------
+
+/// What other programs' windows do, as far as terminal windows dragged onto reframe go.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowEvent {
+    /// A window's move (or resize) by its title bar began or ended.
+    MoveStarted(isize),
+    MoveEnded(isize),
+    /// A top-level window was made, or shown.
+    Created(isize),
+    Shown(isize),
+}
+
+thread_local! {
+    static WINDOW_EVENTS: RefCell<Option<UnboundedSender<WindowEvent>>> = const { RefCell::new(None) };
+}
+
+unsafe extern "system" fn on_window_event(
+    _hook: windows::Win32::UI::Accessibility::HWINEVENTHOOK,
+    event: u32,
+    window: HWND,
+    object: i32,
+    child: i32,
+    _thread: u32,
+    _time: u32,
+) {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EVENT_OBJECT_CREATE, EVENT_OBJECT_SHOW, EVENT_SYSTEM_MOVESIZEEND, EVENT_SYSTEM_MOVESIZESTART, OBJID_WINDOW,
+    };
+    // Only windows themselves, not what is in them.
+    if object != OBJID_WINDOW.0 || child != 0 || window.is_invalid() {
+        return;
+    }
+    let handle = window.0 as isize;
+    let told = match event {
+        EVENT_SYSTEM_MOVESIZESTART => WindowEvent::MoveStarted(handle),
+        EVENT_SYSTEM_MOVESIZEEND => WindowEvent::MoveEnded(handle),
+        EVENT_OBJECT_CREATE | EVENT_OBJECT_SHOW => {
+            // Top-level windows only.
+            // SAFETY: asking about a window by handle.
+            let parent = unsafe { GetAncestor(window, GA_PARENT) };
+            // SAFETY: as above.
+            let desktop = unsafe { GetDesktopWindow() };
+            if parent != desktop {
+                return;
+            }
+            if event == EVENT_OBJECT_CREATE {
+                WindowEvent::Created(handle)
+            } else {
+                WindowEvent::Shown(handle)
+            }
+        }
+        _ => return,
+    };
+    WINDOW_EVENTS.with_borrow(|sender| {
+        if let Some(sender) = sender {
+            let _ = sender.unbounded_send(told);
+        }
+    });
+}
+
+/// Follows other programs' windows: moves by the title bar, new top-level windows. Call on the
+/// main thread (its message loop delivers the events). Whether that works.
+pub fn watch_windows(sender: UnboundedSender<WindowEvent>) -> bool {
+    use windows::Win32::UI::Accessibility::SetWinEventHook;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EVENT_OBJECT_CREATE, EVENT_OBJECT_SHOW, EVENT_SYSTEM_MOVESIZEEND, EVENT_SYSTEM_MOVESIZESTART,
+        WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS,
+    };
+    WINDOW_EVENTS.set(Some(sender));
+    let flags = WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS;
+    // SAFETY: the callback lives as long as the program; the hooks end with it.
+    unsafe {
+        let moves = SetWinEventHook(
+            EVENT_SYSTEM_MOVESIZESTART,
+            EVENT_SYSTEM_MOVESIZEEND,
+            None,
+            Some(on_window_event),
+            0,
+            0,
+            flags,
+        );
+        // The range includes EVENT_OBJECT_DESTROY, which is skipped like every other event.
+        let made = SetWinEventHook(
+            EVENT_OBJECT_CREATE,
+            EVENT_OBJECT_SHOW,
+            None,
+            Some(on_window_event),
+            0,
+            0,
+            flags,
+        );
+        !moves.is_invalid() && !made.is_invalid()
+    }
+}
+
+/// Where a window is on the screen, in pixels: x, y, width, height.
+pub fn window_rect(window: isize) -> Option<(i32, i32, i32, i32)> {
+    let mut rect = RECT::default();
+    // SAFETY: asking about a window by handle.
+    unsafe { GetWindowRect(hwnd(window), &mut rect) }.ok()?;
+    Some((rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top))
+}
+
+/// Where a window's content is on the screen, in pixels: x, y, width, height.
+pub fn client_rect(window: isize) -> Option<(i32, i32, i32, i32)> {
+    let mut rect = RECT::default();
+    // SAFETY: asking about a window by handle.
+    unsafe { GetClientRect(hwnd(window), &mut rect) }.ok()?;
+    let mut origin = POINT::default();
+    // SAFETY: as above.
+    if !unsafe { ClientToScreen(hwnd(window), &mut origin) }.as_bool() {
+        return None;
+    }
+    Some((origin.x, origin.y, rect.right - rect.left, rect.bottom - rect.top))
+}
+
+/// The process a window belongs to.
+pub fn window_process(window: isize) -> u32 {
+    let mut pid = 0;
+    // SAFETY: asking about a window by handle.
+    unsafe { GetWindowThreadProcessId(hwnd(window), Some(&mut pid)) };
+    pid
+}
+
+pub fn window_title(window: isize) -> String {
+    let mut buffer = [0u16; 512];
+    // SAFETY: the buffer is as long as it says.
+    let length = unsafe { GetWindowTextW(hwnd(window), &mut buffer) };
+    String::from_utf16_lossy(&buffer[..usize::try_from(length).unwrap_or(0)])
+}
+
+pub fn is_window(window: isize) -> bool {
+    // SAFETY: asking about a window by handle.
+    unsafe { IsWindow(Some(hwnd(window))) }.as_bool()
+}
+
+/// Where the pointer is on the screen, in pixels.
+pub fn cursor() -> (i32, i32) {
+    let mut point = POINT::default();
+    // SAFETY: plain values out.
+    let _ = unsafe { GetCursorPos(&mut point) };
+    (point.x, point.y)
 }

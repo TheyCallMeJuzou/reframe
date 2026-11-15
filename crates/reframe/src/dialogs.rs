@@ -949,6 +949,123 @@ pub fn open_question(shell: WeakEntity<Shell>, question: crate::window::Question
     });
 }
 
+// ---------- taking over from a terminal window ----------
+
+/// Confirms taking over the session(s) of a terminal window that was dropped onto this window;
+/// with several, which ones.
+pub struct TerminalTakeoverForm {
+    shell: WeakEntity<Shell>,
+    controller: Entity<Controller>,
+    candidates: Vec<crate::window::TerminalCandidate>,
+    picked: Vec<String>,
+}
+
+impl TerminalTakeoverForm {
+    fn answer(&mut self, confirmed: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let chosen = confirmed.then(|| self.picked.clone());
+        let _ = self
+            .shell
+            .update(cx, |shell, cx| shell.answer_terminal(chosen, window, cx));
+    }
+}
+
+impl Render for TerminalTakeoverForm {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let text = words(self.controller.read(cx).locale());
+        let single = self.candidates.len() == 1;
+        let mut list = div().flex().flex_col().gap(px(6.0));
+        for candidate in &self.candidates {
+            let id = candidate.claude_session_id.clone();
+            let label = candidate.name.clone().unwrap_or_else(|| folder_name(&candidate.cwd));
+            let entry = div()
+                .flex()
+                .flex_col()
+                .min_w_0()
+                .child(div().font_weight(FontWeight::SEMIBOLD).child(label))
+                .child(
+                    div()
+                        .text_size(px(12.0))
+                        .text_color(rgb(theme::MUTED))
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .child(candidate.cwd.clone()),
+                );
+            list = list.child(if single {
+                div().child(entry)
+            } else {
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .child(
+                        Checkbox::new(SharedString::from(format!("take-{id}")))
+                            .checked(self.picked.contains(&id))
+                            .on_click(cx.listener(move |this, on: &bool, _, cx| {
+                                this.picked.retain(|picked| *picked != id);
+                                if *on {
+                                    this.picked.push(id.clone());
+                                }
+                                cx.notify();
+                            })),
+                    )
+                    .child(entry)
+            });
+        }
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(10.0))
+            .child(div().child(text(if single { "foreign.single" } else { "foreign.multiple" })))
+            .child(list)
+            .child(hint(text("foreign.detail")))
+            .child(
+                div()
+                    .mt(px(6.0))
+                    .flex()
+                    .justify_end()
+                    .gap(px(8.0))
+                    .child(
+                        Button::new("cancel")
+                            .label(text("dialog.cancel"))
+                            .on_click(cx.listener(|this, _, window, cx| this.answer(false, window, cx))),
+                    )
+                    .child(
+                        Button::new("confirm")
+                            .primary()
+                            .label(text("takeover.confirm"))
+                            .disabled(self.picked.is_empty())
+                            .on_click(cx.listener(|this, _, window, cx| this.answer(true, window, cx))),
+                    ),
+            )
+    }
+}
+
+pub fn open_terminal_takeover(
+    shell: WeakEntity<Shell>,
+    controller: &Entity<Controller>,
+    candidates: Vec<crate::window::TerminalCandidate>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let picked = candidates
+        .iter()
+        .filter(|candidate| candidate.preselected)
+        .map(|candidate| candidate.claude_session_id.clone())
+        .collect();
+    let form = cx.new(|_| TerminalTakeoverForm {
+        shell,
+        controller: controller.clone(),
+        candidates,
+        picked,
+    });
+    let controller = controller.clone();
+    window.open_dialog(cx, move |dialog, _, cx| {
+        let title = words(controller.read(cx).locale())("foreign.title");
+        dialog.title(title).w(px(480.0)).child(form.clone())
+    });
+}
+
 // ---------- saving a workspace ----------
 
 /// Names this window before it is saved as a workspace.

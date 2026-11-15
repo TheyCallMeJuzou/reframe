@@ -61,9 +61,13 @@ shell, its status from Claude Code's registry there, dropped files as Linux path
 the sessions of running distributions, says which known one is not running and starts it, and
 takes over a session running in a WSL terminal.
 
-Still to come, in this order: terminal windows and Windows Terminal tabs dragged onto reframe;
-installer and updater. A file that exists only in memory (a picture dragged out of a browser) is
-not taken by a tile yet.
+A terminal window with claude in it (also in WSL) dragged onto reframe, or a Windows Terminal tab
+torn out over it, is offered for taking over: its sessions continue in reframe where it was let go,
+and a tab with only a shell left is closed by typing "exit" there.
+
+Still to come: installer and updater. Not there yet: a Windows Terminal tab dragged over reframe
+shows no drop place before it is let go (GPUI's drop target takes no drags without data), and a
+file that exists only in memory (a picture dragged out of a browser) is not taken by a tile.
 
 Ctrl+Shift+D writes the focused terminal's screen to a text file in the temp folder.
 

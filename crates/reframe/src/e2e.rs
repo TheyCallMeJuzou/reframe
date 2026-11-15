@@ -530,6 +530,19 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
                 Some(RenameTarget::Workspace(id)) => json!({ "workspace": id }),
                 _ => Value::Null,
             };
+            let terminal_question = shell.read(cx).terminal_question().map(|candidates| {
+                candidates
+                    .iter()
+                    .map(|candidate| {
+                        json!({
+                            "claudeSessionId": candidate.claude_session_id,
+                            "cwd": candidate.cwd,
+                            "name": candidate.name,
+                            "preselected": candidate.preselected,
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            });
             let question = shell.read(cx).question().map(|question| {
                 json!({
                     "title": question.title,
@@ -553,6 +566,7 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
                 "renamingGroup": renaming.1,
                 "renamingInList": renaming_list,
                 "question": question,
+                "terminalQuestion": terminal_question,
                 "sidebar": shell.read(cx).sidebar_open(cx),
                 "selected": shell.read(cx).selected_rows(),
                 "newFound": shell.read(cx).new_found(cx),
@@ -632,6 +646,66 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
             }
             None => json!({ "error": "no window" }),
         },
+        // The terminal window a process's console is in (its tab's window, or its own console
+        // window).
+        Some("terminal_window_of") => {
+            let pid = number("pid") as u32;
+            match crate::console::console_owners(&[pid]) {
+                Ok(owners) => json!(owners.first().and_then(|owner| owner.owner.or(owner.console_window))),
+                Err(error) => json!({ "error": error }),
+            }
+        }
+        // A terminal window let go over a point of a window of reframe (`x`, `y` in it), as the
+        // end of a real drag reports it; or (`appeared`) a terminal window that just appeared
+        // there, as a tab torn out over reframe.
+        Some("drop_terminal_window") | Some("terminal_appeared") => {
+            let hwnd = number("hwnd") as isize;
+            let Some(shell) = shell_of(controller, text("window"), cx) else {
+                return json!({ "error": "no window" });
+            };
+            let at = point(px(number("x") as f32), px(number("y") as f32));
+            let Some((x, y)) = shell.read(cx).to_physical(at) else {
+                return json!({ "error": "no place" });
+            };
+            let Some(watcher) = crate::foreign::watcher(cx) else {
+                return json!({ "error": "no watcher" });
+            };
+            if text("cmd").as_deref() == Some("terminal_appeared") {
+                watcher.update(cx, |watcher, cx| watcher.appeared(hwnd, Some((x, y)), cx));
+                return json!({ "ok": true });
+            }
+            let over = window::window_at_physical(x, y, cx);
+            let found = watcher.update(cx, |watcher, cx| watcher.sessions_in(hwnd, None, cx));
+            let controller = controller.clone();
+            cx.spawn(async move |cx| {
+                let sessions = found.await;
+                let Some((window_id, at)) = over.filter(|_| !sessions.is_empty()) else {
+                    return;
+                };
+                cx.update(|cx| {
+                    let drop = crate::foreign::ForeignDrop {
+                        hwnd,
+                        title: win::window_title(hwnd),
+                        window_id,
+                        at,
+                        sessions,
+                    };
+                    controller.update(cx, |controller, cx| controller.take_over_window(drop, cx));
+                });
+            })
+            .detach();
+            json!({ "ok": true })
+        }
+        // Answers the question which sessions of a dropped terminal window to take over (`ids`;
+        // null cancels).
+        Some("terminal_answer") => in_window(controller, text("window"), cx, |shell, window, cx| {
+            let ids: Option<Vec<String>> = command
+                .get("ids")
+                .and_then(Value::as_array)
+                .map(|ids| ids.iter().filter_map(Value::as_str).map(str::to_owned).collect());
+            shell.update(cx, |shell, cx| shell.answer_terminal(ids, window, cx));
+            json!({ "ok": true })
+        }),
         // The list's Start button for a WSL distribution that is not running.
         Some("wsl_start") => {
             let distro = text("distro").unwrap_or_default();

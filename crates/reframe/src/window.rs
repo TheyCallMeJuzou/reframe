@@ -134,6 +134,69 @@ pub struct Question {
     pub danger: bool,
 }
 
+/// A session found in a terminal window that was dropped onto reframe.
+#[derive(Clone, Debug)]
+pub struct TerminalCandidate {
+    pub claude_session_id: String,
+    /// Its folder as Windows reaches it.
+    pub cwd: String,
+    pub name: Option<String>,
+    /// The one the terminal window shows right now (or the only one).
+    pub preselected: bool,
+}
+
+/// Which of a dropped terminal window's sessions to take over, and where they go.
+pub type TerminalAnswer = Option<(Vec<String>, Option<DropTarget>)>;
+
+/// Asks in a window which sessions of a terminal window dropped at `at` (in the window, logical)
+/// to take over. `None` when the window is gone or the user cancelled.
+pub fn ask_terminal(
+    window_id: &str,
+    candidates: Vec<TerminalCandidate>,
+    at: Point<Pixels>,
+    cx: &mut App,
+) -> oneshot::Receiver<TerminalAnswer> {
+    let (answer, receiver) = oneshot::channel();
+    if let Some(shell) = shell(window_id, cx) {
+        let handle = shell.read(cx).handle;
+        cx.defer(move |cx| {
+            let _ = handle.update(cx, |_, window, cx| {
+                shell.update(cx, |shell, cx| {
+                    shell.set_foreign_hover(None, cx);
+                    let target = shell.drop_spot_at(at, "", DragKind::Tile, cx).0;
+                    if let Some((.., previous)) = shell.terminal_question.take() {
+                        let _ = previous.send(None);
+                    }
+                    shell.terminal_question = Some((candidates.clone(), target.clone(), answer));
+                    dialogs::open_terminal_takeover(cx.weak_entity(), &shell.controller, candidates, window, cx);
+                    cx.notify();
+                });
+            });
+        });
+    }
+    receiver
+}
+
+/// The window of reframe at a point of the screen in pixels (as Windows tells the pointer), and
+/// the point in it (logical, as GPUI places things); where windows overlap, the one that was
+/// active last.
+pub fn window_at_physical(x: i32, y: i32, cx: &App) -> Option<(String, Point<Pixels>)> {
+    shells(cx)
+        .iter()
+        .map(|shell| shell.read(cx))
+        .filter(|shell| !shell.away)
+        .filter_map(|shell| {
+            let (left, top, width, height) = win::client_rect(shell.hwnd?)?;
+            let inside = x >= left && y >= top && x < left + width && y < top + height;
+            inside.then(|| {
+                let local = point(px((x - left) as f32 / shell.scale), px((y - top) as f32 / shell.scale));
+                (shell.focused_at, shell.window_id.clone(), local)
+            })
+        })
+        .max_by_key(|(focused_at, ..)| *focused_at)
+        .map(|(_, id, local)| (id, local))
+}
+
 /// Asks the user in a window; the answer comes once it is given (no when the window is gone,
 /// the dialog was closed, or another question took its place).
 pub fn ask(window_id: &str, question: Question, cx: &mut App) -> oneshot::Receiver<bool> {
@@ -291,6 +354,15 @@ pub struct Shell {
     asking_to_close: bool,
     /// A question that waits for its answer, and where the answer goes.
     question: Option<(Question, oneshot::Sender<bool>)>,
+    /// Which sessions of a dropped terminal window to take over: the candidates, where they go,
+    /// and where the answer goes.
+    terminal_question: Option<(
+        Vec<TerminalCandidate>,
+        Option<DropTarget>,
+        oneshot::Sender<TerminalAnswer>,
+    )>,
+    /// How many pixels a logical one is, as last drawn.
+    scale: f32,
     /// The session list.
     list: sidebar::ListView,
     /// Closed by the user and out of sight, its sessions running on.
@@ -423,6 +495,8 @@ impl Shell {
         let mut shell = Self {
             list,
             question: None,
+            terminal_question: None,
+            scale: window.scale_factor(),
             controller,
             window_id,
             handle,
@@ -1746,6 +1820,42 @@ impl Shell {
         self.question.as_ref().map(|(question, _)| question)
     }
 
+    /// The user picked which sessions of a dropped terminal window to take over (none: cancel).
+    pub fn answer_terminal(&mut self, chosen: Option<Vec<String>>, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((_, target, answer)) = self.terminal_question.take() {
+            let _ = answer.send(
+                chosen
+                    .filter(|chosen| !chosen.is_empty())
+                    .map(|chosen| (chosen, target)),
+            );
+            window.close_dialog(cx);
+        }
+        cx.notify();
+    }
+
+    /// The sessions of a dropped terminal window the open question offers, for tests.
+    pub fn terminal_question(&self) -> Option<&[TerminalCandidate]> {
+        self.terminal_question
+            .as_ref()
+            .map(|(candidates, ..)| candidates.as_slice())
+    }
+
+    /// A terminal window with claudes is dragged over this window (at `at`, logical): where it
+    /// would go is shown; `None` when it left.
+    pub fn set_foreign_hover(&mut self, at: Option<Point<Pixels>>, cx: &mut Context<Self>) {
+        let preview = at.and_then(|at| self.drop_spot_at(at, "", DragKind::Tile, cx).1);
+        self.set_drop_preview(preview, cx);
+    }
+
+    /// A point of this window (logical) on the screen, in pixels.
+    pub fn to_physical(&self, at: Point<Pixels>) -> Option<(i32, i32)> {
+        let (left, top, ..) = win::client_rect(self.hwnd?)?;
+        Some((
+            left + (f32::from(at.x) * self.scale).round() as i32,
+            top + (f32::from(at.y) * self.scale).round() as i32,
+        ))
+    }
+
     /// What is being renamed, for tests to type into.
     pub fn renaming(&self) -> Option<&RenameTarget> {
         self.renaming.as_ref().map(|renaming| &renaming.target)
@@ -2687,6 +2797,7 @@ impl Render for Shell {
             None => (true, Vec::new()),
         };
         window.set_window_title(&self.title(cx));
+        self.scale = window.scale_factor();
         self.drawn += 1;
         // The question about closing is over however its dialog went (Escape, a click beside it).
         if self.asking_to_close && !window.has_active_dialog(cx) {
@@ -2698,6 +2809,12 @@ impl Render for Shell {
             && let Some((_, answer)) = self.question.take()
         {
             let _ = answer.send(false);
+        }
+        if self.terminal_question.is_some()
+            && !window.has_active_dialog(cx)
+            && let Some((.., answer)) = self.terminal_question.take()
+        {
+            let _ = answer.send(None);
         }
         // Files that were dragged over a tile left the window again.
         if self.files_over.is_some() && !cx.has_active_drag() {

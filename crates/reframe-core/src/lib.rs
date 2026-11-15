@@ -32,6 +32,7 @@ pub mod paste;
 pub mod paths;
 
 pub mod discovery;
+pub mod foreign_match;
 pub mod session_list;
 
 pub mod session_logic;

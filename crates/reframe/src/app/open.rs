@@ -69,7 +69,7 @@ impl Controller {
 
     /// Ends a claude that runs outside reframe (off the UI thread), in a WSL distribution by its
     /// Linux id; whether it is gone.
-    fn stop_outside(&self, pid: u32, distro: Option<String>, cx: &mut Context<Self>) -> Task<bool> {
+    pub(super) fn stop_outside(&self, pid: u32, distro: Option<String>, cx: &mut Context<Self>) -> Task<bool> {
         let log = self.log.clone();
         let wsl = self.wsl.clone();
         cx.background_executor().spawn(async move {
@@ -407,7 +407,7 @@ impl Controller {
         .detach();
     }
 
-    fn place_and_resume(
+    pub(super) fn place_and_resume(
         &mut self,
         window_id: &str,
         record: SessionRecord,
@@ -839,7 +839,7 @@ struct Outside {
 
 /// A new record for a Claude Code session started outside reframe. `home`: where its Claude Code
 /// keeps transcripts.
-async fn adopted(
+pub(super) async fn adopted(
     home: &std::path::Path,
     claude_session_id: String,
     cwd: String,

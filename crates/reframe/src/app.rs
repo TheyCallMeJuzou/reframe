@@ -7,6 +7,7 @@
 
 mod list;
 mod open;
+mod terminal;
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -214,6 +215,8 @@ pub struct Controller {
     starts_pending: HashSet<String>,
     /// WSL distributions, and running claude in them.
     wsl: Arc<WslDistros>,
+    /// Terminal windows whose drop is being handled (a second report of it is ignored).
+    taking_over: HashSet<isize>,
     _session_events: Subscription,
 }
 
@@ -374,6 +377,7 @@ impl Controller {
             adopting: HashMap::new(),
             starts_pending: HashSet::new(),
             wsl,
+            taking_over: HashSet::new(),
             starts_with_system,
             system_ending: None,
             ended_while_system_ending: HashSet::new(),

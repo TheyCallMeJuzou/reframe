@@ -33,7 +33,6 @@ const NO_CLAUDE: Duration = Duration::from_millis(30_000);
 /// How long the list of running distributions holds.
 const RUNNING: Duration = Duration::from_millis(3000);
 /// How long a claude whose terminal could not be told is left alone before it is asked again.
-#[allow(dead_code)]
 const NO_TERMINAL: Duration = Duration::from_millis(5000);
 
 /// wsl.exe, or a stand-in script run by node (as in the end-to-end tests).
@@ -84,7 +83,6 @@ pub struct WslDistros {
     running_now: Mutex<Option<(Instant, Vec<String>)>>,
     /// Processes that keep distributions running (started from the session list).
     keepers: Mutex<HashMap<String, Child>>,
-    #[allow(dead_code)]
     terminals: Mutex<HashMap<String, (Instant, Option<u32>)>>,
     /// Distributions Claude Code was found in since the controller last asked.
     found: Mutex<HashSet<String>>,
@@ -278,13 +276,11 @@ impl WslDistros {
 
     /// The shells between a claude and WSL's own process for its terminal (see
     /// `wsl_distro::shells_of`).
-    #[allow(dead_code)] // for terminal windows dragged onto reframe, which follow
     pub fn shells_of(&self, distro: &str, pid: u32) -> Vec<u32> {
         shells_of(pid, &|pid, file| self.read_proc(distro, pid, file))
     }
 
     /// Whether a Linux process runs no program of its own (a shell at its prompt).
-    #[allow(dead_code)] // for terminal windows dragged onto reframe, which follow
     pub fn idle(&self, distro: &str, pid: u32) -> bool {
         is_idle(pid, &|pid, file| self.read_proc(distro, pid, file))
     }
@@ -293,7 +289,6 @@ impl WslDistros {
     /// program (wsl.exe) that started the WSL session it runs in. A Windows program started
     /// through that session's interop socket is that program's child, so reframe's own
     /// executable, run that way, tells which it is. Asked once per claude.
-    #[allow(dead_code)] // for terminal windows dragged onto reframe, which follow
     pub fn terminal_of(&self, distro: &str, entry: &RegistryEntry) -> Option<u32> {
         let started = entry
             .proc_start
