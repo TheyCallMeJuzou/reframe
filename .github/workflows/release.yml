@@ -1,6 +1,7 @@
-# Builds the installers for a version tag (v1.2.3, matching package.json) and uploads them to a draft GitHub
-# release; publishing that release makes the update available to installed apps. The release notes come from
-# docs/releases/<tag>.md (GitHub's generated notes if there is none).
+# Builds a version tag (v1.2.3, matching Cargo.toml) into a draft GitHub release: the installer, latest.yml (which
+# the updaters read, also installed 0.x copies) and the portable ZIP. Publishing the release makes the update
+# available. The release notes come from docs/releases/<tag>.md (GitHub's generated notes if there is none).
+# macOS and Linux get no files: they stay on the last 0.x release for now.
 name: Release
 
 on:
@@ -11,62 +12,45 @@ permissions:
   contents: write
 
 jobs:
-  draft:
-    runs-on: ubuntu-latest
+  release:
+    runs-on: windows-latest
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Signed through SignPath once that is set up (the repository variable SIGNPATH_ORGANIZATION_ID, see
+      # docs/RELEASING.md); until then the files go out unsigned.
+      SIGN_WINDOWS: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
     steps:
       - uses: actions/checkout@v7.0.1
-      - name: Tag and package.json agree
-        run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
-      # Created once, before the builds: three of them creating it at the same time could make three drafts.
+      - name: Tag and Cargo.toml agree
+        shell: bash
+        run: test "v$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)" = "$GITHUB_REF_NAME"
+      - name: Rust
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - name: NSIS
+        run: choco install nsis --no-progress -y
+      - name: Build (installer, latest.yml, portable ZIP)
+        run: powershell -File scripts/package.ps1
       - name: Draft release
+        shell: bash
         run: |
           notes="docs/releases/$GITHUB_REF_NAME.md"
           if [ -f "$notes" ]; then set -- --notes-file "$notes"; else set -- --generate-notes; fi
           gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1 ||
             gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "reframe ${GITHUB_REF_NAME#v}" "$@"
-
-  build:
-    needs: draft
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      # macOS builds are unsigned until there is an Apple certificate (see docs/RELEASING.md).
-      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-      # Windows builds are signed through SignPath once that is set up (the repository variable
-      # SIGNPATH_ORGANIZATION_ID, see docs/RELEASING.md); until then they go out unsigned.
-      SIGN_WINDOWS: ${{ matrix.os == 'windows-latest' && vars.SIGNPATH_ORGANIZATION_ID != '' }}
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-node@v7.1.0
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
-      - run: npm run build
-      - name: Build and upload
+      - name: Upload (unsigned)
         if: env.SIGN_WINDOWS != 'true'
-        run: npx electron-builder --publish always
-      - name: Build (Windows, to be signed)
-        if: env.SIGN_WINDOWS == 'true'
-        run: npx electron-builder --publish never
-      # The portable Windows copy, made from the unpacked app electron-builder leaves in dist/win-unpacked.
-      - name: Portable ZIP (Windows)
-        if: runner.os == 'Windows'
-        run: node scripts/portable.mjs
-      - name: Upload the portable ZIP (Windows, unsigned)
-        if: runner.os == 'Windows' && env.SIGN_WINDOWS != 'true'
         shell: bash
-        run: gh release upload "$GITHUB_REF_NAME" dist/reframe-*-win-portable.zip --clobber
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          gh release upload "$GITHUB_REF_NAME" "dist/reframe-Setup-$v.exe" dist/latest.yml \
+            "dist/reframe-$v-win-portable.zip" --clobber
 
       # Signing: one request to SignPath with the installer and the portable ZIP (.signpath/artifact-configuration.xml
       # says what in them gets signed), approved by hand there; this job waits for it up to four hours.
-      - name: Collect what gets signed (Windows)
+      - name: Collect what gets signed
         id: to-sign
         if: env.SIGN_WINDOWS == 'true'
         shell: bash
@@ -74,14 +58,14 @@ jobs:
           mkdir dist/to-sign
           cp dist/reframe-Setup-*.exe dist/reframe-*-win-portable.zip dist/to-sign/
           echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-      - name: Upload for signing (Windows)
+      - name: Upload for signing
         id: unsigned
         if: env.SIGN_WINDOWS == 'true'
         uses: actions/upload-artifact@v7.0.2
         with:
           name: windows-to-sign
           path: dist/to-sign/
-      - name: Sign (Windows, SignPath)
+      - name: Sign (SignPath)
         if: env.SIGN_WINDOWS == 'true'
         uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
         with:
@@ -95,13 +79,13 @@ jobs:
           wait-for-completion: true
           wait-for-completion-timeout-in-seconds: 14400
           output-artifact-directory: dist/signed
-      # Checks the signatures, puts the signed files in place and renews latest.yml and the block map (the signed
-      # installer has another checksum), then uploads what electron-builder would have.
-      - name: Upload (Windows, signed)
+      # Checks the signatures, puts the signed files in place and writes latest.yml anew (the signed installer has
+      # another checksum), then uploads them.
+      - name: Upload (signed)
         if: env.SIGN_WINDOWS == 'true'
         shell: bash
         run: |
-          node scripts/signed.mjs dist/signed
+          powershell -File scripts/signed.ps1 dist/signed
           v="${GITHUB_REF_NAME#v}"
-          gh release upload "$GITHUB_REF_NAME" dist/latest.yml "dist/reframe-Setup-$v.exe" \
-            "dist/reframe-Setup-$v.exe.blockmap" "dist/reframe-$v-win-portable.zip" --clobber
+          gh release upload "$GITHUB_REF_NAME" "dist/reframe-Setup-$v.exe" dist/latest.yml \
+            "dist/reframe-$v-win-portable.zip" --clobber

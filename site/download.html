@@ -37,7 +37,8 @@
           href="https://github.com/TheyCallMeJuzou/reframe/releases/latest"
           data-release
           >release notes</a
-        >). You need Claude Code installed and logged in (<code>claude</code> on your <code>PATH</code>).
+        >). You need Claude Code installed and logged in (<code>claude</code> on your <code>PATH</code>). From version
+        1.0 on, reframe is a native Windows app; macOS and Linux keep version 0.10 for now.
       </p>
 
       <div class="downloads">
@@ -50,7 +51,10 @@
               data-asset="reframe-Setup-{version}.exe"
               >Installer (.exe)</a
             >
-            <p>Installs for your user, without admin rights. Updates itself.</p>
+            <p>
+              For Windows 10 and 11. Installs for your user, without admin rights, also over an installed 0.x. Updates
+              itself.
+            </p>
           </div>
           <div class="file">
             <a
@@ -66,7 +70,7 @@
           </div>
         </section>
         <section class="platform">
-          <h3>macOS</h3>
+          <h3>macOS <small>(version 0.10)</small></h3>
           <div class="file">
             <a
               class="button primary"
@@ -74,11 +78,11 @@
               data-asset="reframe-{version}-arm64.dmg"
               >Disk image (.dmg)</a
             >
-            <p>For Apple silicon. Built in CI, not tested yet.</p>
+            <p>For Apple silicon. Built with Electron in CI, not tested yet. Does not update to 1.0.</p>
           </div>
         </section>
         <section class="platform">
-          <h3>Linux</h3>
+          <h3>Linux <small>(version 0.10)</small></h3>
           <div class="file">
             <a
               class="button primary"
@@ -86,7 +90,7 @@
               data-asset="reframe-{version}-x86_64.AppImage"
               >AppImage</a
             >
-            <p>Make it executable, then run it. Updates itself.</p>
+            <p>Make it executable, then run it. Built with Electron in CI, not tested yet.</p>
           </div>
           <div class="file">
             <a
@@ -95,7 +99,7 @@
               data-asset="reframe_{version}_amd64.deb"
               >Debian package (.deb)</a
             >
-            <p>Updated by installing the new one. Built in CI, not tested yet.</p>
+            <p>Built with Electron in CI, not tested yet.</p>
           </div>
         </section>
       </div>
@@ -127,9 +131,9 @@
 
       <h2 id="uninstall">Uninstall</h2>
       <p>
-        If you let reframe start with the system, turn that off first, in Settings (in older versions, in the tray
-        menu). From version 0.6.0 on, the Windows uninstaller does it for you. reframe never changes Claude Code's own
-        settings files, so there is nothing to undo there.
+        If you let reframe start with the system, the Windows uninstaller takes that out again (before version 0.6.0,
+        turn it off first, in the tray menu). reframe never changes Claude Code's own settings files, so there is
+        nothing to undo there.
       </p>
       <ul>
         <li>

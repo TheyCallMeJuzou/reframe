@@ -1,0 +1,132 @@
+{
+  "version": 1,
+  "sessions": {
+    "s1": {
+      "id": "s1",
+      "claudeSessionId": "c1",
+      "cwd": "C:\\code\\app",
+      "name": "app",
+      "claudeName": null,
+      "launch": {
+        "model": "opus",
+        "permissionMode": "acceptEdits",
+        "worktree": true,
+        "worktreeName": "fix",
+        "worktreeCreated": true
+      },
+      "lifecycle": "open",
+      "createdAt": 1762850000000,
+      "lastActiveAt": 1762850123456.789,
+      "pid": 4242,
+      "used": true
+    },
+    "s2": {
+      "id": "s2",
+      "claudeSessionId": "c2",
+      "cwd": "\\\\wsl.localhost\\Ubuntu\\home\\me",
+      "launch": {},
+      "lifecycle": "ended",
+      "createdAt": 1762850000001,
+      "lastActiveAt": 1762850000002,
+      "linuxPid": 77
+    }
+  },
+  "windows": [
+    {
+      "id": "w1",
+      "bounds": {
+        "x": -8,
+        "y": 0,
+        "width": 1280,
+        "height": 800.5
+      },
+      "maximized": false,
+      "fullscreen": false,
+      "hidden": false,
+      "layout": {
+        "kind": "split",
+        "id": "sp1",
+        "dir": "row",
+        "children": [
+          {
+            "kind": "tile",
+            "sessionId": "s1"
+          },
+          {
+            "kind": "group",
+            "id": "g1",
+            "name": "Group 1",
+            "color": "#d97757",
+            "child": {
+              "kind": "tile",
+              "sessionId": "s2"
+            }
+          }
+        ],
+        "sizes": [
+          33.333333333333336,
+          66.66666666666667
+        ]
+      },
+      "dock": [
+        {
+          "kind": "tile",
+          "sessionId": "s3",
+          "hint": {
+            "anchor": "tile:s1",
+            "side": "bottom",
+            "ratio": 0.5,
+            "share": 0.25
+          }
+        },
+        {
+          "kind": "group",
+          "node": {
+            "kind": "group",
+            "id": "g2",
+            "name": "Group 2",
+            "color": "#5b9cf0",
+            "child": {
+              "kind": "tile",
+              "sessionId": "s4"
+            }
+          },
+          "hint": null
+        }
+      ],
+      "sidebarOpen": true,
+      "workspaceId": "ws1"
+    }
+  ],
+  "recentFolders": [
+    "C:\\code\\app"
+  ],
+  "preferences": {
+    "nameFromFolder": false,
+    "language": "de",
+    "fontSize": 15,
+    "snapToGrid": false,
+    "checkForUpdates": true,
+    "closeWindow": "keep",
+    "claudeBin": "C:\\tools\\claude.exe",
+    "defaultModel": "fable",
+    "defaultPermissionMode": "plan"
+  },
+  "workspaces": [
+    {
+      "id": "ws1",
+      "name": "Workspace 1",
+      "savedAt": 1762850000003,
+      "window": {
+        "bounds": null,
+        "maximized": true,
+        "layout": null,
+        "dock": []
+      },
+      "sessions": []
+    }
+  ],
+  "wslDistros": [
+    "Ubuntu"
+  ]
+}

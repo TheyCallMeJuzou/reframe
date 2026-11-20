@@ -1,0 +1,68 @@
+[package]
+name = "reframe"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Keep your Claude Code sessions side by side in one window"
+
+[[bin]]
+name = "reframe"
+path = "src/main.rs"
+
+[dependencies]
+alacritty_terminal = "0.26.0"
+futures = "0.3.34"
+gpui-kit = "0.9.1"
+# The Windows backend GPUI runs on (reframe's copy, see vendor/): what it adds to it.
+gpui-pre-windows = "0.3.12"
+indexmap = "2.14.2"
+notify = "8.2.2"
+image = { version = "0.25.10", default-features = false, features = ["png", "bmp", "tiff"] }
+uuid = { version = "1.29.2", features = ["v4"] }
+reframe-core = { path = "../reframe-core" }
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Globalization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Console",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Threading",
+    "Win32_System_Time",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_UI_Accessibility",
+    "Win32_Graphics_Gdi",
+    "Win32_Networking_WinHttp",
+    "Win32_Storage_EnhancedStorage",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
+    "Win32_System_DataExchange",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_System_Ole",
+    "Win32_System_Registry",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_PropertiesSystem",
+    "Win32_UI_WindowsAndMessaging",
+] }
+raw-window-handle = "0.6"
+# For COM objects of reframe's own (`#[implement]`), the version `windows` uses.
+windows-core = "0.62"
+base64 = "0.22.1"
+sha2 = "0.10.9"
+serde_json = { workspace = true, features = ["preserve_order"] }
+serde = { workspace = true, features = ["derive"] }
+
+[build-dependencies]
+embed-resource = "3.0.12"
+
+[dev-dependencies]
+base64 = "0.22.1"
+sha2 = "0.10.9"
+tempfile = "3"

@@ -1,8 +1,4 @@
-node_modules/
-out/
-dist/
-*.log
-spikes/**/output/
-test-results/
-playwright-report/
+/target
+/dist
+/dist-*/
 _site/
