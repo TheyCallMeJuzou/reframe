@@ -87,8 +87,15 @@ pub struct TerminalView {
     /// The link under the pointer, and the one the button went down on.
     link: Option<Link>,
     pressed_link: Option<String>,
+    /// The cursor blinks while the tile has the focus (as xterm.js's `cursorBlink` did): shown or
+    /// not right now, and the timer that turns it.
+    cursor_on: bool,
+    blink: Option<Task<()>>,
     _terminal: Subscription,
 }
+
+/// How long the blinking cursor is shown, then hidden (xterm.js's interval).
+const BLINK: std::time::Duration = std::time::Duration::from_millis(600);
 
 /// Where a session in WSL runs, as far as the paths typed into it go.
 #[derive(Clone, Debug)]
@@ -106,6 +113,8 @@ impl TerminalView {
         // Whatever the terminal reports (new output, its title, its exit) is drawn.
         let subscription = cx.observe(&terminal, |this, _, cx| {
             this.refresh_find();
+            // While output comes, the cursor stays shown.
+            this.restart_blink(cx);
             cx.notify();
         });
         Self {
@@ -123,7 +132,45 @@ impl TerminalView {
             find: None,
             link: None,
             pressed_link: None,
+            cursor_on: true,
+            blink: None,
             _terminal: subscription,
+        }
+    }
+
+    /// Shows the cursor and starts its blinking anew (after a key, new output, the focus coming
+    /// back); a tile without the focus does not blink.
+    fn restart_blink(&mut self, cx: &mut Context<Self>) {
+        let was_on = self.cursor_on;
+        self.cursor_on = true;
+        if !self.focused {
+            self.blink = None;
+            if !was_on {
+                cx.notify();
+            }
+            return;
+        }
+        self.blink = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(BLINK).await;
+                let going = this.update(cx, |this, cx| {
+                    if !this.focused {
+                        return false;
+                    }
+                    this.cursor_on = !this.cursor_on;
+                    // A cursor the program hides needs no frames.
+                    if this.mode().contains(TermMode::SHOW_CURSOR) {
+                        cx.notify();
+                    }
+                    true
+                });
+                if !matches!(going, Ok(true)) {
+                    break;
+                }
+            }
+        }));
+        if !was_on {
+            cx.notify();
         }
     }
 
@@ -160,12 +207,13 @@ impl TerminalView {
             term.selection = None;
         }
         self.pty.write(bytes);
+        self.restart_blink(cx);
         cx.notify();
     }
 
     /// Called while a frame is prepared: keeps the session's size and focus state in step with
     /// what is on screen.
-    fn sync(&mut self, layout: Layout, focused: bool) {
+    fn sync(&mut self, layout: Layout, focused: bool, cx: &mut Context<Self>) {
         let resized = self
             .layout
             .is_none_or(|old| old.cols != layout.cols || old.rows != layout.rows);
@@ -185,6 +233,7 @@ impl TerminalView {
             if self.mode().contains(TermMode::FOCUS_IN_OUT) {
                 self.pty.write(if focused { &b"\x1b[I"[..] } else { &b"\x1b[O"[..] });
             }
+            self.restart_blink(cx);
         }
     }
 
@@ -453,6 +502,11 @@ impl TerminalView {
             }
             self.reported_button = Some(button);
             self.reported_cell = Some((col, row));
+            // A link opens on a click also while the program has the mouse (as in xterm.js); the
+            // program gets the click all the same.
+            if event.button == MouseButton::Left {
+                self.pressed_link = self.link_under(col, row).map(|link| link.url);
+            }
             return;
         }
 
@@ -499,10 +553,8 @@ impl TerminalView {
             return;
         }
 
-        // A link under the pointer is underlined, unless the program has the mouse.
-        let link = (hovered && !self.reports_mouse(&event.modifiers))
-            .then(|| self.link_under(col, row))
-            .flatten();
+        // A link under the pointer is underlined (also while the program has the mouse).
+        let link = hovered.then(|| self.link_under(col, row)).flatten();
         if link != self.link {
             self.link = link;
             cx.notify();
@@ -549,6 +601,12 @@ impl TerminalView {
             let mode = self.mode();
             if let Some(report) = input::mouse_report(button, col, row, false, &event.modifiers, mode) {
                 self.pty.write(report);
+            }
+            if button == input::BUTTON_LEFT
+                && let Some(url) = self.pressed_link.take()
+                && self.link_under(col, row).is_some_and(|link| link.url == url)
+            {
+                cx.open_url(&url);
             }
         }
     }
@@ -672,6 +730,9 @@ impl Focusable for TerminalView {
 impl Render for TerminalView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
+            .id("terminal")
+            // For screen readers: where typing goes (its tile names the session).
+            .role(Role::Terminal)
             .size_full()
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::on_key_down))
@@ -866,7 +927,7 @@ impl Element for TerminalElement {
         };
 
         let focused = self.view.read(cx).focus.is_focused(window) && window.is_window_active();
-        self.view.update(cx, |view, _| view.sync(layout, focused));
+        self.view.update(cx, |view, cx| view.sync(layout, focused, cx));
 
         let view = self.view.read(cx);
         let term = view.pty.term.lock();
@@ -943,6 +1004,7 @@ impl Element for TerminalElement {
                     shape: content.cursor.shape,
                 });
         let mouse_mode = content.mode.intersects(TermMode::MOUSE_MODE);
+        let cursor = cursor.filter(|_| !focused || view.cursor_on);
         drop(term);
 
         Some(Frame {

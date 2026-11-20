@@ -181,9 +181,8 @@ fn toast_document(notification: &SystemNotification) -> windows::core::Result<Xm
         }
     }
 
-    let audio = document.CreateElement(h!("audio"))?;
-    audio.SetAttribute(h!("silent"), h!("true"))?;
-    toast.AppendChild(&audio)?;
+    // reframe: notifications play the system's sound, as the Electron version's did (upstream
+    // makes them silent).
     Ok(document)
 }
 

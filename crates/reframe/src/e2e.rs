@@ -658,6 +658,34 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
         // A terminal window let go over a point of a window of reframe (`x`, `y` in it), as the
         // end of a real drag reports it; or (`appeared`) a terminal window that just appeared
         // there, as a tab torn out over reframe.
+        // What reframe's GPUI reports while something from another program is dragged over a
+        // window: a point of the window (logical), or "end"; "source" is the terminal window the
+        // drag comes from (instead of the window in front).
+        Some("tab_drag") => {
+            let Some(watcher) = crate::foreign::watcher(cx) else {
+                return json!({ "error": "no watcher" });
+            };
+            let point = if flag("end") {
+                None
+            } else {
+                let Some(shell) = shell_of(controller, text("window"), cx) else {
+                    return json!({ "error": "no window" });
+                };
+                let at = point(px(number("x") as f32), px(number("y") as f32));
+                let Some(physical) = shell.read(cx).to_physical(at) else {
+                    return json!({ "error": "no place" });
+                };
+                Some(physical)
+            };
+            let source = command.get("source").and_then(Value::as_i64).map(|hwnd| hwnd as isize);
+            watcher.update(cx, |watcher, cx| {
+                if source.is_some() {
+                    watcher.tab_drag_source = source;
+                }
+                watcher.note_pointer(point, cx);
+            });
+            json!({ "ok": true })
+        }
         Some("drop_terminal_window") | Some("terminal_appeared") => {
             let hwnd = number("hwnd") as isize;
             let Some(shell) = shell_of(controller, text("window"), cx) else {

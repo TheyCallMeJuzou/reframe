@@ -497,6 +497,10 @@ impl Shell {
         let dragged = label.clone();
         div()
             .id(SharedString::from(format!("row-{key}")))
+            .role(Role::ListItem)
+            .aria_label(label.clone())
+            .aria_description(tooltip.clone())
+            .aria_selected(selected)
             .w_full()
             .flex()
             .items_center()
@@ -634,6 +638,9 @@ impl Shell {
             scroll = scroll.child(
                 div()
                     .id(SharedString::from(format!("workspace-{}", workspace.id)))
+                    .role(Role::ListItem)
+                    .aria_label(workspace.name.clone())
+                    .aria_description(hint.clone())
                     .flex()
                     .items_center()
                     .gap(px(8.0))
@@ -855,6 +862,8 @@ impl Shell {
 
         div()
             .id("sidebar")
+            .role(Role::Complementary)
+            .aria_label(text("list.label"))
             .w(px(WIDTH))
             .flex_none()
             .h_full()

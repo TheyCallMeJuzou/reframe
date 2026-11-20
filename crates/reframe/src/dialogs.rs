@@ -75,6 +75,9 @@ fn setting(label: String, control: impl IntoElement) -> Div {
 fn chip(id: impl Into<ElementId>, label: String, selected: bool) -> Stateful<Div> {
     div()
         .id(id)
+        .role(Role::Button)
+        .aria_label(label.clone())
+        .aria_selected(selected)
         .px(px(8.0))
         .py(px(2.0))
         .rounded(px(10.0))
@@ -336,7 +339,13 @@ impl Render for NewSessionForm {
                 ),
         ));
         if !self.recent.is_empty() {
-            let mut recent = div().flex().flex_wrap().gap(px(6.0));
+            let mut recent = div()
+                .id("recent")
+                .role(Role::Group)
+                .aria_label(text("dialog.recent"))
+                .flex()
+                .flex_wrap()
+                .gap(px(6.0));
             for (index, path) in self.recent.iter().enumerate() {
                 let name = folder_name(path);
                 let label = if name.is_empty() { path.clone() } else { name };
@@ -644,6 +653,12 @@ impl SettingsForm {
     }
 
     fn choose_claude(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let locale = self.controller.read(cx).locale();
+        let text = |key: &str| t(locale, key, &[]).unwrap_or_default();
+        gpui_windows::set_next_open_file_types(vec![
+            (text("settings.programs"), "*.exe;*.cmd;*.bat".to_owned()),
+            (text("settings.allFiles"), "*.*".to_owned()),
+        ]);
         let picked = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
@@ -676,20 +691,34 @@ impl Render for SettingsForm {
         };
         let text = words(locale);
         let size = preferences.font_size;
-        let step = |id: &'static str, label: String, change: TextSizeChange, cx: &mut Context<Self>| {
-            Button::new(id)
-                .label(label)
-                .disabled(font_size_after(size, change) == size)
-                .on_click(cx.listener(move |this, _, _, cx| this.text_size(change, cx)))
-        };
+        let step =
+            |id: &'static str, label: String, hint: Option<String>, change: TextSizeChange, cx: &mut Context<Self>| {
+                Button::new(id)
+                    .label(label)
+                    .when_some(hint, |button, hint| button.tooltip(hint))
+                    .disabled(font_size_after(size, change) == size)
+                    .on_click(cx.listener(move |this, _, _, cx| this.text_size(change, cx)))
+            };
         let text_size = div()
             .flex()
             .items_center()
             .gap(px(6.0))
-            .child(step("smaller", "−".to_owned(), TextSizeChange::Smaller, cx))
+            .child(step(
+                "smaller",
+                "−".to_owned(),
+                Some(text("settings.smaller")),
+                TextSizeChange::Smaller,
+                cx,
+            ))
             .child(div().w(px(24.0)).text_center().child(size.to_string()))
-            .child(step("bigger", "+".to_owned(), TextSizeChange::Bigger, cx))
-            .child(step("normal", text("settings.normal"), TextSizeChange::Reset, cx));
+            .child(step(
+                "bigger",
+                "+".to_owned(),
+                Some(text("settings.bigger")),
+                TextSizeChange::Bigger,
+                cx,
+            ))
+            .child(step("normal", text("settings.normal"), None, TextSizeChange::Reset, cx));
         let size_hint = t(
             locale,
             "settings.textSizeHint",
@@ -1201,6 +1230,8 @@ impl Render for AboutForm {
         let link = |id: &'static str, label: String, url: &'static str| {
             div()
                 .id(id)
+                .role(Role::Link)
+                .aria_label(label.clone())
                 .text_color(rgb(theme::ACCENT))
                 .cursor_pointer()
                 .hover(|style| style.underline())

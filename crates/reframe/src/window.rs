@@ -363,6 +363,10 @@ pub struct Shell {
     )>,
     /// How many pixels a logical one is, as last drawn.
     scale: f32,
+    /// Whether the window was full screen at the last render, and the hint shown for a moment
+    /// each time it goes full screen.
+    was_fullscreen: bool,
+    fullscreen_hint: Option<Task<()>>,
     /// The session list.
     list: sidebar::ListView,
     /// Closed by the user and out of sight, its sessions running on.
@@ -497,6 +501,8 @@ impl Shell {
             question: None,
             terminal_question: None,
             scale: window.scale_factor(),
+            was_fullscreen: false,
+            fullscreen_hint: None,
             controller,
             window_id,
             handle,
@@ -2111,7 +2117,10 @@ impl Shell {
             }
         };
         let color_hint = self.text("group.color", cx);
+        let drag_hint = self.text("group.dragHint", cx);
         let header = div()
+            .id("group-bar")
+            .tooltip(move |window, cx| Tooltip::new(drag_hint.clone()).build(window, cx))
             .h(px(28.0))
             .px(px(4.0))
             .flex()
@@ -2146,6 +2155,8 @@ impl Shell {
             .child(
                 div()
                     .id("color")
+                    .role(Role::Button)
+                    .aria_label(color_hint.clone())
                     .size(px(12.0))
                     .flex_none()
                     .rounded_full()
@@ -2181,6 +2192,8 @@ impl Shell {
             );
         div()
             .id(SharedString::from(format!("group-{id}")))
+            .role(Role::Group)
+            .aria_label(node.name.clone())
             .size_full()
             .rounded(px(8.0))
             .border_2()
@@ -2201,6 +2214,8 @@ impl Shell {
     ) -> Stateful<Div> {
         div()
             .id(id)
+            .role(Role::Button)
+            .aria_label(hint.clone())
             .size(px(22.0))
             .flex_none()
             .flex()
@@ -2229,6 +2244,8 @@ impl Shell {
     ) -> Stateful<Div> {
         div()
             .id(id)
+            .role(Role::Button)
+            .aria_label(label.clone())
             .px(px(12.0))
             .py(px(5.0))
             .rounded(px(theme::RADIUS))
@@ -2284,7 +2301,10 @@ impl Shell {
         let zoomed = self.zoomed.as_deref() == Some(id.as_str());
         let running = is_running(view.status);
 
+        let drag_hint = self.text("tile.dragHint", cx);
         let header = div()
+            .id("tile-bar")
+            .tooltip(move |window, cx| Tooltip::new(drag_hint.clone()).build(window, cx))
             .h(px(theme::TILE_HEADER))
             .flex_none()
             .px(px(4.0))
@@ -2431,6 +2451,8 @@ impl Shell {
 
         div()
             .id(SharedString::from(format!("tile-{id}")))
+            .role(Role::Group)
+            .aria_label(view.label.clone())
             .size_full()
             .flex()
             .flex_col()
@@ -2691,8 +2713,9 @@ impl Shell {
         }
     }
 
-    /// Collapsed tiles and groups; a click puts them back where they were.
-    fn dock(&self, entries: &[DockEntry], cx: &mut Context<Self>) -> Div {
+    /// Collapsed tiles and groups, upright at the left of the layout; a click puts them back
+    /// where they were.
+    fn dock(&self, entries: &[DockEntry], window: &mut Window, cx: &mut Context<Self>) -> Stateful<Div> {
         // What a collapsed group shows: the status that most needs attention among its sessions.
         const URGENCY: [SessionStatus; 6] = [
             SessionStatus::Waiting,
@@ -2704,33 +2727,38 @@ impl Shell {
         ];
         let locale = self.locale(cx);
         let mut strip = div()
+            .id("dock")
+            .role(Role::Navigation)
+            .aria_label(self.text("dock.label", cx))
             .flex_none()
             .flex()
-            .flex_wrap()
+            .flex_col()
             .gap(px(4.0))
-            .px(px(6.0))
-            .py(px(4.0))
-            .border_b_1()
+            .w(px(34.0))
+            .px(px(4.0))
+            .py(px(6.0))
+            .overflow_y_scroll()
+            .border_r_1()
             .border_color(rgb(theme::BORDER))
             .bg(rgb(theme::SURFACE));
         let chip = |id: String| {
             div()
                 .id(SharedString::from(format!("dock-{id}")))
+                .flex_none()
                 .flex()
+                .flex_col()
                 .items_center()
                 .gap(px(6.0))
-                .px(px(8.0))
-                .py(px(3.0))
-                .max_w(px(220.0))
+                .py(px(8.0))
                 .rounded(px(theme::RADIUS))
                 .border_1()
                 .border_color(rgb(theme::BORDER))
                 .bg(rgb(theme::SURFACE_2))
-                .text_size(px(12.0))
+                .text_size(px(11.0))
                 .cursor_pointer()
                 .hover(|style| style.border_color(rgb(theme::BORDER_STRONG)))
         };
-        let label = |text: String| div().overflow_hidden().whitespace_nowrap().text_ellipsis().child(text);
+        let mut label = |text: &str| vertical_label(text, rgb(theme::TEXT).into(), window);
         for entry in entries {
             match entry {
                 DockEntry::Tile { session_id, .. } => {
@@ -2741,12 +2769,14 @@ impl Shell {
                     let id = session_id.clone();
                     strip = strip.child(
                         chip(tile_key(session_id))
+                            .role(Role::Button)
+                            .aria_label(hint.clone())
                             .tooltip(move |window, cx| Tooltip::new(hint.clone()).build(window, cx))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.dispatch(LayoutAction::TileExpand { session_id: id.clone() }, cx);
                             }))
                             .child(self.status_dot(view.status, cx))
-                            .child(label(view.label)),
+                            .child(label(&view.label)),
                     );
                 }
                 DockEntry::Group { node, .. } => {
@@ -2769,6 +2799,8 @@ impl Shell {
                     let id = node.id.clone();
                     strip = strip.child(
                         chip(node.id.clone())
+                            .role(Role::Button)
+                            .aria_label(hint.clone())
                             .border_color(theme::parse_color(&node.color))
                             .border_l_3()
                             .tooltip(move |window, cx| Tooltip::new(hint.clone()).build(window, cx))
@@ -2776,7 +2808,7 @@ impl Shell {
                                 this.dispatch(LayoutAction::GroupExpand { group_id: id.clone() }, cx);
                             }))
                             .child(self.status_dot(status, cx))
-                            .child(label(node.name.clone()))
+                            .child(label(&node.name))
                             .child(div().text_color(rgb(theme::MUTED)).text_size(px(11.0)).child(count)),
                     );
                 }
@@ -2798,6 +2830,20 @@ impl Render for Shell {
         };
         window.set_window_title(&self.title(cx));
         self.scale = window.scale_factor();
+        // "Press F11 to exit full screen", for a moment whenever the window goes full screen.
+        let fullscreen = window.is_fullscreen();
+        if fullscreen && !self.was_fullscreen {
+            self.fullscreen_hint = Some(cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(FULLSCREEN_HINT).await;
+                let _ = this.update(cx, |this, cx| {
+                    this.fullscreen_hint = None;
+                    cx.notify();
+                });
+            }));
+        } else if !fullscreen {
+            self.fullscreen_hint = None;
+        }
+        self.was_fullscreen = fullscreen;
         self.drawn += 1;
         // The question about closing is over however its dialog went (Escape, a click beside it).
         if self.asking_to_close && !window.has_active_dialog(cx) {
@@ -2850,9 +2896,6 @@ impl Render for Shell {
             .track_focus(&self.focus)
             .capture_key_down(cx.listener(Self::on_key))
             .child(self.toolbar(window, cx));
-        if !dock.is_empty() {
-            root = root.child(self.dock(&dock, cx));
-        }
         // The layout element is there without tiles too: it says where the area is, which takes
         // a tile dropped into an empty window.
         let mut area = div()
@@ -2887,7 +2930,42 @@ impl Render for Shell {
         if self.sidebar_open(cx) {
             body = body.child(self.sidebar(window, cx));
         }
+        if !dock.is_empty() {
+            body = body.child(self.dock(&dock, window, cx));
+        }
         root = root.child(body.child(area.min_w_0()));
+        if self.fullscreen_hint.is_some() {
+            let hint = div()
+                .px(px(16.0))
+                .py(px(8.0))
+                .rounded(px(8.0))
+                .border_1()
+                .border_color(rgb(theme::BORDER_STRONG))
+                .bg(rgb(theme::SURFACE_2))
+                .shadow_lg()
+                .child(self.text("fullscreen.hint", cx))
+                .with_animation("fullscreen-hint", Animation::new(FULLSCREEN_HINT), |hint, delta| {
+                    // In over the first tenth, out over the last fifth.
+                    let shown = if delta < 0.1 {
+                        delta / 0.1
+                    } else if delta > 0.8 {
+                        (1.0 - delta) / 0.2
+                    } else {
+                        1.0
+                    };
+                    hint.opacity(shown).mt(px(-8.0 * (1.0 - shown)))
+                });
+            root = root.child(
+                div()
+                    .absolute()
+                    .top(px(14.0))
+                    .left_0()
+                    .right_0()
+                    .flex()
+                    .justify_center()
+                    .child(hint),
+            );
+        }
         // Over everything: where a drop would go, what is being dragged, and an open menu.
         if let Some(rect) = self.drop_preview {
             root = root.child(
@@ -2937,6 +3015,76 @@ impl Render for Shell {
         }
         root
     }
+}
+
+/// How long the full screen hint is shown.
+const FULLSCREEN_HINT: std::time::Duration = std::time::Duration::from_millis(3500);
+
+/// A label turned to read from the bottom up, as the Electron version's collapsed tiles had it
+/// (`writing-mode: vertical-rl`, turned around), at most 160 pixels long with an ellipsis. GPUI
+/// turns no text, but it paints SVGs turned and draws the text in them: the label is an SVG
+/// painted as a mask in `color`.
+fn vertical_label(text: &str, color: Hsla, window: &mut Window) -> impl IntoElement + use<> {
+    const SIZE: f32 = 12.0;
+    const MAX: f32 = 160.0;
+    const BREADTH: f32 = 16.0;
+    // Where the line's baseline is across the label: ascenders go left of it, descenders right.
+    const BASELINE: f32 = 12.0;
+    let measure = |text: &str, window: &mut Window| {
+        let run = TextRun {
+            len: text.len(),
+            font: font(theme::UI_FONT),
+            color,
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        f32::from(
+            window
+                .text_system()
+                .shape_line(SharedString::from(text.to_owned()), px(SIZE), &[run], None)
+                .width,
+        )
+    };
+    let mut shown = text.to_owned();
+    let mut length = measure(&shown, window);
+    if length > MAX {
+        let chars: Vec<char> = text.chars().collect();
+        let (mut fits, mut too_long) = (0, chars.len());
+        while too_long - fits > 1 {
+            let middle = (fits + too_long) / 2;
+            let candidate: String = chars[..middle].iter().collect::<String>() + "…";
+            if measure(&candidate, window) <= MAX {
+                fits = middle;
+            } else {
+                too_long = middle;
+            }
+        }
+        shown = chars[..fits].iter().collect::<String>() + "…";
+        length = measure(&shown, window);
+    }
+    let length = length.ceil() + 1.0;
+    let escaped = shown
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;");
+    let svg = format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="{BREADTH}" height="{length}" viewBox="0 0 {BREADTH} {length}"><text transform="translate({BASELINE} {length}) rotate(-90)" font-family="{}" font-size="{SIZE}" fill="white">{escaped}</text></svg>"#,
+        theme::UI_FONT
+    );
+    // The atlas keeps the drawn label under this key.
+    let key = SharedString::from(format!("reframe/vertical-label/{svg}"));
+    let data: std::sync::Arc<[u8]> = svg.into_bytes().into();
+    canvas(
+        |_, _, _| {},
+        move |bounds, (), window, cx| {
+            let _ = window.paint_svg(bounds, key, Some(&data), TransformationMatrix::unit(), color, cx);
+        },
+    )
+    .flex_none()
+    .w(px(BREADTH))
+    .h(px(length))
 }
 
 /// Draws the layout: asks the shell for the tiles, frames and separators and puts each where

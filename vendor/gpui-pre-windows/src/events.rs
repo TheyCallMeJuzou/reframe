@@ -1363,6 +1363,8 @@ impl WindowsWindowInner {
             // `begin_vsync_thread`), so the deferred frame still gets drawn,
             // at most one vsync late.
             unsafe { ValidateRect(Some(handle), None).ok().log_err() };
+            // reframe: the deferred frame needs another tick.
+            self.state.frame_demand.want();
             return Some(0);
         };
         let mut request_frame = self.state.callbacks.request_frame.take()?;
@@ -1389,12 +1391,14 @@ impl WindowsWindowInner {
             (None, FrameRequestSource::NativeCallback),
             |(at, source)| (Some(at), source),
         );
+        self.state.drew.set(false);
         request_frame(RequestFrameOptions {
             require_presentation: false,
             force_render,
             signal_at,
             signal_source,
         });
+        self.state.frame_demand.ticked(self.state.drew.take());
 
         self.state.callbacks.request_frame.set(Some(request_frame));
         self.update_ime_enabled(handle);

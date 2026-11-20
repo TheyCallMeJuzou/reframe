@@ -844,6 +844,26 @@ pub fn is_window(window: isize) -> bool {
 }
 
 /// Where the pointer is on the screen, in pixels.
+/// A message box with an error, for when reframe cannot start (there is no window yet).
+pub fn error_box(title: &str, message: &str) {
+    use windows::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MB_SETFOREGROUND, MessageBoxW};
+    // SAFETY: valid strings; the box has no owner.
+    unsafe {
+        MessageBoxW(
+            None,
+            &HSTRING::from(message),
+            &HSTRING::from(title),
+            MB_OK | MB_ICONERROR | MB_SETFOREGROUND,
+        );
+    }
+}
+
+/// The window in front (0 when there is none).
+pub fn foreground() -> isize {
+    // SAFETY: plain call.
+    unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as isize }
+}
+
 pub fn cursor() -> (i32, i32) {
     let mut point = POINT::default();
     // SAFETY: plain values out.

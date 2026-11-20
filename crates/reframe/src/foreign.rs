@@ -8,9 +8,11 @@
 //! windows, holding a claude that already ran before the window existed, counts as such a drop
 //! too.
 //!
-//! Ported from the Electron version's `src/main/foreign.ts`. (Its pointer reports during a tab
-//! drag over reframe, for showing where the tab would go, need a drop target that takes drags
-//! without data, which GPUI's is not: that part is left out.)
+//! While such a tab is dragged over reframe (a drag that offers no data the system knows, which
+//! reframe's copy of GPUI reports), the window under it shows where it would go, if the terminal
+//! it comes from (the window in front) holds a claude; the last point is where it was let go.
+//!
+//! Ported from the Electron version's `src/main/foreign.ts`.
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -56,6 +58,21 @@ const NEW_WINDOW: Duration = Duration::from_millis(10_000);
 /// When to look into a new terminal window: the moved tab's console may name its window only
 /// after a moment.
 const APPEARED_PROBES_MS: [u64; 5] = [0, 300, 800, 1500, 2500];
+/// A tab drag over reframe is over when its pointer has not moved for this long.
+const TAB_DRAG_IDLE: Duration = Duration::from_millis(500);
+/// How long the pointer of a tab drag counts as the point where a new terminal window appeared.
+const POINTER: Duration = Duration::from_millis(3000);
+
+/// Something from another program dragged over one of reframe's windows: a Windows Terminal tab,
+/// which carries no data the system knows.
+struct TabDrag {
+    /// Which drag this is (a lookup that ends after its drag is ignored).
+    number: u64,
+    window_id: String,
+    /// Whether the terminal window it comes from holds a claude; `None` while that is looked up.
+    holds_claude: Option<bool>,
+    idle: Task<()>,
+}
 
 struct Drag {
     hwnd: isize,
@@ -74,7 +91,14 @@ pub struct ForeignWatcher {
     drag: Option<Drag>,
     created: HashMap<isize, Instant>,
     hosts: HashMap<u32, Option<String>>,
+    tab_drag: Option<TabDrag>,
+    tab_drags: u64,
+    /// The last point of a tab drag over reframe (screen pixels), and when.
+    pointer: Option<((i32, i32), Instant)>,
+    /// Test hook: the window a simulated tab drag comes from (instead of the window in front).
+    pub tab_drag_source: Option<isize>,
     _events: Task<()>,
+    _pointers: Task<()>,
 }
 
 struct Watcher(Entity<ForeignWatcher>);
@@ -92,12 +116,31 @@ pub fn start(controller: &Entity<Controller>, cx: &mut App) {
     if !win::watch_windows(sender) {
         controller.read(cx).log().warn("cannot follow window drags", None);
     }
+    // Drags of something other than files over reframe's windows (see the module's notes).
+    let (pointer_sender, mut pointers) = unbounded();
+    gpui_windows::set_foreign_drag_handler(move |_, point| {
+        let _ = pointer_sender.unbounded_send(point);
+    });
     let controller = controller.clone();
     let watcher = cx.new(|cx| ForeignWatcher {
         controller,
         drag: None,
         created: HashMap::new(),
         hosts: HashMap::new(),
+        tab_drag: None,
+        tab_drags: 0,
+        pointer: None,
+        tab_drag_source: None,
+        _pointers: cx.spawn(async move |this, cx| {
+            while let Some(point) = pointers.next().await {
+                if this
+                    .update(cx, |this: &mut ForeignWatcher, cx| this.note_pointer(point, cx))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        }),
         _events: cx.spawn(async move |this, cx| {
             while let Some(event) = events.next().await {
                 if this
@@ -350,6 +393,97 @@ impl ForeignWatcher {
         }
     }
 
+    /// Something from another program is dragged over one of reframe's windows, at `point` on the
+    /// screen; `None` when it left or ended. A Windows Terminal tab comes from the window in front:
+    /// if that holds a claude, the window under the pointer shows where it would go.
+    pub fn note_pointer(&mut self, point: Option<(i32, i32)>, cx: &mut Context<Self>) {
+        let Some(point) = point else {
+            return self.end_tab_drag(cx);
+        };
+        let Some((window_id, at)) = window::window_at_physical(point.0, point.1, cx) else {
+            return self.end_tab_drag(cx);
+        };
+        self.pointer = Some((point, Instant::now()));
+        if let Some(drag) = self.tab_drag.as_mut()
+            && drag.window_id != window_id
+        {
+            if drag.holds_claude == Some(true) {
+                let previous = drag.window_id.clone();
+                self.clear_hover(Some(&previous), cx);
+            }
+            if let Some(drag) = self.tab_drag.as_mut() {
+                drag.window_id = window_id.clone();
+            }
+        }
+        if self.tab_drag.is_none() {
+            self.tab_drags += 1;
+            let number = self.tab_drags;
+            let source = self.tab_drag_source.unwrap_or_else(win::foreground);
+            let host = (source != 0).then(|| self.host_of(source)).flatten();
+            let terminal = source != 0 && is_terminal_host(host.as_deref());
+            self.log(cx).info(
+                "something from another app is dragged over reframe",
+                Some(json!({ "from": host.as_deref().unwrap_or("unknown") })),
+            );
+            self.tab_drag = Some(TabDrag {
+                number,
+                window_id: window_id.clone(),
+                holds_claude: (!terminal).then_some(false),
+                idle: Task::ready(()),
+            });
+            if terminal {
+                let found = self.sessions_in(source, None, cx);
+                cx.spawn(async move |this, cx| {
+                    let sessions = found.await;
+                    let _ = this.update(cx, |this, cx| {
+                        let Some(drag) = this.tab_drag.as_mut().filter(|drag| drag.number == number) else {
+                            return;
+                        };
+                        drag.holds_claude = Some(!sessions.is_empty());
+                        let window_id = drag.window_id.clone();
+                        if !sessions.is_empty()
+                            && let Some(((x, y), _)) = this.pointer
+                            && let Some((over, at)) = window::window_at_physical(x, y, cx)
+                            && over == window_id
+                        {
+                            this.hover(&window_id, at, cx);
+                        }
+                    });
+                })
+                .detach();
+            }
+        }
+        let number = self.tab_drags;
+        let idle = cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(TAB_DRAG_IDLE).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.tab_drag.as_ref().is_some_and(|drag| drag.number == number) {
+                    this.end_tab_drag(cx);
+                }
+            });
+        });
+        if let Some(drag) = self.tab_drag.as_mut() {
+            drag.idle = idle;
+            if drag.holds_claude == Some(true) {
+                self.hover(&window_id, at, cx);
+            }
+        }
+    }
+
+    fn hover(&self, window_id: &str, at: Point<Pixels>, cx: &mut App) {
+        if let Some(shell) = window::shell(window_id, cx) {
+            shell.update(cx, |shell, cx| shell.set_foreign_hover(Some(at), cx));
+        }
+    }
+
+    fn end_tab_drag(&mut self, cx: &mut Context<Self>) {
+        if let Some(drag) = self.tab_drag.take()
+            && drag.holds_claude == Some(true)
+        {
+            self.clear_hover(Some(&drag.window_id), cx);
+        }
+    }
+
     /// A new terminal window was shown: when it holds a claude that ran before and appeared over
     /// one of reframe's windows, it is a tab torn out over reframe. `point` (tests, in screen
     /// pixels) stands in for the pointer.
@@ -365,7 +499,19 @@ impl ForeignWatcher {
         let shown_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0.0, |since| since.as_millis() as f64);
-        let (x, y) = point.unwrap_or_else(win::cursor);
+        // Where a tab dragged over reframe was last, if that was a moment ago.
+        let recent = self
+            .pointer
+            .filter(|(_, at)| at.elapsed() <= POINTER)
+            .map(|(point, _)| point);
+        let (x, y) = point.or(recent).unwrap_or_else(win::cursor);
+        let point_from = if point.is_some() {
+            "test"
+        } else if recent.is_some() {
+            "drag over reframe"
+        } else {
+            "cursor"
+        };
         let over = window::window_at_physical(x, y, cx);
         let external = self
             .controller
@@ -388,7 +534,7 @@ impl ForeignWatcher {
                         "host": host,
                         "overReframe": over.is_some(),
                         "point": [x, y],
-                        "pointFrom": if point.is_some() { "test" } else { "cursor" },
+                        "pointFrom": point_from,
                     })),
                 );
             });

@@ -9,6 +9,7 @@ mod directx_atlas;
 mod directx_devices;
 mod directx_renderer;
 mod dispatcher;
+mod drop_extras;
 mod display;
 mod events;
 mod keyboard;
@@ -27,6 +28,7 @@ pub(crate) use directx_atlas::*;
 pub(crate) use directx_devices::*;
 pub(crate) use directx_renderer::*;
 pub(crate) use dispatcher::*;
+pub(crate) use drop_extras::*;
 pub(crate) use display::*;
 pub(crate) use events::*;
 pub(crate) use keyboard::*;
@@ -38,6 +40,7 @@ pub(crate) use vsync::*;
 pub(crate) use window::*;
 pub(crate) use wrapper::*;
 
-pub use platform::WindowsPlatform;
+pub use drop_extras::{set_dropped_files_folder, set_foreign_drag_handler};
+pub use platform::{WindowsPlatform, set_next_open_file_types};
 
 pub(crate) use windows::Win32::Foundation::HWND;

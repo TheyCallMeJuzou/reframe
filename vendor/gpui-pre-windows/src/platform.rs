@@ -42,6 +42,7 @@ use gpui::*;
 struct TrackedWindow {
     handle: SafeHwnd,
     frame_signal: Arc<PlatformFrameSignal>,
+    frame_demand: Arc<FrameDemand>,
 }
 
 impl TrackedWindow {
@@ -422,6 +423,7 @@ impl WindowsPlatform {
             // Not joined: the thread can be sending this thread a message. It exits after its
             // next vsync, and drops its reference to the devices then.
             stop.store(true, Ordering::Release);
+            FRAME_CLOCK.wake();
         }
         self.inner.state.directx_devices.borrow_mut().take();
     }
@@ -463,7 +465,16 @@ impl WindowsPlatform {
                     let Some(all_windows) = all_windows.upgrade() else {
                         break;
                     };
+                    // reframe: no window wants frames, so none is woken until one does.
+                    if !all_windows.read().iter().any(|hwnd| hwnd.frame_demand.wanted()) {
+                        drop(all_windows);
+                        FRAME_CLOCK.sleep();
+                        continue;
+                    }
                     for hwnd in all_windows.read().iter() {
+                        if !hwnd.frame_demand.wanted() {
+                            continue;
+                        }
                         unsafe {
                             if let Some(signal_at) = signal_at {
                                 if IsWindowVisible(hwnd.as_raw()).as_bool()
@@ -752,6 +763,7 @@ impl Platform for WindowsPlatform {
         self.raw_window_handles.write().push(TrackedWindow {
             handle: handle.into(),
             frame_signal: window.state.frame_signal.clone(),
+            frame_demand: window.state.frame_demand.clone(),
         });
 
         Ok(Box::new(window))
@@ -1581,6 +1593,15 @@ fn open_target_in_explorer(target: &Path) -> Result<()> {
     })
 }
 
+/// reframe: file types the next file dialog offers (its name, its patterns as "*.exe;*.cmd").
+static NEXT_OPEN_FILE_TYPES: std::sync::Mutex<Option<Vec<(String, String)>>> = std::sync::Mutex::new(None);
+
+/// reframe: the next file dialog that opens a file offers these file types, the first one chosen
+/// (upstream's dialog has no file types).
+pub fn set_next_open_file_types(types: Vec<(String, String)>) {
+    *NEXT_OPEN_FILE_TYPES.lock().unwrap_or_else(|error| error.into_inner()) = Some(types);
+}
+
 fn file_open_dialog(
     options: PathPromptOptions,
     window: Option<HWND>,
@@ -1596,8 +1617,31 @@ fn file_open_dialog(
         dialog_options |= FOS_PICKFOLDERS;
     }
 
+    let file_types = NEXT_OPEN_FILE_TYPES
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .take()
+        .filter(|_| !options.directories);
     unsafe {
         folder_dialog.SetOptions(dialog_options)?;
+
+        if let Some(file_types) = &file_types {
+            let strings: Vec<(HSTRING, HSTRING)> = file_types
+                .iter()
+                .map(|(name, spec)| (HSTRING::from(name.as_str()), HSTRING::from(spec.as_str())))
+                .collect();
+            let specs: Vec<windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC> = strings
+                .iter()
+                .map(|(name, spec)| windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC {
+                    pszName: PCWSTR(name.as_ptr()),
+                    pszSpec: PCWSTR(spec.as_ptr()),
+                })
+                .collect();
+            if !specs.is_empty() {
+                folder_dialog.SetFileTypes(&specs)?;
+                folder_dialog.SetFileTypeIndex(1)?;
+            }
+        }
 
         if let Some(prompt) = options.prompt {
             let prompt: &str = &prompt;
