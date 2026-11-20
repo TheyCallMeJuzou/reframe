@@ -4,7 +4,6 @@
 //! and `AboutDialog.tsx`. Each is a view of its own inside the component library's dialog, which
 //! brings the backdrop, Escape and the focus trap.
 
-use std::cell::Cell;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
@@ -564,15 +563,14 @@ impl Render for NewSessionForm {
 pub fn open_new_session(controller: &Entity<Controller>, window_id: &str, window: &mut Window, cx: &mut App) {
     let form = cx.new(|cx| NewSessionForm::new(controller.clone(), window_id.to_owned(), window, cx));
     let controller = controller.clone();
-    let focus = Cell::new(true);
-    window.open_dialog(cx, move |dialog, window, cx| {
-        let dialog = framed(dialog);
-        if focus.replace(false) {
-            form.read(cx).folder.focus_handle(cx).focus(window, cx);
-        }
+    let folder = form.read(cx).folder.focus_handle(cx);
+    window.open_dialog(cx, move |dialog, _, cx| {
         let title = words(controller.read(cx).locale())("dialog.title");
-        dialog.title(heading(title)).w(px(520.0)).child(form.clone())
+        framed(dialog).title(heading(title)).w(px(520.0)).child(form.clone())
     });
+    // The folder field has the keyboard once the dialog is drawn. Asked for while the dialog
+    // draws itself, it could go unseen until some other frame came (on CI none did).
+    window.on_next_frame(move |window, cx| folder.focus(window, cx));
 }
 
 // ---------- Settings ----------
@@ -1288,18 +1286,17 @@ pub fn open_save_workspace(controller: &Entity<Controller>, window_id: &str, win
             _subscriptions: vec![entered],
         }
     });
-    let focus = Cell::new(true);
-    window.open_dialog(cx, move |dialog, window, cx| {
-        let dialog = framed(dialog);
-        if focus.replace(false) {
-            let name = form.read(cx).name.clone();
-            name.update(cx, |name, cx| {
-                name.focus(window, cx);
-                name.select_all(window, cx);
-            });
-        }
+    let name = form.read(cx).name.clone();
+    window.on_next_frame(move |window, cx| {
+        // As the folder of a new session: once the dialog is drawn.
+        name.update(cx, |name, cx| {
+            name.focus(window, cx);
+            name.select_all(window, cx);
+        });
+    });
+    window.open_dialog(cx, move |dialog, _, cx| {
         let title = words(form.read(cx).controller.read(cx).locale())("workspace.nameTitle");
-        dialog.title(heading(title)).w(px(520.0)).child(form.clone())
+        framed(dialog).title(heading(title)).w(px(520.0)).child(form.clone())
     });
 }
 
