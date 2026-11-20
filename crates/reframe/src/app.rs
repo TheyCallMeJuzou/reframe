@@ -234,6 +234,8 @@ pub enum StartError {
     /// The saved state comes from a newer reframe; it is left alone.
     NewerState(PathBuf),
     Hooks(std::io::Error),
+    /// The state file is there but cannot be read, or one that cannot be used cannot be set aside.
+    State(PathBuf, std::io::Error),
 }
 
 pub struct Controller {
@@ -331,18 +333,7 @@ impl Controller {
         let mut store = StateStore::new(config.user_data.join("state.json"));
         let loaded = match store.load() {
             Ok(loaded) => loaded,
-            Err(error) => {
-                // The unusable file could not be set aside; it is written over with the next save.
-                log.error(
-                    "state file could not be set aside",
-                    Some(json!({ "error": error.to_string() })),
-                );
-                reframe_core::store::LoadResult {
-                    state: AppState::default(),
-                    source: LoadSource::Default,
-                    rejected: None,
-                }
-            }
+            Err(error) => return Err(StartError::State(store.file().to_owned(), error)),
         };
         if loaded.source == LoadSource::Newer {
             log.error(

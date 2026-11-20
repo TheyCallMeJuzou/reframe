@@ -858,6 +858,38 @@ pub fn error_box(title: &str, message: &str) {
     }
 }
 
+/// Where a top-level window is among all of them, from the front (0) back; windows not found
+/// come last.
+pub fn stacking_place(window: isize) -> usize {
+    use windows::Win32::UI::WindowsAndMessaging::{GW_HWNDNEXT, GetTopWindow, GetWindow};
+    // SAFETY: plain calls; the walk ends at the last window (or after many).
+    unsafe {
+        let mut next = GetTopWindow(None).ok();
+        let mut place = 0;
+        while let Some(current) = next {
+            if current.0 as isize == window {
+                return place;
+            }
+            place += 1;
+            if place > 100_000 {
+                break;
+            }
+            next = GetWindow(current, GW_HWNDNEXT).ok();
+        }
+        usize::MAX
+    }
+}
+
+/// Puts a window where another one is, with its size, in front of it (for tests).
+pub fn place_like(window: isize, model: isize) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{HWND_TOP, SWP_NOACTIVATE, SetWindowPos};
+    let Some((left, top, width, height)) = window_rect(model) else {
+        return false;
+    };
+    // SAFETY: plain call on a window of reframe's.
+    unsafe { SetWindowPos(hwnd(window), Some(HWND_TOP), left, top, width, height, SWP_NOACTIVATE).is_ok() }
+}
+
 /// The window in front (0 when there is none).
 pub fn foreground() -> isize {
     // SAFETY: plain call.

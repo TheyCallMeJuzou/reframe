@@ -229,6 +229,9 @@ impl StartFailed {
                 );
             }
             StartError::Hooks(error) => self.failed(&format!("could not listen for Claude Code's hooks: {error}")),
+            StartError::State(file, error) => {
+                self.failed(&format!("{} could not be read: {error}", file.display()));
+            }
         }
         std::process::exit(1)
     }

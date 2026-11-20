@@ -42,6 +42,15 @@ fn gives_files_from_before_preferences_existed_the_default_preferences() {
 }
 
 #[test]
+fn will_not_start_on_a_state_file_that_is_there_but_cannot_be_read() {
+    // (As the Electron version: its start failed, rather than running on without saving.)
+    let (dir, mut store) = store();
+    fs::create_dir(store.file()).unwrap();
+    assert!(store.load().is_err());
+    assert_eq!(names(&dir), ["state.json"]);
+}
+
+#[test]
 fn starts_from_defaults_without_a_file() {
     let (_dir, mut s) = store();
     let loaded = s.load().unwrap();

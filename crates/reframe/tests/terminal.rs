@@ -298,3 +298,55 @@ fn a_terminal_tab_torn_out_over_reframe_is_taken_over_too() {
     wait_for("the console to go", || (!alive(terminal.shell)).then_some(()));
     app.quit();
 }
+
+#[test]
+fn a_terminal_window_dropped_where_two_reframe_windows_overlap_goes_into_the_one_in_front() {
+    let setup = Setup::new();
+    let (session_id, pid, _terminal) = outside_terminal(&setup);
+    let mut app = setup.launch();
+    let created = app.cmd(json!({ "cmd": "new", "cwd": setup.project(), "name": "alpha" }));
+    let alpha = created["session"].as_str().unwrap().to_owned();
+    app.wait_status(&alpha, "idle");
+    let first = app.state()["windows"][0]["id"].as_str().unwrap().to_owned();
+    // A new, empty window, right over the first one and in front of it.
+    let second = app.cmd(json!({ "cmd": "new_window" }))["window"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    wait_for("the second window", || {
+        app.cmd(json!({ "cmd": "window", "window": second }))["drawn"]
+            .as_bool()
+            .filter(|drawn| *drawn)
+    });
+    assert_eq!(
+        app.cmd(json!({ "cmd": "place_over", "window": second, "over": first }))["ok"],
+        true
+    );
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    let size = app.cmd(json!({ "cmd": "window", "window": second }))["size"].clone();
+    let (x, y) = (size[0].as_f64().unwrap() / 2.0, size[1].as_f64().unwrap() / 2.0);
+
+    let hwnd = app.cmd(json!({ "cmd": "terminal_window_of", "pid": pid }));
+    app.cmd(json!({ "cmd": "drop_terminal_window", "window": second, "hwnd": hwnd, "x": x, "y": y }));
+    let candidates = wait_for("the question in the window in front", || {
+        let question = app.cmd(json!({ "cmd": "window", "window": second }))["terminalQuestion"].clone();
+        (!question.is_null()).then_some(question)
+    });
+    assert_eq!(candidates[0]["name"], "outside");
+    app.cmd(json!({ "cmd": "terminal_answer", "window": second, "ids": [session_id] }));
+    let id = wait_for("it in reframe", || record_of(&mut app, &session_id));
+    app.wait_status(&id, "idle");
+    let state = app.state();
+    let window_of = |window_id: &str| {
+        state["windows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|window| window["id"] == window_id)
+            .cloned()
+            .unwrap()
+    };
+    assert_eq!(window_of(&second)["layout"]["sessionId"], id.as_str());
+    assert_eq!(window_of(&first)["layout"]["sessionId"], alpha.as_str());
+    app.quit();
+}

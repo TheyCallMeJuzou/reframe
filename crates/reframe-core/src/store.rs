@@ -124,6 +124,7 @@ impl StateStore {
                 });
             }
             Read::Missing => (None, read_file(&self.backup_file())),
+            Read::Unreadable(error) => return Err(error),
             Read::Unusable(reason) => {
                 let rejected = Rejected {
                     file: self.set_aside()?,
@@ -148,7 +149,7 @@ impl StateStore {
                 source: LoadSource::Backup,
                 rejected,
             },
-            Read::Missing | Read::Unusable(_) => LoadResult {
+            Read::Missing | Read::Unusable(_) | Read::Unreadable(_) => LoadResult {
                 state: AppState::default(),
                 source: LoadSource::Default,
                 rejected,
@@ -336,11 +337,17 @@ enum Read {
     Missing,
     Newer,
     Unusable(String),
+    /// There, but it cannot be read.
+    Unreadable(io::Error),
 }
 
 fn read_file(file: &Path) -> Read {
-    let Ok(bytes) = fs::read(file) else {
-        return Read::Missing;
+    let bytes = match fs::read(file) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Read::Missing,
+        // There, but it cannot be read (a folder, no access): as the Electron version, which then
+        // could not start, reframe does not run without its state.
+        Err(error) => return Read::Unreadable(error),
     };
     // As Node reads it: bytes that are not UTF-8 become replacement characters (and then are not JSON).
     let text = String::from_utf8_lossy(&bytes);

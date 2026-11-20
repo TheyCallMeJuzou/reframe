@@ -890,6 +890,16 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
                 None => json!({ "error": "not drawn yet" }),
             }
         }
+        // Puts the window ("window") where another one ("over") is, with its size, in front of it.
+        Some("place_over") => {
+            let hwnd_of =
+                |id: Option<String>, cx: &App| shell_of(controller, id, cx).and_then(|shell| shell.read(cx).hwnd());
+            let (Some(window), Some(over)) = (hwnd_of(text("window"), cx), hwnd_of(text("over"), cx)) else {
+                return json!({ "error": "no window" });
+            };
+            let placed = win::place_like(window, over);
+            json!({ "ok": placed })
+        }
         // The web links opened so far (caught instead of opened).
         Some("links") => json!(crate::browser::caught(cx)),
         // A second start of reframe (1: a development build, 2: an installed one).

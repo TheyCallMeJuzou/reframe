@@ -89,10 +89,13 @@ torn out over it, is offered for taking over: its sessions continue in reframe w
 and a tab with only a shell left is closed by typing "exit" there.
 
 Installer, updater and the portable copy: see Packaging. Still to come: the switch from the
-Electron version (the profile, the app id and the version 1.0.0). Not there yet: a Windows
-Terminal tab dragged over reframe
-shows no drop place before it is let go (GPUI's drop target takes no drags without data), and a
-file that exists only in memory (a picture dragged out of a browser) is not taken by a tile.
+Electron version (the profile, the app id and the version 1.0.0).
+
+GPUI's Windows backend is a copy with reframe's changes (`vendor/gpui-pre-windows`, see its
+`REFRAME.md`): idle windows cost no CPU, notifications play the system's sound, pictures dragged
+out of a browser are taken, and a Windows Terminal tab dragged over reframe shows where it would
+go. Screen readers see reframe's buttons, fields, tiles, the session list and the collapsed tiles
+by role and name.
 
 Ctrl+Shift+D writes the focused terminal's screen to a text file in the temp folder.
 
@@ -101,10 +104,19 @@ Ctrl+Shift+D writes the focused terminal's screen to a text file in the temp fol
 `scripts\check.ps1` runs what has to pass before a push: formatting, clippy, the unit tests and
 the end-to-end tests. The end-to-end tests (`crates/reframe/tests`) start the app with a
 throwaway profile and the fake claude and drive it over a local socket that only exists with
-`REFRAME_E2E`; they need `node` on the PATH.
+`REFRAME_E2E`; they need `node` on the PATH. Some find and press buttons, fields and choice boxes
+through UI Automation, as a screen reader does (`tests/common/ui.rs`). Under test, links and the
+clipboard are caught instead of reaching the browser and the real clipboard. While they run,
+windows of the app and console windows appear for a moment, and the drop tests move the pointer
+over the app's window (a real drag through Windows, kept over that window).
+
+`tests/real.rs` runs against the real claude and Claude Code in a real WSL distribution, on
+request only (see its top for the variables): `cargo test -p reframe --test real -- --ignored
+--test-threads=1`. Three of its tests send short prompts ("Reply with exactly: OK"); the
+fullscreen test borrows the clipboard's text and puts it back.
 
 `scripts\measure.ps1 -RootPid <pid> -Label <name>` measures memory and idle CPU of a running app;
 `scripts\run-electron.mjs` starts the Electron version with an empty profile for the same
 measurement. `scripts\capture.ps1 <folder>` saves a picture of each window.
 
-No check sends a prompt to Claude.
+No test of `scripts\check.ps1` sends a prompt to Claude.

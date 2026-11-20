@@ -186,14 +186,18 @@ pub fn window_at_physical(x: i32, y: i32, cx: &App) -> Option<(String, Point<Pix
         .map(|shell| shell.read(cx))
         .filter(|shell| !shell.away)
         .filter_map(|shell| {
-            let (left, top, width, height) = win::client_rect(shell.hwnd?)?;
+            let hwnd = shell.hwnd?;
+            let (left, top, width, height) = win::client_rect(hwnd)?;
             let inside = x >= left && y >= top && x < left + width && y < top + height;
             inside.then(|| {
                 let local = point(px((x - left) as f32 / shell.scale), px((y - top) as f32 / shell.scale));
-                (shell.focused_at, shell.window_id.clone(), local)
+                (hwnd, shell.window_id.clone(), local)
             })
         })
-        .max_by_key(|(focused_at, ..)| *focused_at)
+        .collect::<Vec<_>>()
+        .into_iter()
+        // Where windows overlap, the one in front.
+        .min_by_key(|(hwnd, ..)| win::stacking_place(*hwnd))
         .map(|(_, id, local)| (id, local))
 }
 
@@ -2558,7 +2562,14 @@ impl Shell {
                     .flex_col()
                     .items_center()
                     .gap(px(12.0))
-                    .child(div().text_center().child(message))
+                    .child(
+                        div()
+                            .id("message")
+                            .role(Role::Label)
+                            .aria_value(message.clone())
+                            .text_center()
+                            .child(message),
+                    )
                     .child(buttons),
             )
     }
@@ -2950,7 +2961,11 @@ impl Render for Shell {
         }
         root = root.child(body.child(area.min_w_0()));
         if self.fullscreen_hint.is_some() {
+            let message = self.text("fullscreen.hint", cx);
             let hint = div()
+                .id("fullscreen-hint")
+                .role(Role::Label)
+                .aria_value(message.clone())
                 .px(px(16.0))
                 .py(px(8.0))
                 .rounded(px(8.0))
@@ -2958,7 +2973,7 @@ impl Render for Shell {
                 .border_color(rgb(theme::BORDER_STRONG))
                 .bg(rgb(theme::SURFACE_2))
                 .shadow_lg()
-                .child(self.text("fullscreen.hint", cx))
+                .child(message)
                 .with_animation("fullscreen-hint", Animation::new(FULLSCREEN_HINT), |hint, delta| {
                     // In over the first tenth, out over the last fifth.
                     let shown = if delta < 0.1 {
