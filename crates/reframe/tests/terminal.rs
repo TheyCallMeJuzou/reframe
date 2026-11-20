@@ -261,6 +261,25 @@ fn a_terminal_tab_torn_out_over_reframe_is_taken_over_too() {
     app.wait_status(&alpha, "idle");
     let (x, y) = right_of_first_tile(&mut app);
     let hwnd = app.cmd(json!({ "cmd": "terminal_window_of", "pid": pid }));
+    // While the tab is dragged over reframe (a real drag through Windows that carries nothing a
+    // program knows, as a Windows Terminal tab's does), the window shows where it would go, and
+    // stops once it is let go. The drag comes from the terminal window.
+    app.cmd(json!({ "cmd": "tab_drag", "end": true, "source": hwnd }));
+    app.cmd(json!({ "cmd": "ole_drop", "x": x, "y": y, "steps": 60 }));
+    wait_for("the drop place", || {
+        (!app.cmd(json!({ "cmd": "window" }))["preview"].is_null()).then_some(())
+    });
+    wait_for("the drag to end", || {
+        setup.log().contains(r#""dragged":true"#).then_some(())
+    });
+    wait_for("the drop place to go", || {
+        app.cmd(json!({ "cmd": "window" }))["preview"].is_null().then_some(())
+    });
+    assert!(
+        setup
+            .log()
+            .contains("something from another app is dragged over reframe")
+    );
     // The window appears where the tab was let go.
     app.cmd(json!({ "cmd": "terminal_appeared", "hwnd": hwnd, "x": x, "y": y }));
     question(&mut app);

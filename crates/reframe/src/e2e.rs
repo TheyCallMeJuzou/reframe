@@ -276,7 +276,10 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
             } else {
                 MouseButton::Left
             };
-            let modifiers = Modifiers::default();
+            let modifiers = Modifiers {
+                shift: flag("shift"),
+                ..Modifiers::default()
+            };
             let click_count = command.get("clicks").and_then(Value::as_u64).unwrap_or(1) as usize;
             let event = match text("type").as_deref() {
                 Some("down") => PlatformInput::MouseDown(MouseDownEvent {
@@ -799,6 +802,96 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
                 })
             })
         }
+        // The file the next file dialog for choosing claude picks (it does not open).
+        Some("choose_file") => {
+            cx.set_global(crate::dialogs::NextChosenFile(text("path")));
+            json!({ "ok": true })
+        }
+        // The clipboard's stand-in holds "text", copied "files" and a small picture ("image"), in
+        // the order a paste looks at them; "none" empties it. What was copied comes back.
+        Some("clipboard") => {
+            if flag("none") {
+                crate::clipboard::fake(None, cx);
+            } else if command.get("text").is_some() || command.get("files").is_some() || flag("image") {
+                let mut entries = Vec::new();
+                if let Some(text) = text("text").filter(|text| !text.is_empty()) {
+                    entries.push(ClipboardEntry::String(ClipboardString::new(text)));
+                }
+                let files: Vec<std::path::PathBuf> = command
+                    .get("files")
+                    .and_then(Value::as_array)
+                    .map(|files| files.iter().filter_map(Value::as_str).map(Into::into).collect())
+                    .unwrap_or_default();
+                if !files.is_empty() {
+                    entries.push(ClipboardEntry::ExternalPaths(ExternalPaths(
+                        files.into_iter().collect(),
+                    )));
+                }
+                if flag("image") {
+                    let mut png = Vec::new();
+                    let picture = image::RgbaImage::from_pixel(2, 2, image::Rgba([217, 119, 87, 255]));
+                    let _ = picture.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png);
+                    entries.push(ClipboardEntry::Image(Image::from_bytes(ImageFormat::Png, png)));
+                }
+                crate::clipboard::fake(Some(ClipboardItem { entries }), cx);
+            }
+            json!({ "copied": crate::clipboard::copied(cx) })
+        }
+        // A real OLE drag let go over a point of the window (logical): "files" ([name, text] pairs)
+        // that exist only in the drag, or without files something no program knows (a terminal
+        // tab). The pointer moves there for it (see `ole_drop`).
+        Some("ole_drop") => {
+            let Some(shell) = shell_of(controller, text("window"), cx) else {
+                return json!({ "error": "no window" });
+            };
+            let at = point(px(number("x") as f32), px(number("y") as f32));
+            let Some((x, y)) = shell.read(cx).to_physical(at) else {
+                return json!({ "error": "no place" });
+            };
+            let files: Vec<(String, Vec<u8>)> = command
+                .get("files")
+                .and_then(Value::as_array)
+                .map(|files| {
+                    files
+                        .iter()
+                        .filter_map(|file| {
+                            let name = file.get(0)?.as_str()?.to_owned();
+                            let contents = file.get(1)?.as_str()?.as_bytes().to_vec();
+                            Some((name, contents))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let Some(hwnd) = shell.read(cx).hwnd() else {
+                return json!({ "error": "no window" });
+            };
+            // From a little to the left, in a few steps ("steps", 6 if not said).
+            let steps = command.get("steps").and_then(Value::as_i64).unwrap_or(6).max(2) as i32;
+            let path: Vec<(i32, i32)> = (0..steps).map(|step| (x - 50 + step * 50 / (steps - 1), y)).collect();
+            let log = controller.read(cx).log().clone();
+            crate::ole_drop::drag(hwnd, files, path, cx, move |dragged| {
+                log.info("test drag", Some(json!({ "dragged": dragged })));
+            });
+            json!({ "ok": true })
+        }
+        // The middle of a cell of a session's terminal ("col", "row"), in the window (logical).
+        Some("cell") => {
+            let Some(shell) = shell_of(controller, text("window"), cx) else {
+                return json!({ "error": "no window" });
+            };
+            let Some(view) = shell.read(cx).terminal_view(&session) else {
+                return json!({ "error": "no such session here" });
+            };
+            match view
+                .read(cx)
+                .cell_center(number("col") as usize, number("row") as usize)
+            {
+                Some(at) => json!({ "x": f32::from(at.x), "y": f32::from(at.y) }),
+                None => json!({ "error": "not drawn yet" }),
+            }
+        }
+        // The web links opened so far (caught instead of opened).
+        Some("links") => json!(crate::browser::caught(cx)),
         // A second start of reframe (1: a development build, 2: an installed one).
         Some("second_start") => {
             let build = command.get("build").and_then(Value::as_u64).unwrap_or(1) as usize;

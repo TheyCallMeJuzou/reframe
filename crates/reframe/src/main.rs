@@ -2,6 +2,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod browser;
+mod clipboard;
 mod colors;
 mod console;
 mod dialogs;
@@ -12,6 +14,7 @@ mod glyphs;
 mod http;
 mod input;
 mod keys;
+mod ole_drop;
 mod process;
 mod pty;
 mod sessions;
@@ -105,6 +108,10 @@ fn main() {
         dialogs::apply_theme(cx);
         // reframe says when it quits: after its sessions were ended, not when a window goes.
         cx.set_quit_mode(QuitMode::Explicit);
+        // Under test, links are caught instead of opened.
+        if config.e2e {
+            browser::catch_links(cx);
+        }
         let e2e = config.e2e;
         let controller = cx.new(|cx| Controller::new(config, cx).unwrap_or_else(|error| start_failed.report(&error)));
 

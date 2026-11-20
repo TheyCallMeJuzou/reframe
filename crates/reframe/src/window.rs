@@ -1664,7 +1664,13 @@ impl Shell {
                     this.close_find(cx);
                 }
             }))
-            .child(div().w(px(180.0)).child(Input::new(&find.input).small()))
+            .child(
+                div().w(px(180.0)).child(
+                    Input::new(&find.input)
+                        .small()
+                        .aria_label(self.text("find.placeholder", cx)),
+                ),
+            )
             .child(
                 div()
                     .min_w(px(64.0))
@@ -1869,6 +1875,11 @@ impl Shell {
 
     // ---------- dialogs ----------
 
+    /// The terminal of a session in this window, for tests.
+    pub fn terminal_view(&self, session_id: &str) -> Option<Entity<TerminalView>> {
+        self.views.get(session_id).cloned()
+    }
+
     pub fn open_new_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         dialogs::open_new_session(&self.controller, &self.window_id, window, cx);
     }
@@ -2064,7 +2075,11 @@ impl Shell {
                     this.finish_rename(false, cx);
                 }
             }))
-            .child(Input::new(&renaming.input).small())
+            .child(
+                Input::new(&renaming.input)
+                    .small()
+                    .aria_label(self.text("session.rename", cx)),
+            )
             .into_any_element()
     }
 

@@ -331,7 +331,12 @@ impl Render for NewSessionForm {
             div()
                 .flex()
                 .gap(px(6.0))
-                .child(div().flex_1().min_w_0().child(Input::new(&self.folder)))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .child(Input::new(&self.folder).aria_label(text("dialog.folder"))),
+                )
                 .child(
                     Button::new("browse")
                         .label(text("dialog.browse"))
@@ -361,7 +366,10 @@ impl Render for NewSessionForm {
             form = form.child(recent);
         }
         form = form
-            .child(field(text("dialog.name"), Input::new(&self.name)))
+            .child(field(
+                text("dialog.name"),
+                Input::new(&self.name).aria_label(text("dialog.name")),
+            ))
             .child(
                 div().pl(px(4.0)).child(
                     Checkbox::new("name-from-folder")
@@ -382,15 +390,16 @@ impl Render for NewSessionForm {
                     })),
             );
         if self.worktree {
-            form = form.child(
-                div()
-                    .pl(px(4.0))
-                    .child(field(text("dialog.worktreeName"), Input::new(&self.worktree_name))),
-            );
+            form = form.child(div().pl(px(4.0)).child(field(
+                text("dialog.worktreeName"),
+                Input::new(&self.worktree_name).aria_label(text("dialog.worktreeName")),
+            )));
         }
         form = form.child(
             div()
                 .id("advanced")
+                .role(Role::Button)
+                .aria_label(text("dialog.advanced"))
                 .flex()
                 .items_center()
                 .gap(px(6.0))
@@ -419,9 +428,15 @@ impl Render for NewSessionForm {
                 );
             }
             form = form
-                .child(field(text("dialog.model"), Input::new(&self.model)))
+                .child(field(
+                    text("dialog.model"),
+                    Input::new(&self.model).aria_label(text("dialog.model")),
+                ))
                 .child(suggestions)
-                .child(field(text("dialog.permissionMode"), Select::new(&self.permission)));
+                .child(field(
+                    text("dialog.permissionMode"),
+                    Select::new(&self.permission).accessibility_label(text("dialog.permissionMode")),
+                ));
         }
         if let Some((error, distro)) = &self.error {
             let key = format!("dialog.error.{}", error.key());
@@ -437,7 +452,14 @@ impl Render for NewSessionForm {
                     }
                 }
             };
-            form = form.child(div().text_color(rgb(theme::DANGER)).child(message));
+            form = form.child(
+                div()
+                    .id("error")
+                    .role(Role::Label)
+                    .aria_value(message.clone())
+                    .text_color(rgb(theme::DANGER))
+                    .child(message),
+            );
         }
         form.child(
             div()
@@ -653,6 +675,11 @@ impl SettingsForm {
     }
 
     fn choose_claude(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(file) = cx.try_global::<NextChosenFile>().and_then(|next| next.0.clone()) {
+            cx.set_global(NextChosenFile(None));
+            self.set(cx, move |preferences| preferences.claude_bin = Some(file));
+            return;
+        }
         let locale = self.controller.read(cx).locale();
         let text = |key: &str| t(locale, key, &[]).unwrap_or_default();
         gpui_windows::set_next_open_file_types(vec![
@@ -764,7 +791,9 @@ impl Render for SettingsForm {
             .gap(px(8.0))
             .child(setting(
                 text("settings.language"),
-                div().w(px(220.0)).child(Select::new(&self.language)),
+                div()
+                    .w(px(220.0))
+                    .child(Select::new(&self.language).accessibility_label(text("settings.language"))),
             ))
             .child(setting(text("settings.textSize"), text_size))
             .child(hint(size_hint))
@@ -793,19 +822,28 @@ impl Render for SettingsForm {
             .child(hint(text("settings.autostartHint")))
             .child(setting(
                 text("settings.closeWindow"),
-                div().w(px(220.0)).child(Select::new(&self.close_window)),
+                div()
+                    .w(px(220.0))
+                    .child(Select::new(&self.close_window).accessibility_label(text("settings.closeWindow"))),
             ))
             .child(hint(text("settings.closeWindowHint")))
             .child(setting(text("settings.claude"), claude_buttons))
-            .child(hint(format!("{claude_state} {claude_path}")))
+            .child({
+                let line = format!("{claude_state} {claude_path}");
+                hint(line.clone()).id("claude").role(Role::Label).aria_value(line)
+            })
             .child(hint(text("settings.claudeHint")))
             .child(setting(
                 text("settings.defaultModel"),
-                div().w(px(220.0)).child(Input::new(&self.model)),
+                div()
+                    .w(px(220.0))
+                    .child(Input::new(&self.model).aria_label(text("settings.defaultModel"))),
             ))
             .child(setting(
                 text("settings.defaultPermissionMode"),
-                div().w(px(220.0)).child(Select::new(&self.permission)),
+                div()
+                    .w(px(220.0))
+                    .child(Select::new(&self.permission).accessibility_label(text("settings.defaultPermissionMode"))),
             ))
             .child(hint(text("settings.launchHint")))
             // Only where this copy checks at all.
@@ -831,6 +869,12 @@ impl Render for SettingsForm {
             )
     }
 }
+
+/// Test hook (REFRAME_E2E): the file the next "Choose…" picks instead of asking the user.
+#[derive(Default)]
+pub struct NextChosenFile(pub Option<String>);
+
+impl Global for NextChosenFile {}
 
 pub fn open_settings(controller: &Entity<Controller>, window: &mut Window, cx: &mut App) {
     let form = cx.new(|cx| SettingsForm::new(controller.clone(), window, cx));
@@ -1142,7 +1186,10 @@ impl Render for SaveWorkspaceForm {
             .flex_col()
             .gap(px(12.0))
             .child(hint(text("workspace.nameHint")))
-            .child(field(text("workspace.nameLabel"), Input::new(&self.name)))
+            .child(field(
+                text("workspace.nameLabel"),
+                Input::new(&self.name).aria_label(text("workspace.nameLabel")),
+            ))
             .child(
                 div()
                     .mt(px(6.0))
@@ -1235,7 +1282,7 @@ impl Render for AboutForm {
                 .text_color(rgb(theme::ACCENT))
                 .cursor_pointer()
                 .hover(|style| style.underline())
-                .on_click(move |_, _, cx| cx.open_url(url))
+                .on_click(move |_, _, cx| crate::browser::open(url, cx))
                 .child(label)
         };
         let version = t(locale, "about.version", &[("version", env!("CARGO_PKG_VERSION"))]).unwrap_or_default();
@@ -1251,7 +1298,14 @@ impl Render for AboutForm {
                     .font_weight(FontWeight::SEMIBOLD)
                     .child("reframe"),
             )
-            .child(div().text_color(rgb(theme::MUTED)).child(version))
+            .child(
+                div()
+                    .id("version")
+                    .role(Role::Label)
+                    .aria_value(version.clone())
+                    .text_color(rgb(theme::MUTED))
+                    .child(version),
+            )
             .child(div().text_center().child(text("about.tagline")))
             .child(
                 div()
@@ -1269,12 +1323,20 @@ impl Render for AboutForm {
                     .justify_center()
                     .gap(px(4.0))
                     .text_color(rgb(theme::MUTED))
-                    .child(text("about.madeWith"))
+                    .child(
+                        div()
+                            .id("made-with")
+                            .role(Role::Label)
+                            .aria_value(text("about.madeWith"))
+                            .child(text("about.madeWith")),
+                    )
                     .child(link("author", "TheyCallMeJuzou".to_owned(), AUTHOR_URL)),
             )
             .child(
                 div()
                     .id("license")
+                    .role(Role::Button)
+                    .aria_label(text("about.license"))
                     .flex()
                     .gap(px(6.0))
                     .text_color(rgb(theme::MUTED))
@@ -1290,6 +1352,8 @@ impl Render for AboutForm {
         if self.license_open {
             let mut license = div()
                 .id("license-text")
+                .role(Role::Document)
+                .aria_label(license_paragraphs().join("\n\n"))
                 .w_full()
                 .max_h(px(180.0))
                 .overflow_y_scroll()

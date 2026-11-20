@@ -879,9 +879,12 @@ impl Shell {
                 }
             }))
             .child(
-                div()
-                    .m(px(8.0))
-                    .child(Input::new(&self.list.search).small().cleanable(true)),
+                div().m(px(8.0)).child(
+                    Input::new(&self.list.search)
+                        .small()
+                        .cleanable(true)
+                        .aria_label(text("list.search")),
+                ),
             )
             .child(scroll)
     }

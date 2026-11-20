@@ -335,7 +335,7 @@ impl TerminalView {
         cx.notify();
         match text {
             Some(text) if !text.is_empty() => {
-                cx.write_to_clipboard(ClipboardItem::new_string(text));
+                crate::clipboard::write(ClipboardItem::new_string(text), cx);
                 true
             }
             _ => false,
@@ -354,9 +354,19 @@ impl TerminalView {
     /// Text is pasted as text and copied files as their paths. For an image, Claude Code's own
     /// image-paste key (Alt+V) is sent and it reads the clipboard itself.
     fn paste(&mut self, cx: &mut Context<Self>) {
-        let Some(item) = cx.read_from_clipboard() else { return };
+        let Some(item) = crate::clipboard::read(cx) else { return };
         let bracketed = self.mode().contains(TermMode::BRACKETED_PASTE);
-        if let Some(text) = item.text().filter(|text| !text.is_empty()) {
+        // Text first. (GPUI's `text()` would also give copied files' paths as text, unquoted and
+        // run together: they are typed as paths below.)
+        let text: String = item
+            .entries()
+            .iter()
+            .filter_map(|entry| match entry {
+                ClipboardEntry::String(text) => Some(text.text().as_str()),
+                _ => None,
+            })
+            .collect();
+        if !text.is_empty() {
             self.type_bytes(input::paste_bytes(&text, bracketed), cx);
             return;
         }
@@ -591,7 +601,7 @@ impl TerminalView {
                 && let Some((col, row, _)) = self.cell_at(event.position)
                 && self.link_under(col, row).is_some_and(|link| link.url == url)
             {
-                cx.open_url(&url);
+                crate::browser::open(&url, cx);
             }
             cx.notify();
         }
@@ -606,7 +616,7 @@ impl TerminalView {
                 && let Some(url) = self.pressed_link.take()
                 && self.link_under(col, row).is_some_and(|link| link.url == url)
             {
-                cx.open_url(&url);
+                crate::browser::open(&url, cx);
             }
         }
     }

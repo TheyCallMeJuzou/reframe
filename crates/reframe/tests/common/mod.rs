@@ -2,6 +2,8 @@
 //! `node` on the PATH (the fake claude is a script).
 #![allow(dead_code)] // each test file uses its share
 
+pub mod ui;
+
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
@@ -143,6 +145,11 @@ impl App {
         let mut line = String::new();
         self.reader.read_line(&mut line).unwrap();
         serde_json::from_str(&line).unwrap_or_else(|_| panic!("no answer to {command}: {line:?}"))
+    }
+
+    /// The app as UI Automation (a screen reader) sees it.
+    pub fn ui(&self) -> ui::Ui {
+        ui::Ui::new(self.child.id())
     }
 
     pub fn state(&mut self) -> Value {

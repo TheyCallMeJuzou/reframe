@@ -93,7 +93,7 @@ pub fn start(controller: &Entity<Controller>, cx: &mut App) {
                 .info("notification clicked", Some(json!({ "tag": tag })));
             match tag {
                 // The portable copy's new version is downloaded by hand.
-                UPDATE_AVAILABLE_TAG => cx.open_url(reframe_core::links::RELEASES_URL),
+                UPDATE_AVAILABLE_TAG => crate::browser::open(reframe_core::links::RELEASES_URL, cx),
                 UPDATE_READY_TAG => {}
                 session => controller.update(cx, |controller, cx| controller.focus_session(session, cx)),
             }
@@ -330,7 +330,7 @@ pub fn handle(controller: &Entity<Controller>, event: TrayEvent, cx: &mut App) {
             if controller.read(cx).update_ready().is_some() {
                 controller.update(cx, |controller, cx| controller.restart_to_update(cx));
             } else if controller.read(cx).update_available().is_some() {
-                cx.open_url(reframe_core::links::RELEASES_URL);
+                crate::browser::open(reframe_core::links::RELEASES_URL, cx);
             }
         }
         TrayEvent::Command(id) if id >= WORKSPACE => {
