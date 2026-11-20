@@ -138,7 +138,10 @@ fn shortcuts_reach_dialogs_tiles_and_the_text_size() {
     wait_for("the New session dialog", || {
         (window(&mut app)["dialog"] == true).then_some(())
     });
-    // Drawn, its folder field has the keyboard (a user types into what they see).
+    // Drawn, its folder field has the keyboard (a user types into what they see). The dialog is
+    // drawn by the component library's root, not the window's view, so its frame is waited for
+    // where a screen reader sees it.
+    app.ui().wait("edit", "Folder");
     next_frame(&mut app);
     app.cmd(json!({ "cmd": "type", "text": setup.project() }));
     key(&mut app, "enter");
