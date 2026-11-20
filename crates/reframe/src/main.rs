@@ -12,6 +12,7 @@ mod find;
 mod foreign;
 mod glyphs;
 mod http;
+mod icons;
 mod input;
 mod keys;
 mod ole_drop;
@@ -100,67 +101,72 @@ fn main() {
     }
 
     let start_failed = StartFailed::of(&config);
-    gpui_kit::application().run(move |cx| {
-        gpui_kit::init(cx);
-        // A picture dragged out of a browser exists only in the drag: written there when it is
-        // dropped, and cleared with the other dropped files.
-        gpui_windows::set_dropped_files_folder(reframe_core::cleanup::drops_dir());
-        dialogs::apply_theme(cx);
-        // reframe says when it quits: after its sessions were ended, not when a window goes.
-        cx.set_quit_mode(QuitMode::Explicit);
-        // Under test, links are caught instead of opened.
-        if config.e2e {
-            browser::catch_links(cx);
-        }
-        let e2e = config.e2e;
-        let controller = cx.new(|cx| Controller::new(config, cx).unwrap_or_else(|error| start_failed.report(&error)));
+    // The component library's own icons: the arrow of a choice box, the check mark, clearing a field.
+    gpui_kit::application()
+        .with_assets(gpui_kit::assets::Assets)
+        .run(move |cx| {
+            gpui_kit::init(cx);
+            // A picture dragged out of a browser exists only in the drag: written there when it is
+            // dropped, and cleared with the other dropped files.
+            gpui_windows::set_dropped_files_folder(reframe_core::cleanup::drops_dir());
+            dialogs::apply_theme(cx);
+            // reframe says when it quits: after its sessions were ended, not when a window goes.
+            cx.set_quit_mode(QuitMode::Explicit);
+            // Under test, links are caught instead of opened.
+            if config.e2e {
+                browser::catch_links(cx);
+            }
+            let e2e = config.e2e;
+            let controller =
+                cx.new(|cx| Controller::new(config, cx).unwrap_or_else(|error| start_failed.report(&error)));
 
-        let orphans = controller.update(cx, |controller, cx| controller.cleanup_orphans(cx));
-        cx.spawn(async move |cx| {
-            orphans.await;
-            cx.update(|cx| {
-                let windows: Vec<(String, bool)> = {
-                    let state = controller.read(cx).state();
-                    // The windows that were open (not closed into the tray); the first one if all were.
-                    let any_open = state.windows.iter().any(|window| !window.hidden);
-                    // Started by the system, all of them stay in the tray.
-                    let autostart = args.autostart;
-                    let shown = |index: usize, hidden: bool| !autostart && if any_open { !hidden } else { index == 0 };
-                    state
-                        .windows
-                        .iter()
-                        .enumerate()
-                        .map(|(index, window)| (window.id.clone(), shown(index, window.hidden)))
-                        .collect()
-                };
-                for (id, shown) in &windows {
-                    window::open(&controller, id, *shown, cx);
-                }
-                window::init(&controller, cx);
-                tray::start(&controller, cx);
-                foreign::start(&controller, cx);
-                controller.update(cx, |controller, cx| {
-                    controller.resume_sessions(cx);
-                    controller.start_update_checks(cx);
-                    let first = windows.first().map(|(id, _)| id.clone()).unwrap_or_default();
-                    for folder in &args.new {
-                        let request = NewSessionRequest {
-                            cwd: folder.clone(),
-                            ..NewSessionRequest::default()
-                        };
-                        if let Err(error) = controller.create_session(&first, request, cx) {
-                            eprintln!("no session in {folder}: {}", error.key());
-                        }
+            let orphans = controller.update(cx, |controller, cx| controller.cleanup_orphans(cx));
+            cx.spawn(async move |cx| {
+                orphans.await;
+                cx.update(|cx| {
+                    let windows: Vec<(String, bool)> = {
+                        let state = controller.read(cx).state();
+                        // The windows that were open (not closed into the tray); the first one if all were.
+                        let any_open = state.windows.iter().any(|window| !window.hidden);
+                        // Started by the system, all of them stay in the tray.
+                        let autostart = args.autostart;
+                        let shown =
+                            |index: usize, hidden: bool| !autostart && if any_open { !hidden } else { index == 0 };
+                        state
+                            .windows
+                            .iter()
+                            .enumerate()
+                            .map(|(index, window)| (window.id.clone(), shown(index, window.hidden)))
+                            .collect()
+                    };
+                    for (id, shown) in &windows {
+                        window::open(&controller, id, *shown, cx);
                     }
+                    window::init(&controller, cx);
+                    tray::start(&controller, cx);
+                    foreign::start(&controller, cx);
+                    controller.update(cx, |controller, cx| {
+                        controller.resume_sessions(cx);
+                        controller.start_update_checks(cx);
+                        let first = windows.first().map(|(id, _)| id.clone()).unwrap_or_default();
+                        for folder in &args.new {
+                            let request = NewSessionRequest {
+                                cwd: folder.clone(),
+                                ..NewSessionRequest::default()
+                            };
+                            if let Err(error) = controller.create_session(&first, request, cx) {
+                                eprintln!("no session in {folder}: {}", error.key());
+                            }
+                        }
+                    });
+                    if e2e {
+                        e2e::start(controller.clone(), cx);
+                    }
+                    STARTED.store(true, Ordering::Release);
                 });
-                if e2e {
-                    e2e::start(controller.clone(), cx);
-                }
-                STARTED.store(true, Ordering::Release);
-            });
-        })
-        .detach();
-    });
+            })
+            .detach();
+        });
 }
 
 /// What the installer has reframe do: `--quit` asks the reframe that runs for this copy's

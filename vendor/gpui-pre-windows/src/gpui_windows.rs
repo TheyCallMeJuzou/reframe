@@ -42,5 +42,6 @@ pub(crate) use wrapper::*;
 
 pub use drop_extras::{set_dropped_files_folder, set_foreign_drag_handler};
 pub use platform::{WindowsPlatform, set_next_open_file_types};
+pub use window::{PromptStyle, set_next_prompt};
 
 pub(crate) use windows::Win32::Foundation::HWND;

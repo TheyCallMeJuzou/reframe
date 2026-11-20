@@ -28,8 +28,9 @@ impl Locale {
     }
 }
 
-/// How many messages there are: `en` in the original has this many keys, and `de` must have the same.
-pub const MESSAGE_COUNT: usize = 215;
+/// How many messages there are (`en` and `de` have the same keys): 0.x's 215, and the long
+/// "… ago" times it took from the system.
+pub const MESSAGE_COUNT: usize = 223;
 
 #[rustfmt::skip]
 static EN: [(&str, &str); MESSAGE_COUNT] = [
@@ -54,6 +55,14 @@ static EN: [(&str, &str); MESSAGE_COUNT] = [
     ("list.usedMinutes", "{n}m"),
     ("list.usedHours", "{n}h"),
     ("list.usedDays", "{n}d"),
+    ("list.agoThisMinute", "this minute"),
+    ("list.agoMinute", "1 minute ago"),
+    ("list.agoMinutes", "{n} minutes ago"),
+    ("list.agoHour", "1 hour ago"),
+    ("list.agoHours", "{n} hours ago"),
+    ("list.agoYesterday", "yesterday"),
+    ("list.agoTwoDays", "2 days ago"),
+    ("list.agoDays", "{n} days ago"),
     ("list.usedAt", "Last used {when}"),
     ("list.remove", "Remove from list"),
     ("list.openHint", "Click to open here, or drag onto a tile. Shift/Ctrl+click selects several, right-click for more."),
@@ -273,6 +282,14 @@ static DE: [(&str, &str); MESSAGE_COUNT] = [
     ("list.usedMinutes", "{n} Min."),
     ("list.usedHours", "{n} Std."),
     ("list.usedDays", "{n} Tg."),
+    ("list.agoThisMinute", "in dieser Minute"),
+    ("list.agoMinute", "vor 1 Minute"),
+    ("list.agoMinutes", "vor {n} Minuten"),
+    ("list.agoHour", "vor 1 Stunde"),
+    ("list.agoHours", "vor {n} Stunden"),
+    ("list.agoYesterday", "gestern"),
+    ("list.agoTwoDays", "vorgestern"),
+    ("list.agoDays", "vor {n} Tagen"),
     ("list.usedAt", "Zuletzt benutzt {when}"),
     ("list.remove", "Aus Liste entfernen"),
     ("list.openHint", "Klicken zum Öffnen hier, oder auf eine Kachel ziehen. Umschalt/Strg+Klick wählt mehrere, Rechtsklick für mehr."),
@@ -589,11 +606,14 @@ mod tests {
     // There is no i18n test file in the Electron version; these cover what its two functions do.
 
     #[test]
-    fn both_tables_have_as_many_entries_as_the_original() {
-        // `const en = { … }` in src/shared/i18n.ts has 215 keys, and `de` is a `Record<MessageKey, string>`.
-        assert_eq!(EN.len(), 215);
-        assert_eq!(DE.len(), 215);
-        assert_eq!(keys().count(), 215);
+    fn both_tables_have_the_originals_entries_and_the_times_ago() {
+        // `const en = { … }` in src/shared/i18n.ts has 215 keys, and `de` is a `Record<MessageKey, string>`;
+        // 0.x took "2 hours ago" from Intl.RelativeTimeFormat, which are 8 more here.
+        let ago = keys().filter(|key| key.as_str().starts_with("list.ago")).count();
+        assert_eq!(ago, 8);
+        assert_eq!(EN.len(), 215 + ago);
+        assert_eq!(DE.len(), 215 + ago);
+        assert_eq!(keys().count(), 215 + ago);
     }
 
     #[test]

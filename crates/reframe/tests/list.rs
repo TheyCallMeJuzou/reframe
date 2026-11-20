@@ -524,10 +524,10 @@ fn the_list_shows_when_sessions_were_last_used_and_can_drop_them_into_the_layout
     // One that is in no window can be taken off the list.
     app.cmd(json!({ "cmd": "end", "session": opened }));
     app.cmd(json!({ "cmd": "remove", "session": opened }));
-    let list = list_with(&mut app, "it gone from reframe's part", |list| {
-        list["app"].as_array().is_some_and(|app| app.len() == 1)
+    // Claude Code's transcript is left alone: it is found again (once the list has looked again,
+    // which takes a moment longer on a slow machine).
+    list_with(&mut app, "it gone from reframe's part and found again", |list| {
+        list["app"].as_array().is_some_and(|app| app.len() == 1) && titles(list, "found") == ["Older task"]
     });
-    // Claude Code's transcript is left alone: it is found again.
-    assert_eq!(titles(&list, "found"), ["Older task"]);
     app.quit();
 }

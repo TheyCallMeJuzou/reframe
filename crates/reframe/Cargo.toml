@@ -34,6 +34,7 @@ windows-sys = { version = "0.59", features = [
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_UI_Accessibility",
+    "Win32_UI_HiDpi",
     "Win32_Graphics_Gdi",
     "Win32_Networking_WinHttp",
     "Win32_Storage_EnhancedStorage",
@@ -66,3 +67,5 @@ embed-resource = "3.0.12"
 base64 = "0.22.1"
 sha2 = "0.10.9"
 tempfile = "3"
+# The SVG parser GPUI draws with, to check the icons.
+usvg = "0.46.0"

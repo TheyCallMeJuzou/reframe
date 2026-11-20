@@ -8,7 +8,6 @@
 use std::rc::Rc;
 use std::time::Duration;
 
-use gpui_kit::component::Sizable as _;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::prelude::FluentBuilder;
@@ -17,13 +16,14 @@ use reframe_core::actions::LayoutAction;
 use reframe_core::i18n::{Locale, t};
 use reframe_core::layout::tile_key;
 use reframe_core::session_list::{
-    FreshTracker, LIST_PAGE, ListItemRef, OpenMode, SessionList, exact_time, folder_name, short_time,
+    FreshTracker, LIST_PAGE, ListItemRef, OpenMode, SessionList, exact_time, folder_name, short_time, time_ago,
 };
 use reframe_core::session_logic::SessionStatus;
 
 use super::{DragKind, MenuAction, MenuEntry, NodeDrag, RenameTarget, Shell};
 use crate::app::local_time;
-use crate::theme::{self, icon};
+use crate::icons::{Icon, icon};
+use crate::theme;
 
 /// How long a new entry stays highlighted once the list is shown.
 const HIGHLIGHT: Duration = Duration::from_millis(4000);
@@ -32,8 +32,6 @@ const TICK: Duration = Duration::from_millis(30_000);
 /// A moment's wait while typing in the search box.
 const TYPING: Duration = Duration::from_millis(150);
 pub const WIDTH: f32 = 270.0;
-/// The layers glyph of the icon font, for workspaces.
-const LAYERS: &str = "\u{E81E}";
 
 /// The session list's state in a window.
 pub struct ListView {
@@ -606,12 +604,7 @@ impl Shell {
             scroll = scroll.child(Self::heading(text("list.workspaces")));
         }
         for workspace in workspaces {
-            let mark = div()
-                .flex_none()
-                .font_family(theme::ICON_FONT)
-                .text_size(px(12.0))
-                .text_color(rgb(if workspace.open { theme::ACCENT } else { theme::MUTED }))
-                .child(LAYERS);
+            let mark = icon(Icon::Layers).text_color(rgb(if workspace.open { theme::ACCENT } else { theme::MUTED }));
             if self.renaming() == Some(&RenameTarget::Workspace(workspace.id.clone()))
                 && let Some(renaming) = &self.renaming
             {
@@ -626,7 +619,7 @@ impl Shell {
                 );
                 continue;
             }
-            let when = short_time(workspace.saved_at, now_ms(), locale, &local_time);
+            let when = time_ago(workspace.saved_at, now_ms(), locale);
             let meta = t(
                 locale,
                 "workspace.meta",
@@ -746,7 +739,7 @@ impl Shell {
                 let id = item.id.clone();
                 entry = entry.child(self.icon_button(
                     "remove",
-                    icon::CLOSE,
+                    Icon::Close,
                     text("list.remove"),
                     cx,
                     move |this, _, cx| {
@@ -880,8 +873,7 @@ impl Shell {
             }))
             .child(
                 div().m(px(8.0)).child(
-                    Input::new(&self.list.search)
-                        .small()
+                    theme::field(Input::new(&self.list.search))
                         .cleanable(true)
                         .aria_label(text("list.search")),
                 ),

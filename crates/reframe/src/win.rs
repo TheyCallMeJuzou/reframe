@@ -18,15 +18,18 @@ use windows::Win32::Foundation::{
     ERROR_ALREADY_EXISTS, ERROR_FILE_NOT_FOUND, ERROR_SUCCESS, GetLastError, HANDLE, HWND, LPARAM, LRESULT, POINT,
     RECT, WPARAM,
 };
-use windows::Win32::Graphics::Gdi::ClientToScreen;
-use windows::Win32::Graphics::Gdi::{CreateBitmap, DeleteObject};
+use windows::Win32::Graphics::Gdi::{
+    BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateBitmap, CreateDIBSection, DIB_RGB_COLORS, DeleteObject, HBITMAP,
+};
+use windows::Win32::Graphics::Gdi::{ClientToScreen, MONITOR_DEFAULTTOPRIMARY, MonitorFromPoint};
 use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress, LoadLibraryW};
 use windows::Win32::System::Registry::{
     HKEY, HKEY_CURRENT_USER, KEY_READ, KEY_SET_VALUE, REG_OPTION_NON_VOLATILE, REG_SZ, RegCloseKey, RegCreateKeyExW,
     RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW,
 };
 use windows::Win32::System::Threading::{CreateMutexW, SetProcessShutdownParameters};
+use windows::Win32::UI::HiDpi::{AdjustWindowRectExForDpi, GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::Shell::{
     ITaskbarList3, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW, Shell_NotifyIconW,
     TaskbarList,
@@ -41,9 +44,12 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WM_APP, WM_CONTEXTMENU, WM_ENDSESSION, WM_LBUTTONUP, WM_NULL, WM_QUERYENDSESSION, WM_RBUTTONUP, WNDCLASSW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GA_PARENT, GetAncestor, GetClientRect, GetDesktopWindow, GetWindowRect, GetWindowTextW, IsWindow,
+    GA_PARENT, GetAncestor, GetClientRect, GetDesktopWindow, GetMenuItemCount, GetWindowRect, GetWindowTextW,
+    InsertMenuItemW, IsWindow, MENU_ITEM_STATE, MENUINFO, MENUITEMINFOW, MFS_CHECKED, MFS_DISABLED, MIIM_BITMAP,
+    MIIM_ID, MIIM_STATE, MIIM_STRING, MIIM_SUBMENU, MIM_STYLE, MNS_CHECKORBMP, SetMenuInfo, WS_EX_APPWINDOW,
+    WS_OVERLAPPEDWINDOW,
 };
-use windows::core::{HSTRING, PCWSTR, w};
+use windows::core::{HSTRING, PCSTR, PCWSTR, PWSTR, w};
 
 /// The tray icon tells of the mouse with this message.
 const WM_TRAY: u32 = WM_APP + 1;
@@ -51,6 +57,8 @@ const WM_TRAY: u32 = WM_APP + 1;
 const WM_REVEAL: u32 = WM_APP + 2;
 /// The installer asks the running reframe to quit with this message, before it replaces it.
 const WM_QUIT_REQUEST: u32 = WM_APP + 3;
+/// A window's context menu is to be shown (`show_context_menu`).
+const WM_CONTEXT_MENU: u32 = WM_APP + 4;
 /// The class of the window that takes these messages; its title is the profile's key.
 const CONTROL_CLASS: PCWSTR = w!("reframe-control");
 
@@ -235,6 +243,8 @@ pub enum TrayEvent {
     SystemEnding,
     /// The installer asks reframe to quit.
     Quit,
+    /// A window's context menu was answered: the number of the entry picked, or none.
+    ContextMenu { window: isize, picked: Option<u32> },
 }
 
 /// An entry of the tray menu.
@@ -305,8 +315,180 @@ struct Control {
     taskbar_created: u32,
 }
 
+/// A context menu to show: its window, where (screen pixels), its entries.
+type PendingMenu = (isize, i32, i32, Vec<ContextEntry>);
+
 thread_local! {
     static CONTROL: RefCell<Option<Control>> = const { RefCell::new(None) };
+    /// The context menu to show next.
+    static PENDING_MENU: RefCell<Option<PendingMenu>> = const { RefCell::new(None) };
+}
+
+/// An entry of a window's context menu (a tile's, a group's, the session list's), as Windows
+/// shows it: 0.x's menus were the system's too.
+#[derive(Clone, Debug)]
+pub struct ContextEntry {
+    pub label: String,
+    pub enabled: bool,
+    pub checked: bool,
+    /// A dot in this colour (red, green, blue) before the label: a group's.
+    pub swatch: Option<(u8, u8, u8)>,
+    /// A line above it.
+    pub separator: bool,
+    /// What comes back when it is picked (not 0); a submenu's is not used.
+    pub id: u32,
+    pub children: Vec<ContextEntry>,
+}
+
+/// Shows a window's context menu at a point on the screen (pixels), once the GPUI update that
+/// asks for it is over: Windows runs a menu's loop until it closes, and GPUI's windows need
+/// their messages meanwhile. The answer comes as `TrayEvent::ContextMenu`.
+pub fn show_context_menu(window: isize, x: i32, y: i32, entries: Vec<ContextEntry>) {
+    PENDING_MENU.with_borrow_mut(|pending| *pending = Some((window, x, y, entries)));
+    CONTROL.with_borrow(|control| {
+        if let Some(control) = control {
+            // SAFETY: a message to reframe's own window.
+            unsafe {
+                let _ = PostMessageW(Some(control.window), WM_CONTEXT_MENU, WPARAM(0), LPARAM(0));
+            }
+        }
+    });
+}
+
+/// Shows the context menu that is waiting, and says what was picked.
+fn show_pending_menu() {
+    let Some((owner, x, y, entries)) = PENDING_MENU.with_borrow_mut(Option::take) else {
+        return;
+    };
+    follow_system_theme();
+    // SAFETY: the menu and its bitmaps are made, shown and destroyed here.
+    unsafe {
+        let Ok(menu) = CreatePopupMenu() else { return };
+        let mut bitmaps = Vec::new();
+        fill_context_menu(menu, &entries, &mut bitmaps);
+        let picked = TrackPopupMenu(
+            menu,
+            TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON,
+            x,
+            y,
+            None,
+            hwnd(owner),
+            None,
+        );
+        // Its submenus go with it.
+        let _ = DestroyMenu(menu);
+        for bitmap in bitmaps {
+            let _ = DeleteObject(bitmap.into());
+        }
+        send(TrayEvent::ContextMenu {
+            window: owner,
+            picked: (picked.0 > 0).then_some(picked.0 as u32),
+        });
+    }
+}
+
+/// Fills a menu with the entries; the bitmaps it makes for swatches go to `bitmaps`, to be
+/// freed with the menu.
+unsafe fn fill_context_menu(menu: HMENU, entries: &[ContextEntry], bitmaps: &mut Vec<HBITMAP>) {
+    // A checked entry with a swatch (a group's colour) shows the check in the swatch's place.
+    let style = MENUINFO {
+        cbSize: size_of::<MENUINFO>() as u32,
+        fMask: MIM_STYLE,
+        dwStyle: MNS_CHECKORBMP,
+        ..Default::default()
+    };
+    // SAFETY: the menu is the caller's.
+    let _ = unsafe { SetMenuInfo(menu, &style) };
+    for entry in entries {
+        // SAFETY (all calls): the menu is the caller's; the label is copied by Windows.
+        if entry.separator {
+            let _ = unsafe { AppendMenuW(menu, MF_SEPARATOR, 0, None) };
+        }
+        let label = wide(&entry.label);
+        let mut state = MENU_ITEM_STATE(0);
+        if !entry.enabled {
+            state |= MFS_DISABLED;
+        }
+        if entry.checked {
+            state |= MFS_CHECKED;
+        }
+        let mut info = MENUITEMINFOW {
+            cbSize: size_of::<MENUITEMINFOW>() as u32,
+            fMask: MIIM_STRING | MIIM_ID | MIIM_STATE,
+            fState: state,
+            wID: entry.id,
+            dwTypeData: PWSTR(label.as_ptr().cast_mut()),
+            ..Default::default()
+        };
+        if !entry.children.is_empty()
+            && let Ok(submenu) = unsafe { CreatePopupMenu() }
+        {
+            unsafe { fill_context_menu(submenu, &entry.children, bitmaps) };
+            info.fMask |= MIIM_SUBMENU;
+            info.hSubMenu = submenu;
+        }
+        if let Some(bitmap) = entry.swatch.and_then(swatch_bitmap) {
+            info.fMask |= MIIM_BITMAP;
+            info.hbmpItem = bitmap;
+            bitmaps.push(bitmap);
+        }
+        let count = unsafe { GetMenuItemCount(Some(menu)) }.max(0) as u32;
+        let _ = unsafe { InsertMenuItemW(menu, count, true, &info) };
+    }
+}
+
+/// A group's colour as a menu shows it: 0.x's swatch, a dot of radius 6 in 16 pixels.
+fn swatch_bitmap((red, green, blue): (u8, u8, u8)) -> Option<HBITMAP> {
+    const SIZE: i32 = 16;
+    let info = BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: SIZE,
+            // From the top down, as the pixels are.
+            biHeight: -SIZE,
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB.0,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let pixels = dot_pixels(red, green, blue);
+    let mut bits = std::ptr::null_mut();
+    // SAFETY: a bitmap of 16 × 16 pixels of 4 bytes, filled from a buffer of that size.
+    unsafe {
+        let bitmap = CreateDIBSection(None, &info, DIB_RGB_COLORS, &mut bits, None, 0).ok()?;
+        std::ptr::copy_nonoverlapping(pixels.as_ptr(), bits.cast::<u8>(), pixels.len());
+        Some(bitmap)
+    }
+}
+
+/// Menus in the colours of the system's mode for apps (light or dark), as Chromium drew 0.x's.
+/// Windows has no documented way for that: uxtheme's SetPreferredAppMode (ordinal 135, from
+/// Windows 10 1903 on) and FlushMenuThemes (136) are what programs use.
+fn follow_system_theme() {
+    let light = registry_number(
+        r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+        "AppsUseLightTheme",
+    )
+    .is_none_or(|light| light != 0);
+    type SetPreferredAppMode = unsafe extern "system" fn(i32) -> i32;
+    type FlushMenuThemes = unsafe extern "system" fn();
+    // SAFETY: the functions are looked up by ordinal in the system's uxtheme.dll and called
+    // with the arguments they take there (2: always dark, 3: always light).
+    unsafe {
+        let Ok(uxtheme) = LoadLibraryW(w!("uxtheme.dll")) else {
+            return;
+        };
+        if let Some(set) = GetProcAddress(uxtheme, PCSTR(135 as *const u8)) {
+            let set: SetPreferredAppMode = std::mem::transmute(set);
+            set(if light { 3 } else { 2 });
+        }
+        if let Some(flush) = GetProcAddress(uxtheme, PCSTR(136 as *const u8)) {
+            let flush: FlushMenuThemes = std::mem::transmute(flush);
+            flush();
+        }
+    }
 }
 
 fn wide(text: &str) -> Vec<u16> {
@@ -453,6 +635,7 @@ fn show_tray_menu(window: HWND) {
         let _ = GetCursorPos(&mut pointer);
         // Without this the menu does not close when the user clicks somewhere else.
         let _ = SetForegroundWindow(window);
+        follow_system_theme();
         let picked = TrackPopupMenu(
             menu,
             TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON,
@@ -487,6 +670,10 @@ unsafe extern "system" fn control_proc(window: HWND, message: u32, wparam: WPARA
         }
         WM_QUIT_REQUEST => {
             send(TrayEvent::Quit);
+            LRESULT(0)
+        }
+        WM_CONTEXT_MENU => {
+            show_pending_menu();
             LRESULT(0)
         }
         // Windows asks every window whether it may go down, then tells them that it does.
@@ -529,8 +716,9 @@ thread_local! {
     static TASKBAR: RefCell<Option<(ITaskbarList3, HICON)>> = const { RefCell::new(None) };
 }
 
-/// A small filled circle in a colour, as an icon.
-fn dot_icon(red: u8, green: u8, blue: u8) -> Option<HICON> {
+/// A small filled circle in a colour, 16 × 16 pixels: blue, green, red and alpha, with the
+/// colours multiplied by alpha.
+fn dot_pixels(red: u8, green: u8, blue: u8) -> Vec<u8> {
     const SIZE: usize = 16;
     let mut pixels = vec![0u8; SIZE * SIZE * 4];
     for y in 0..SIZE {
@@ -546,6 +734,13 @@ fn dot_icon(red: u8, green: u8, blue: u8) -> Option<HICON> {
             pixels[at + 3] = (255.0 * alpha).round() as u8;
         }
     }
+    pixels
+}
+
+/// A small filled circle in a colour, as an icon.
+fn dot_icon(red: u8, green: u8, blue: u8) -> Option<HICON> {
+    const SIZE: usize = 16;
+    let pixels = dot_pixels(red, green, blue);
     let mask = [0u8; SIZE * SIZE / 8];
     // SAFETY: both bitmaps are made from buffers of the size their dimensions say, and freed
     // once the icon has its own copies.
@@ -626,6 +821,29 @@ pub fn registry_text(key_path: &str, name: &str) -> Option<String> {
         }
         let _ = RegCloseKey(key);
         text
+    }
+}
+
+/// A number (DWORD) under one of the user's registry keys, if it is there.
+pub fn registry_number(key_path: &str, name: &str) -> Option<u32> {
+    let mut key = HKEY::default();
+    // SAFETY: the key is opened into a variable that outlives the call, and read into a number.
+    unsafe {
+        if RegOpenKeyExW(HKEY_CURRENT_USER, &HSTRING::from(key_path), None, KEY_READ, &mut key).is_err() {
+            return None;
+        }
+        let mut number = 0u32;
+        let mut bytes = size_of::<u32>() as u32;
+        let read = RegQueryValueExW(
+            key,
+            &HSTRING::from(name),
+            None,
+            None,
+            Some((&raw mut number).cast()),
+            Some(&mut bytes),
+        );
+        let _ = RegCloseKey(key);
+        read.is_ok().then_some(number)
     }
 }
 
@@ -799,6 +1017,34 @@ pub fn watch_windows(sender: UnboundedSender<WindowEvent>) -> bool {
             flags,
         );
         !moves.is_invalid() && !made.is_invalid()
+    }
+}
+
+/// The frame around a window's client area, on the primary display: where GPUI makes a window
+/// (and measures the frame it then places client areas by) before it moves it into place.
+pub fn window_frame() -> reframe_core::geometry::WindowFrame {
+    // SAFETY: asking about the primary display.
+    let monitor = unsafe { MonitorFromPoint(POINT::default(), MONITOR_DEFAULTTOPRIMARY) };
+    let (mut dpi, mut unused) = (96, 96);
+    // SAFETY: as above; the numbers stay 96 if it fails.
+    let _ = unsafe { GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi, &mut unused) };
+    let mut rect = RECT {
+        left: 0,
+        top: 0,
+        right: 100,
+        bottom: 100,
+    };
+    // SAFETY: the rectangle is ours; the style is the one GPUI gives its windows.
+    let framed = unsafe { AdjustWindowRectExForDpi(&mut rect, WS_OVERLAPPEDWINDOW, false, WS_EX_APPWINDOW, dpi) };
+    let (width, height) = if framed.is_ok() {
+        (rect.right - rect.left - 100, rect.bottom - rect.top - 100)
+    } else {
+        (0, 0)
+    };
+    reframe_core::geometry::WindowFrame {
+        width,
+        height,
+        scale: f64::from(dpi) / 96.0,
     }
 }
 

@@ -10,18 +10,19 @@ mod sidebar;
 
 use std::collections::HashMap;
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use futures::channel::oneshot;
 
 use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{Sizable as _, WindowExt as _};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use reframe_core::actions::{LayoutAction, window_has_session, window_sessions};
 use reframe_core::focus_nav::{TileBox, neighbor};
+use reframe_core::geometry::{DEFAULT_WINDOW_SIZE, WindowFrame};
 use reframe_core::geometry::{Metrics, Placement, Rect, drag_sizes, place, shares};
 use reframe_core::groups::GROUP_COLORS;
 use reframe_core::i18n::{Locale, t};
@@ -35,9 +36,10 @@ use reframe_core::state::{CloseWindow, DockEntry, GroupNode, LayoutNode, Side, S
 use crate::app::{AppEvent, Controller, SessionView};
 use crate::dialogs;
 use crate::find::Step;
+use crate::icons::{Icon, icon};
 use crate::keys;
 use crate::terminal_view::TerminalView;
-use crate::theme::{self, icon};
+use crate::theme;
 use crate::win;
 
 /// A separator being dragged.
@@ -132,6 +134,8 @@ pub struct Question {
     pub cancel: Option<String>,
     /// What it confirms cannot be undone.
     pub danger: bool,
+    /// It tells of something that did not work.
+    pub error: bool,
 }
 
 /// A session found in a terminal window that was dropped onto reframe.
@@ -247,71 +251,41 @@ impl MenuEntry {
     }
 }
 
-/// The menu that is open in a window.
+/// The menu that is open in a window: Windows shows it; what its entries do is the window's.
 struct OpenMenu {
     entries: Vec<MenuEntry>,
-    view: Entity<PopupMenu>,
-    position: Point<Pixels>,
-    _dismissed: Subscription,
+    /// What the entry numbered n + 1 does.
+    actions: Vec<MenuAction>,
 }
 
-/// Fills the component library's menu from the entries.
-fn menu_items(
-    mut menu: PopupMenu,
-    entries: &[MenuEntry],
-    shell: &WeakEntity<Shell>,
-    window: &mut Window,
-    cx: &mut Context<PopupMenu>,
-) -> PopupMenu {
-    for entry in entries {
-        if entry.separator {
-            menu = menu.separator();
-        }
-        if !entry.children.is_empty() && entry.enabled {
-            let (children, shell) = (entry.children.clone(), shell.clone());
-            menu = menu.submenu(entry.label.clone(), window, cx, move |menu, window, cx| {
-                menu_items(menu, &children, &shell, window, cx)
+/// The entries as Windows' menu takes them, numbered in order; their actions go to `actions`.
+fn context_entries(entries: &[MenuEntry], actions: &mut Vec<MenuAction>) -> Vec<win::ContextEntry> {
+    entries
+        .iter()
+        .map(|entry| {
+            let id = match &entry.action {
+                Some(action) => {
+                    actions.push(action.clone());
+                    actions.len() as u32
+                }
+                None => 0,
+            };
+            let swatch = entry.swatch.as_deref().and_then(|color| {
+                let hex = color.strip_prefix('#').filter(|hex| hex.len() == 6)?;
+                let part = |at: usize| u8::from_str_radix(&hex[at..at + 2], 16).ok();
+                Some((part(0)?, part(2)?, part(4)?))
             });
-            continue;
-        }
-        let item = match &entry.swatch {
-            Some(color) => {
-                let (label, color, checked) = (entry.label.clone(), theme::parse_color(color), entry.checked);
-                PopupMenuItem::element(move |_, _| {
-                    div()
-                        .w_full()
-                        .flex()
-                        .items_center()
-                        .gap(px(8.0))
-                        .child(div().size(px(10.0)).flex_none().rounded_full().bg(color))
-                        .child(div().flex_1().child(label.clone()))
-                        // The one it has.
-                        .when(checked, |row| {
-                            row.child(
-                                div()
-                                    .font_family(theme::ICON_FONT)
-                                    .text_size(px(10.0))
-                                    .child(icon::CHECK),
-                            )
-                        })
-                })
+            win::ContextEntry {
+                label: entry.label.clone(),
+                enabled: entry.enabled,
+                checked: entry.checked,
+                swatch,
+                separator: entry.separator,
+                id,
+                children: context_entries(&entry.children, actions),
             }
-            None => PopupMenuItem::new(entry.label.clone()),
-        };
-        let mut item = item.disabled(!entry.enabled);
-        if let Some(action) = entry.action.clone() {
-            let shell = shell.clone();
-            item = item.on_click(move |_, window, cx| {
-                // Once the menu is gone: what the entry does may want the keyboard (renaming).
-                let (shell, action) = (shell.clone(), action.clone());
-                window.defer(cx, move |window, cx| {
-                    let _ = shell.update(cx, |shell, cx| shell.run_menu_action(&action, window, cx));
-                });
-            });
-        }
-        menu = menu.item(item);
-    }
-    menu
+        })
+        .collect()
 }
 
 /// The field a name is edited in, in place: Enter or leaving the field keeps it, Escape drops
@@ -356,6 +330,8 @@ pub struct Shell {
     files_over: Option<String>,
     /// The question whether to end the window's sessions is open.
     asking_to_close: bool,
+    /// How many questions were asked: an answer counts only for the last one.
+    asked: u64,
     /// A question that waits for its answer, and where the answer goes.
     question: Option<(Question, oneshot::Sender<bool>)>,
     /// Which sessions of a dropped terminal window to take over: the candidates, where they go,
@@ -406,6 +382,18 @@ static FOCUS_COUNT: AtomicUsize = AtomicUsize::new(0);
 /// The window showing one of the state's windows, if it is open.
 pub fn shell(window_id: &str, cx: &App) -> Option<Entity<Shell>> {
     cx.try_global::<Shells>()?.0.get(window_id)?.upgrade()
+}
+
+/// A window's context menu was answered (`win::show_context_menu`): its window does what was
+/// picked.
+pub fn menu_answered(hwnd: isize, picked: Option<u32>, cx: &mut App) {
+    let Some(shell) = shells(cx).into_iter().find(|shell| shell.read(cx).hwnd == Some(hwnd)) else {
+        return;
+    };
+    let handle = shell.read(cx).handle;
+    let _ = handle.update(cx, |_, window, cx| {
+        shell.update(cx, |shell, cx| shell.menu_answered(picked, window, cx));
+    });
 }
 
 /// Every open window.
@@ -523,6 +511,7 @@ impl Shell {
             drop_preview: None,
             files_over: None,
             asking_to_close: false,
+            asked: 0,
             away: !shown,
             active: window.is_window_active(),
             hwnd: win::hwnd_of(window),
@@ -715,11 +704,22 @@ impl Shell {
                 true,
             ),
         };
+        // The state keeps the whole window, as 0.x did; GPUI tells of its client area.
+        let frame = WindowFrame {
+            scale: f64::from(window.scale_factor()),
+            ..win::window_frame()
+        };
+        let outer = frame.outer_of(reframe_core::state::Bounds {
+            x: f64::from(f32::from(bounds.origin.x)),
+            y: f64::from(f32::from(bounds.origin.y)),
+            width: f64::from(f32::from(bounds.size.width)),
+            height: f64::from(f32::from(bounds.size.height)),
+        });
         let bounds = reframe_core::state::Bounds {
-            x: f64::from(f32::from(bounds.origin.x)).round(),
-            y: f64::from(f32::from(bounds.origin.y)).round(),
-            width: f64::from(f32::from(bounds.size.width)).round(),
-            height: f64::from(f32::from(bounds.size.height)).round(),
+            x: outer.x.round(),
+            y: outer.y.round(),
+            width: outer.width.round(),
+            height: outer.height.round(),
         };
         self.screen = window.bounds();
         let window_id = self.window_id.clone();
@@ -759,8 +759,25 @@ impl Shell {
             }
             None => {
                 self.asking_to_close = true;
+                cx.notify();
+                // Tests answer through their channel, without the system's dialog.
+                if self.controller.read(cx).config().e2e {
+                    return;
+                }
                 let count = self.window_state(cx).map_or(0, |state| window_sessions(state).len());
-                dialogs::open_close_window(cx.weak_entity(), &self.controller, count, window, cx);
+                let remember = Arc::new(AtomicBool::new(false));
+                let answer = dialogs::ask_to_close(&self.controller, count, remember.clone(), window, cx);
+                cx.spawn_in(window, async move |this, cx| {
+                    let choice = match answer.await {
+                        Ok(0) => Some(CloseWindow::End),
+                        Ok(1) => Some(CloseWindow::Keep),
+                        _ => None,
+                    };
+                    let _ = this.update_in(cx, |this, window, cx| {
+                        this.answer_close(choice, remember.load(Ordering::Acquire), window, cx);
+                    });
+                })
+                .detach();
             }
         }
     }
@@ -771,14 +788,14 @@ impl Shell {
         &mut self,
         choice: Option<CloseWindow>,
         remember: bool,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if !self.asking_to_close {
             return;
         }
         self.asking_to_close = false;
-        window.close_dialog(cx);
+        cx.notify();
         if let Some(choice) = choice {
             let window_id = self.window_id.clone();
             self.controller.update(cx, |controller, cx| {
@@ -950,7 +967,8 @@ impl Shell {
         ]
     }
 
-    /// Opens a menu at a place in the window.
+    /// Opens a menu at a place in the window: the system's, as 0.x's were. Under the test
+    /// channel it is not shown (as 0.x's were not); tests pick its entries.
     pub fn show_menu(
         &mut self,
         entries: Vec<MenuEntry>,
@@ -961,24 +979,34 @@ impl Shell {
         if entries.is_empty() {
             return;
         }
-        let shell = cx.weak_entity();
-        let view = PopupMenu::build(window, cx, |menu, window, cx| {
-            menu_items(menu, &entries, &shell, window, cx)
-        });
-        let dismissed = cx.subscribe(&view, |this, _, _: &DismissEvent, cx| {
-            this.menu = None;
-            cx.notify();
-        });
-        self.focus_next = None;
-        let focus = view.read(cx).focus_handle(cx);
-        window.focus(&focus, cx);
-        self.menu = Some(OpenMenu {
-            entries,
-            view,
-            position,
-            _dismissed: dismissed,
-        });
+        let mut actions = Vec::new();
+        let items = context_entries(&entries, &mut actions);
+        self.menu = Some(OpenMenu { entries, actions });
+        // The menu has the keyboard: the window's keys reach it (Escape closes it), whatever had
+        // the keyboard before (a field that is gone by now). The system's menu takes it anyway.
+        window.focus(&self.focus, cx);
         cx.notify();
+        if self.controller.read(cx).config().e2e {
+            return;
+        }
+        let Some(hwnd) = self.hwnd else { return };
+        let Some((left, top, ..)) = win::client_rect(hwnd) else {
+            return;
+        };
+        let scale = window.scale_factor();
+        let x = left + (f32::from(position.x) * scale).round() as i32;
+        let y = top + (f32::from(position.y) * scale).round() as i32;
+        win::show_context_menu(hwnd, x, y, items);
+    }
+
+    /// The system's menu closed: with the entry numbered `picked`, or without one.
+    pub fn menu_answered(&mut self, picked: Option<u32>, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(menu) = self.menu.take() else { return };
+        cx.notify();
+        let action = picked.and_then(|id| menu.actions.get((id as usize).checked_sub(1)?).cloned());
+        if let Some(action) = action {
+            self.run_menu_action(&action, window, cx);
+        }
     }
 
     /// The open menu's entries.
@@ -1432,8 +1460,13 @@ impl Shell {
             self.cancel_node_drag(cx);
             return;
         }
-        // An open menu keeps its keys.
+        // An open menu takes the keys; Escape closes it. (The system's menu has the keyboard
+        // while it is open: this is the test channel's, which shows none.)
         if self.menu.is_some() {
+            if event.keystroke.key == "escape" {
+                self.menu = None;
+                cx.notify();
+            }
             return;
         }
         let Some(shortcut) = keys::shortcut_of(&event.keystroke) else {
@@ -1687,7 +1720,7 @@ impl Shell {
             )
             .child(self.icon_button(
                 "find-previous",
-                icon::UP,
+                Icon::ChevronUp,
                 self.text("find.previous", cx),
                 cx,
                 |this, _, cx| {
@@ -1696,7 +1729,7 @@ impl Shell {
             ))
             .child(self.icon_button(
                 "find-next",
-                icon::DOWN,
+                Icon::ChevronDown,
                 self.text("find.next", cx),
                 cx,
                 |this, _, cx| {
@@ -1705,7 +1738,7 @@ impl Shell {
             ))
             .child(self.icon_button(
                 "find-close",
-                icon::CLOSE,
+                Icon::Close,
                 self.text("find.close", cx),
                 cx,
                 |this, _, cx| {
@@ -1811,22 +1844,36 @@ impl Shell {
 
     // ---------- questions ----------
 
-    /// Opens a question; the answer goes to `answer`. One that was open is answered with no.
+    /// Asks with the system's message box; the answer goes to `answer`. One that was still
+    /// open is answered with no (its box goes once answered, then this one shows).
     fn ask(&mut self, question: Question, answer: oneshot::Sender<bool>, window: &mut Window, cx: &mut Context<Self>) {
         if let Some((_, previous)) = self.question.take() {
             let _ = previous.send(false);
-            window.close_dialog(cx);
         }
         self.question = Some((question.clone(), answer));
-        dialogs::open_question(cx.weak_entity(), question, window, cx);
+        self.asked += 1;
         cx.notify();
+        // Tests answer through their channel, without the system's dialog.
+        if self.controller.read(cx).config().e2e {
+            return;
+        }
+        let asked = self.asked;
+        let answered = dialogs::ask(&question, window, cx);
+        cx.spawn_in(window, async move |this, cx| {
+            let yes = answered.await == Ok(0);
+            let _ = this.update_in(cx, |this, window, cx| {
+                if this.asked == asked {
+                    this.answer_question(yes, window, cx);
+                }
+            });
+        })
+        .detach();
     }
 
     /// The user answered the open question.
-    pub fn answer_question(&mut self, yes: bool, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn answer_question(&mut self, yes: bool, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some((_, answer)) = self.question.take() {
             let _ = answer.send(yes);
-            window.close_dialog(cx);
         }
         cx.notify();
     }
@@ -2089,23 +2136,11 @@ impl Shell {
 
     /// Six dots that say: this bar is what you drag by.
     fn grip(&self) -> Div {
-        let dot = || div().size(px(2.0)).rounded_full().bg(rgb(theme::MUTED));
-        let column = || {
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(2.0))
-                .child(dot())
-                .child(dot())
-                .child(dot())
-        };
         div()
             .flex_none()
             .flex()
-            .gap(px(2.0))
             .opacity(0.6)
-            .child(column())
-            .child(column())
+            .child(icon(Icon::Grip).text_color(rgb(theme::MUTED)))
     }
 
     /// A group's coloured frame with its bar: collapse, colour, name, how many tiles, options.
@@ -2165,7 +2200,7 @@ impl Shell {
                 }),
             )
             .child(
-                self.icon_button("collapse", icon::COLLAPSE, self.text("group.collapse", cx), cx, {
+                self.icon_button("collapse", Icon::Collapse, self.text("group.collapse", cx), cx, {
                     let id = id.clone();
                     move |this, _, cx| this.dispatch(LayoutAction::GroupCollapse { group_id: id.clone() }, cx)
                 }),
@@ -2201,7 +2236,7 @@ impl Shell {
             )
             .child(div().flex_1())
             .child(
-                self.icon_button("options", icon::MORE, self.text("group.options", cx), cx, {
+                self.icon_button("options", Icon::More, self.text("group.options", cx), cx, {
                     let id = id.clone();
                     move |this, window, cx| {
                         let entries = this.group_menu(&id, false, cx);
@@ -2226,13 +2261,15 @@ impl Shell {
     fn icon_button(
         &self,
         id: impl Into<ElementId>,
-        glyph: &'static str,
+        glyph: Icon,
         hint: String,
         cx: &mut Context<Self>,
         on_click: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
     ) -> Stateful<Div> {
+        const BUTTON: &str = "icon-button";
         div()
             .id(id)
+            .group(BUTTON)
             .role(Role::Button)
             .aria_label(hint.clone())
             .size(px(22.0))
@@ -2241,16 +2278,55 @@ impl Shell {
             .items_center()
             .justify_center()
             .rounded(px(4.0))
-            .text_color(rgb(theme::MUTED))
-            .font_family(theme::ICON_FONT)
-            .text_size(px(10.0))
             .cursor_pointer()
-            .hover(|style| style.bg(rgb(theme::SURFACE_2)).text_color(rgb(theme::TEXT)))
+            .hover(|style| style.bg(rgb(theme::SURFACE_2)))
             .tooltip(move |window, cx| Tooltip::new(hint.clone()).build(window, cx))
             // The header's own mouse handling (focus, later dragging) is not for its buttons.
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(move |this, _, window, cx| on_click(this, window, cx)))
-            .child(glyph)
+            .child(
+                icon(glyph)
+                    .text_color(rgb(theme::MUTED))
+                    .group_hover(BUTTON, |style| style.text_color(rgb(theme::TEXT))),
+            )
+    }
+
+    /// A button of the toolbar: its icon and label; `active` (the list shown, a workspace's
+    /// window) draws its frame in the accent colour.
+    fn toolbar_button(
+        &self,
+        id: &'static str,
+        glyph: Icon,
+        label: String,
+        active: bool,
+        cx: &mut Context<Self>,
+        on_click: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+    ) -> Stateful<Div> {
+        div()
+            .id(id)
+            .role(Role::Button)
+            .aria_label(label.clone())
+            .flex()
+            .items_center()
+            .gap(px(6.0))
+            .px(px(10.0))
+            .py(px(3.0))
+            .rounded(px(theme::RADIUS))
+            .border_1()
+            .bg(rgb(theme::SURFACE_2))
+            .border_color(rgb(if active { theme::ACCENT } else { theme::BORDER_STRONG }))
+            .hover(|style| style.border_color(rgb(theme::MUTED)))
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, _, window, cx| on_click(this, window, cx)))
+            .child(icon(glyph).text_color(rgb(theme::TEXT)))
+            .child(
+                div()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .child(label),
+            )
     }
 
     fn button(
@@ -2354,7 +2430,7 @@ impl Shell {
                 }),
             )
             .child(
-                self.icon_button("collapse", icon::COLLAPSE, self.text("tile.collapse", cx), cx, {
+                self.icon_button("collapse", Icon::Collapse, self.text("tile.collapse", cx), cx, {
                     let id = id.clone();
                     move |this, _, cx| this.dispatch(LayoutAction::TileCollapse { session_id: id.clone() }, cx)
                 }),
@@ -2396,14 +2472,14 @@ impl Shell {
                     .min_w_0()
                     .overflow_hidden()
                     .whitespace_nowrap()
-                    .text_ellipsis()
+                    .text_ellipsis_start()
                     .text_color(rgb(theme::MUTED))
                     .text_size(px(12.0))
                     .child(view.cwd_label.clone()),
             )
             .child(self.icon_button(
                 "zoom",
-                if zoomed { icon::UNZOOM } else { icon::ZOOM },
+                if zoomed { Icon::Unzoom } else { Icon::Zoom },
                 self.text(if zoomed { "tile.unzoom" } else { "tile.zoom" }, cx),
                 cx,
                 {
@@ -2411,7 +2487,7 @@ impl Shell {
                     move |this, _, cx| this.toggle_zoom(&id, cx)
                 },
             ))
-            .child(self.icon_button("end", icon::CLOSE, self.text("tile.end", cx), cx, {
+            .child(self.icon_button("end", Icon::Close, self.text("tile.end", cx), cx, {
                 let id = id.clone();
                 move |this, _, cx| {
                     this.controller
@@ -2592,17 +2668,14 @@ impl Shell {
             .px(px(8.0))
             .flex()
             .items_center()
-            .gap(px(6.0))
+            .gap(px(8.0))
             .bg(rgb(theme::SURFACE))
             .border_b_1()
             .border_color(rgb(theme::BORDER))
             .child(
-                self.button("new-session", new_session, false, cx, |this, window, cx| {
+                self.toolbar_button("new-session", Icon::Plus, new_session, false, cx, |this, window, cx| {
                     this.open_new_session(window, cx);
                 })
-                .flex()
-                .items_center()
-                .gap(px(6.0))
                 .tooltip(move |window, cx| Tooltip::new(hint.clone()).build(window, cx)),
             )
             .child({
@@ -2614,21 +2687,16 @@ impl Shell {
                 );
                 let dot = self.new_found(cx);
                 let dot_hint = self.text("list.newFound", cx);
-                self.button(
+                self.toolbar_button(
                     "sessions",
+                    Icon::List,
                     self.text("toolbar.sessions", cx),
-                    false,
+                    open,
                     cx,
                     |this, window, cx| {
                         this.toggle_sidebar(window, cx);
                     },
                 )
-                .relative()
-                .when(open, |button| {
-                    button
-                        .bg(rgb(theme::ACCENT).opacity(0.18))
-                        .border_color(rgb(theme::ACCENT))
-                })
                 .tooltip(move |window, cx| {
                     let text = if dot {
                         format!("{hint}\n{dot_hint}")
@@ -2637,20 +2705,25 @@ impl Shell {
                     };
                     Tooltip::new(text).build(window, cx)
                 })
+                // Something new turned up in the hidden list: a dot after the label, ringed in the
+                // bar's colour.
                 .when(dot, |button| {
                     button.child(
                         div()
-                            .absolute()
-                            .top(px(-3.0))
-                            .right(px(-3.0))
-                            .size(px(8.0))
+                            .size(px(11.0))
+                            .m(px(-2.0))
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .justify_center()
                             .rounded_full()
-                            .bg(rgb(theme::ACCENT)),
+                            .bg(rgb(theme::SURFACE))
+                            .child(div().size(px(7.0)).rounded_full().bg(rgb(theme::ACCENT))),
                     )
                 })
             })
             .child(
-                self.button("new-window", new_window, false, cx, |this, _, cx| {
+                self.toolbar_button("new-window", Icon::Window, new_window, false, cx, |this, _, cx| {
                     this.new_window(cx);
                 })
                 .tooltip(move |window, cx| Tooltip::new(window_hint.clone()).build(window, cx)),
@@ -2668,49 +2741,39 @@ impl Shell {
                     None => self.text("toolbar.workspaces", cx),
                 };
                 // The menu opens below the button, where it was clicked.
-                self.button("workspaces", label, false, cx, |_, _, _| {})
+                self.toolbar_button("workspaces", Icon::Layers, label, current.is_some(), cx, |_, _, _| {})
                     .on_click(cx.listener(|this, event: &ClickEvent, window, cx| {
                         let entries = this.workspace_menu(cx);
                         let at = point(event.position().x, px(theme::TOOLBAR - 4.0));
                         this.show_menu(entries, at, window, cx);
                     }))
                     .max_w(px(220.0))
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .when(current.is_some(), |button| {
-                        button
-                            .bg(rgb(theme::ACCENT).opacity(0.18))
-                            .border_color(rgb(theme::ACCENT))
-                    })
                     .tooltip(move |window, cx| Tooltip::new(hint.clone()).build(window, cx))
             })
             .child(div().flex_1())
             .when(window.is_fullscreen(), |bar| {
                 let hint = format!("{} (F11)", self.text("fullscreen.exit", cx));
                 bar.child(
-                    self.icon_button("exit-fullscreen", icon::EXIT_FULLSCREEN, hint, cx, |_, window, _| {
+                    self.icon_button("exit-fullscreen", Icon::ExitFullscreen, hint, cx, |_, window, _| {
                         window.toggle_fullscreen()
                     }),
                 )
             })
             .child(
-                self.icon_button("settings", icon::SETTINGS, settings, cx, |this, window, cx| {
+                self.icon_button("settings", Icon::Gear, settings, cx, |this, window, cx| {
                     this.open_settings(window, cx);
                 })
-                .size(px(28.0))
-                .text_size(px(14.0)),
+                .size(px(28.0)),
             )
             .child(
                 self.icon_button(
                     "about",
-                    icon::INFO,
+                    Icon::Info,
                     self.text("about.title", cx),
                     cx,
                     |this, window, cx| this.open_about(window, cx),
                 )
-                .size(px(28.0))
-                .text_size(px(14.0)),
+                .size(px(28.0)),
             )
     }
 
@@ -2871,17 +2934,6 @@ impl Render for Shell {
         }
         self.was_fullscreen = fullscreen;
         self.drawn += 1;
-        // The question about closing is over however its dialog went (Escape, a click beside it).
-        if self.asking_to_close && !window.has_active_dialog(cx) {
-            self.asking_to_close = false;
-        }
-        // A question closed without an answer (Escape, a click beside it) was answered no.
-        if self.question.is_some()
-            && !window.has_active_dialog(cx)
-            && let Some((_, answer)) = self.question.take()
-        {
-            let _ = answer.send(false);
-        }
         if self.terminal_question.is_some()
             && !window.has_active_dialog(cx)
             && let Some((.., answer)) = self.terminal_question.take()
@@ -2919,6 +2971,7 @@ impl Render for Shell {
             .text_color(rgb(theme::TEXT))
             .font_family(theme::UI_FONT)
             .text_size(px(13.0))
+            .line_height(relative(theme::LINE_HEIGHT))
             .track_focus(&self.focus)
             .capture_key_down(cx.listener(Self::on_key))
             .child(self.toolbar(window, cx));
@@ -3032,16 +3085,11 @@ impl Render for Shell {
                     .child(drag.label.clone()),
             );
         }
-        if let Some(menu) = &self.menu {
-            root = root.child(
-                deferred(
-                    anchored()
-                        .position(menu.position)
-                        .snap_to_window_with_margin(px(8.0))
-                        .child(menu.view.clone()),
-                )
-                .with_priority(1),
-            );
+        if self.menu.is_some() {
+            root = root.capture_any_mouse_down(cx.listener(|this, _, _, cx| {
+                this.menu = None;
+                cx.notify();
+            }));
         }
         root
     }
@@ -3264,31 +3312,51 @@ pub fn open(controller: &Entity<Controller>, window_id: &str, shown: bool, cx: &
         .iter()
         .find(|window| window.id == window_id)
         .and_then(|window| Some((window.bounds?, window.maximized, window.fullscreen == Some(true))));
-    let window_bounds = saved.map(|(saved, maximized, fullscreen)| {
-        let size = size(px(saved.width as f32), px(saved.height as f32));
-        let title_bar = Bounds::new(
-            point(px(saved.x as f32 + 40.0), px(saved.y as f32)),
-            gpui_kit::size(px((saved.width as f32 - 80.0).max(1.0)), px(30.0)),
-        );
-        let on_screen = cx
-            .displays()
-            .iter()
-            .any(|display| display.bounds().intersects(&title_bar));
-        let bounds = if on_screen {
-            Bounds::new(point(px(saved.x as f32), px(saved.y as f32)), size)
-        } else {
-            Bounds::centered(None, size, cx)
-        };
-        if fullscreen {
-            WindowBounds::Fullscreen(bounds)
-        } else if maximized {
-            WindowBounds::Maximized(bounds)
-        } else {
-            WindowBounds::Windowed(bounds)
+    // The state keeps whole windows, frame and all, as 0.x did; GPUI places client areas.
+    let frame = win::window_frame();
+    let size_of = |bounds: reframe_core::state::Bounds| size(px(bounds.width as f32), px(bounds.height as f32));
+    let window_bounds = match saved {
+        Some((saved, maximized, fullscreen)) => {
+            let client = frame.client_of(saved);
+            let title_bar = Bounds::new(
+                point(px(saved.x as f32 + 40.0), px(saved.y as f32)),
+                gpui_kit::size(px((saved.width as f32 - 80.0).max(1.0)), px(30.0)),
+            );
+            let on_screen = cx
+                .displays()
+                .iter()
+                .any(|display| display.bounds().intersects(&title_bar));
+            let bounds = if on_screen {
+                Bounds::new(point(px(client.x as f32), px(client.y as f32)), size_of(client))
+            } else {
+                Bounds::centered(None, size_of(client), cx)
+            };
+            if fullscreen {
+                WindowBounds::Fullscreen(bounds)
+            } else if maximized {
+                WindowBounds::Maximized(bounds)
+            } else {
+                WindowBounds::Windowed(bounds)
+            }
         }
-    });
+        // 0.x's size for a window nothing is kept of, in the middle of the screen (no larger).
+        None => {
+            let (width, height) = DEFAULT_WINDOW_SIZE;
+            let client = frame.client_of(reframe_core::state::Bounds {
+                x: 0.0,
+                y: 0.0,
+                width,
+                height,
+            });
+            let mut size = size_of(client);
+            if let Some(display) = cx.primary_display() {
+                size = size.min(&display.bounds().size);
+            }
+            WindowBounds::Windowed(Bounds::centered(None, size, cx))
+        }
+    };
     let options = WindowOptions {
-        window_bounds,
+        window_bounds: Some(window_bounds),
         show: shown,
         // Driven by a test, a window does not take the keyboard from whoever is working.
         focus: shown && !controller.read(cx).config().e2e,

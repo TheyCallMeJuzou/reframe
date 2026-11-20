@@ -143,3 +143,61 @@ fn rectangles_know_what_is_inside_them() {
     assert!(rect.contains(10.0, 10.0) && rect.contains(29.9, 29.9));
     assert!(!rect.contains(30.0, 15.0) && !rect.contains(9.9, 15.0));
 }
+
+/// Windows 11 at 100 %: 8 invisible pixels on the left, right and bottom, a 31 pixel title bar.
+const FRAME_100: WindowFrame = WindowFrame {
+    width: 16,
+    height: 39,
+    scale: 1.0,
+};
+
+#[test]
+fn a_kept_window_is_the_whole_window_and_gpui_gets_its_client_area() {
+    let outer = Bounds {
+        x: 60.0,
+        y: 60.0,
+        width: 1280.0,
+        height: 800.0,
+    };
+    let client = FRAME_100.client_of(outer);
+    assert_eq!(
+        client,
+        Bounds {
+            x: 68.0,
+            y: 79.0,
+            width: 1264.0,
+            height: 761.0
+        }
+    );
+    assert_eq!(FRAME_100.outer_of(client), outer);
+}
+
+#[test]
+fn the_frame_is_in_device_pixels_and_the_bounds_are_not() {
+    // 150 %: a frame of 23 × 56 device pixels.
+    let frame = WindowFrame {
+        width: 23,
+        height: 56,
+        scale: 1.5,
+    };
+    let outer = Bounds {
+        x: 100.0,
+        y: 40.0,
+        width: 900.0,
+        height: 600.0,
+    };
+    let client = frame.client_of(outer);
+    assert!((client.x - (100.0 + 11.0 / 1.5)).abs() < 1e-9);
+    assert!((client.y - (40.0 + 28.0 / 1.5)).abs() < 1e-9);
+    assert!((client.width - (900.0 - 23.0 / 1.5)).abs() < 1e-9);
+    assert!((client.height - (600.0 - 56.0 / 1.5)).abs() < 1e-9);
+    let back = frame.outer_of(client);
+    for (got, want) in [
+        (back.x, outer.x),
+        (back.y, outer.y),
+        (back.width, outer.width),
+        (back.height, outer.height),
+    ] {
+        assert!((got - want).abs() < 1e-9, "{got} != {want}");
+    }
+}

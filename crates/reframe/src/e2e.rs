@@ -555,6 +555,12 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
                 })
             });
             let screen = window.bounds();
+            // How much bigger the whole window is, in the state's pixels.
+            let frame = {
+                let frame = crate::win::window_frame();
+                let scale = window.scale_factor();
+                [frame.width as f32 / scale, frame.height as f32 / scale]
+            };
             json!({
                 "dialog": window.has_active_dialog(cx),
                 "focused": shell.read(cx).active_tile(window, cx),
@@ -565,6 +571,7 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
                 // The window or one of its tiles has the keyboard, so keys reach reframe's shortcuts.
                 "keyboard": shell.read(cx).has_keyboard(window, cx),
                 "size": [f32::from(window.bounds().size.width), f32::from(window.bounds().size.height)],
+                "frame": frame,
                 "renaming": renaming.0,
                 "renamingGroup": renaming.1,
                 "renamingInList": renaming_list,

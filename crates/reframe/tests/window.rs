@@ -297,15 +297,23 @@ fn text_is_found_and_a_session_renamed_in_its_tile() {
     app.quit();
 }
 
-/// A window comes back as big as it was (`e2e/window-bounds.spec.ts`).
+/// A window comes back as big as it was. The state keeps the whole window, frame and all, as
+/// 0.x did (`e2e/windows.spec.ts` sets a window's bounds that way).
 #[test]
 fn a_window_opens_as_big_as_it_was_left() {
     let setup = Setup::new();
     let mut app = setup.launch();
     app.cmd(json!({ "cmd": "resize", "width": 910.0, "height": 640.0 }));
+    let frame = window(&mut app)["frame"].clone();
+    let (frame_width, frame_height) = (frame[0].as_f64().unwrap(), frame[1].as_f64().unwrap());
+    assert!(
+        frame_width > 0.0 && frame_height > 20.0,
+        "a frame with a title bar: {frame}"
+    );
     wait_for("the size to be remembered", || {
         let bounds = app.state()["windows"][0]["bounds"].clone();
-        (bounds["width"] == 910 && bounds["height"] == 640).then_some(())
+        (bounds["width"] == (910.0 + frame_width).round() && bounds["height"] == (640.0 + frame_height).round())
+            .then_some(())
     });
     app.quit();
 

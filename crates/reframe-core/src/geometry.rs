@@ -4,7 +4,7 @@
 //! window places everything itself, so the same numbers serve drawing, dragging separators,
 //! snapping them to the grid and moving the focus between tiles.
 
-use crate::state::{LayoutNode, SplitDir, SplitNode};
+use crate::state::{Bounds, LayoutNode, SplitDir, SplitNode};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Rect {
@@ -233,3 +233,41 @@ pub fn drag_sizes(before: &[f64], index: usize, delta: f64, available: f64, min:
 #[cfg(test)]
 #[path = "geometry_tests.rs"]
 mod tests;
+
+/// A whole window, frame and all, as the state keeps it (Electron's bounds): 1280 × 800 when
+/// nothing is kept, in the middle of the screen.
+pub const DEFAULT_WINDOW_SIZE: (f64, f64) = (1280.0, 800.0);
+
+/// The frame Windows draws around a window's client area (title bar, borders and the invisible
+/// borders to resize by): how much wider and taller the whole window is, in device pixels, and
+/// how many of those make one of the state's pixels.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WindowFrame {
+    pub width: i32,
+    pub height: i32,
+    pub scale: f64,
+}
+
+impl WindowFrame {
+    /// Where the client area of a window with these `outer` bounds is, the way GPUI places a
+    /// client area in its window: half of the frame's width and height (rounded down) before it,
+    /// the rest after it.
+    pub fn client_of(&self, outer: Bounds) -> Bounds {
+        Bounds {
+            x: outer.x + f64::from(self.width / 2) / self.scale,
+            y: outer.y + f64::from(self.height / 2) / self.scale,
+            width: outer.width - f64::from(self.width) / self.scale,
+            height: outer.height - f64::from(self.height) / self.scale,
+        }
+    }
+
+    /// The whole window around a client area GPUI reports (the other way round).
+    pub fn outer_of(&self, client: Bounds) -> Bounds {
+        Bounds {
+            x: client.x - f64::from(self.width / 2) / self.scale,
+            y: client.y - f64::from(self.height / 2) / self.scale,
+            width: client.width + f64::from(self.width) / self.scale,
+            height: client.height + f64::from(self.height) / self.scale,
+        }
+    }
+}

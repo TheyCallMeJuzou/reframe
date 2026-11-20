@@ -427,16 +427,16 @@ fn closing_a_window_with_sessions_asks_and_empty_windows_just_go() {
     app.cmd(json!({ "cmd": "transfer", "session": beta, "from": main, "to": second }));
     placed(&mut app, &second, 1);
     app.cmd(json!({ "cmd": "close", "window": second }));
+    // The question is the system's message box, as in 0.x; under the test channel it is not
+    // shown, and the test answers it.
     wait_for("the question", || {
-        let window = shown(&mut app, &second);
-        (window["asking"] == true && window["dialog"] == true).then_some(())
+        (shown(&mut app, &second)["asking"] == true).then_some(())
     });
     // A second click on the X does not ask twice.
     app.cmd(json!({ "cmd": "close", "window": second }));
     app.cmd(json!({ "cmd": "close_answer", "window": second }));
     wait_for("the question to go", || {
-        let window = shown(&mut app, &second);
-        (window["asking"] == false && window["dialog"] == false).then_some(())
+        (shown(&mut app, &second)["asking"] == false).then_some(())
     });
     assert_eq!(shown(&mut app, &second)["away"], false);
     assert_eq!(app.state()["preferences"]["closeWindow"], "ask");
@@ -645,8 +645,10 @@ fn the_pointer_drags_tiles_opens_menus_and_brings_files() {
     // Out of the window, over another one: that one shows where the tile would go, and gets
     // it. The second window lies 40 pixels to the right of and below the first.
     app.cmd(json!({ "cmd": "resize", "width": 700.0, "height": 500.0 }));
+    // The state keeps the whole window, its frame too.
+    let frame = app.cmd(json!({ "cmd": "window" }))["frame"][0].as_f64().unwrap();
     wait_for("the smaller window to be saved", || {
-        (app.state()["windows"][0]["bounds"]["width"] == 700.0).then_some(())
+        (app.state()["windows"][0]["bounds"]["width"] == (700.0 + frame).round()).then_some(())
     });
     let second = app.cmd(json!({ "cmd": "new_window" }))["window"]
         .as_str()

@@ -313,6 +313,7 @@ pub fn reveal_windows(controller: &Entity<Controller>, cx: &mut App) {
 /// What the tray icon, its menu, a second start or the system ask for.
 pub fn handle(controller: &Entity<Controller>, event: TrayEvent, cx: &mut App) {
     match event {
+        TrayEvent::ContextMenu { window, picked } => window::menu_answered(window, picked, cx),
         TrayEvent::Clicked => in_first_window(controller, cx, |_, _, _| {}),
         TrayEvent::Command(NEW_SESSION) => {
             in_first_window(controller, cx, |shell, window, cx| shell.open_new_session(window, cx));
@@ -407,6 +408,7 @@ fn other_build_started(controller: &Entity<Controller>, started: &str, running: 
         confirm: text("about.close", &[]),
         cancel: None,
         danger: false,
+        error: false,
     };
     drop(window::ask(&first, question, cx));
 }

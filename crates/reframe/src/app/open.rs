@@ -49,6 +49,7 @@ impl Controller {
             confirm: text("takeover.confirm", &[]),
             cancel: Some(text("dialog.cancel", &[])),
             danger: false,
+            error: false,
         };
         let answer = window::ask(window_id, question, cx);
         cx.spawn(async move |_, _| answer.await.unwrap_or(false))
@@ -63,6 +64,7 @@ impl Controller {
             confirm: t(self.locale(), "about.close", &[]).unwrap_or_default(),
             cancel: None,
             danger: false,
+            error: true,
         };
         drop(window::ask(window_id, question, cx));
     }
@@ -781,12 +783,13 @@ impl Controller {
         let locale = self.locale();
         let text = |key: &str, params: &[(&str, &str)]| t(locale, key, params).unwrap_or_default();
         let question = Question {
-            title: text("workspace.delete", &[]),
+            title: "reframe".to_owned(),
             message: text("workspace.deleteQuestion", &[("name", &workspace.name)]),
             detail: Some(text("workspace.deleteDetail", &[])),
             confirm: text("workspace.delete", &[]),
             cancel: Some(text("dialog.cancel", &[])),
             danger: true,
+            error: false,
         };
         let answer = window::ask(window_id, question, cx);
         let workspace_id = workspace_id.to_owned();

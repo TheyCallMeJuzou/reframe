@@ -744,6 +744,12 @@ impl PlatformWindow for WindowsWindow {
         answers: &[PromptButton],
     ) -> Option<Receiver<usize>> {
         let (mut done_tx, done_rx) = oneshot::channel();
+        // reframe: what `set_next_prompt` asked for (by default, upstream's dialog).
+        let style = NEXT_PROMPT
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .take()
+            .unwrap_or_default();
         let msg = msg.to_string();
         let detail_string = detail.map(|detail| detail.to_string());
         let answers = answers.to_vec();
@@ -772,7 +778,18 @@ impl PlatformWindow for WindowsWindow {
                             main_icon = TD_ERROR_ICON;
                         }
                     };
-                    config.pszWindowTitle = title;
+                    // reframe: the title, the default answer and how the answers look.
+                    let own_title = style.title.as_deref().map(HSTRING::from);
+                    config.pszWindowTitle = own_title
+                        .as_ref()
+                        .map_or(title, |own| PCWSTR::from_raw(own.as_ptr()));
+                    if style.command_links {
+                        config.dwFlags = config.dwFlags | TDF_USE_COMMAND_LINKS | TDF_POSITION_RELATIVE_TO_WINDOW;
+                    }
+                    let verification = style.checkbox.as_ref().map(|(label, _)| HSTRING::from(label.as_str()));
+                    if let Some(verification) = &verification {
+                        config.pszVerificationText = PCWSTR::from_raw(verification.as_ptr());
+                    }
                     config.Anonymous1.pszMainIcon = main_icon;
                     let instruction = HSTRING::from(msg);
                     config.pszMainInstruction = PCWSTR::from_raw(instruction.as_ptr());
@@ -781,6 +798,14 @@ impl PlatformWindow for WindowsWindow {
                         hints_encoded = HSTRING::from(hints);
                         config.pszContent = PCWSTR::from_raw(hints_encoded.as_ptr());
                     };
+                    // reframe: Electron's sizing, and its plain message when there are no details.
+                    if style.as_electron {
+                        config.dwFlags = config.dwFlags | TDF_SIZE_TO_CONTENT;
+                        if detail_string.is_none() {
+                            config.pszContent = config.pszMainInstruction;
+                            config.pszMainInstruction = PCWSTR::null();
+                        }
+                    }
                     let mut button_id_map = Vec::with_capacity(answers.len());
                     let mut buttons = Vec::new();
                     let mut btn_encoded = Vec::new();
@@ -794,20 +819,48 @@ impl PlatformWindow for WindowsWindow {
                             PromptButton::Other(_) => -(index as i32) - 1,
                         };
                         button_id_map.push(button_id);
-                        buttons.push(TASKDIALOG_BUTTON {
-                            nButtonID: button_id,
-                            pszButtonText: PCWSTR::from_raw(encoded.as_ptr()),
-                        });
+                        // reframe: with command links, OK and Cancel are the system's own
+                        // buttons below them (as Electron's message boxes have them).
+                        match btn {
+                            PromptButton::Ok(_) if style.command_links => {
+                                config.dwCommonButtons = config.dwCommonButtons | TDCBF_OK_BUTTON;
+                            }
+                            PromptButton::Cancel(_) if style.command_links => {
+                                config.dwCommonButtons = config.dwCommonButtons | TDCBF_CANCEL_BUTTON;
+                            }
+                            _ => buttons.push(TASKDIALOG_BUTTON {
+                                nButtonID: button_id,
+                                pszButtonText: PCWSTR::from_raw(encoded.as_ptr()),
+                            }),
+                        }
                         btn_encoded.push(encoded);
+                    }
+                    if let Some(default) = style.default.and_then(|index| button_id_map.get(index)) {
+                        config.nDefaultButton = *default;
                     }
                     config.cButtons = buttons.len() as _;
                     config.pButtons = buttons.as_ptr();
 
                     config.pfCallback = Some(crate::dialog::task_dialog_callback);
-                    config.lpCallbackData = button_id_map.contains(&IDCANCEL.0) as isize;
+                    config.lpCallbackData =
+                        (button_id_map.contains(&IDCANCEL.0) || style.cancel.is_some()) as isize;
                     let mut res = std::mem::zeroed();
-                    TaskDialogIndirect(&config, Some(&mut res), None, None)
-                        .context("unable to create task dialog")?;
+                    let mut checked = BOOL::from(false);
+                    TaskDialogIndirect(
+                        &config,
+                        Some(&mut res),
+                        None,
+                        verification.is_some().then_some(&mut checked as *mut BOOL),
+                    )
+                    .context("unable to create task dialog")?;
+                    if let Some((_, state)) = &style.checkbox {
+                        state.store(checked.as_bool(), std::sync::atomic::Ordering::Release);
+                    }
+                    if res == IDCANCEL.0
+                        && let Some(cancel) = style.cancel
+                    {
+                        return Ok(Some(cancel));
+                    }
                     Ok(button_id_map.iter().position(|&button_id| button_id == res))
                 }
             },
@@ -1459,6 +1512,34 @@ struct AccentPolicy {
 }
 
 type Color = (u8, u8, u8, u8);
+
+/// reframe: how the next prompt looks beyond what GPUI says of it, as Electron's message boxes
+/// looked (`dialog.showMessageBox`): a title of its own, the answers other than OK and Cancel as
+/// command links, a checkbox under them, and the answer Enter gives.
+#[derive(Clone, Default)]
+pub struct PromptStyle {
+    /// The title of the dialog's window (upstream: "Info", "Warning" or "Critical").
+    pub title: Option<String>,
+    /// The answers other than OK and Cancel as command links, with OK and Cancel the system's.
+    pub command_links: bool,
+    /// A checkbox under the answers (its label), and where to put whether it was ticked.
+    pub checkbox: Option<(String, std::sync::Arc<std::sync::atomic::AtomicBool>)>,
+    /// The answer (its index) that is chosen with Enter.
+    pub default: Option<usize>,
+    /// The answer (its index) that Escape and the dialog's X give, also when it is no Cancel
+    /// button (Electron's `cancelId`).
+    pub cancel: Option<usize>,
+    /// As wide as its text needs (`TDF_SIZE_TO_CONTENT`), and a message without details as
+    /// plain text rather than the bold main line, as Electron's were.
+    pub as_electron: bool,
+}
+
+static NEXT_PROMPT: std::sync::Mutex<Option<PromptStyle>> = std::sync::Mutex::new(None);
+
+/// reframe: the next prompt a window shows (`Window::prompt`) looks like this.
+pub fn set_next_prompt(style: PromptStyle) {
+    *NEXT_PROMPT.lock().unwrap_or_else(|error| error.into_inner()) = Some(style);
+}
 
 #[derive(Debug, Default, Clone)]
 pub(crate) struct WindowBorderOffset {

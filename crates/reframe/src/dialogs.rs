@@ -1,4 +1,4 @@
-//! The New session, Settings and About dialogs.
+//! The New session, Settings and About dialogs, and the questions.
 //!
 //! They take the place of the Electron version's `NewSessionDialog.tsx`, `SettingsDialog.tsx`
 //! and `AboutDialog.tsx`. Each is a view of its own inside the component library's dialog, which
@@ -6,12 +6,14 @@
 
 use std::cell::Cell;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
+use gpui_kit::component::dialog::Dialog;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
-use gpui_kit::component::{Disableable as _, IndexPath, Theme, ThemeMode, WindowExt as _};
+use gpui_kit::component::{Disableable as _, IndexPath, Sizable as _, Theme, ThemeMode, WindowExt as _};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use reframe_core::i18n::{Locale, resolve_locale, t};
@@ -61,6 +63,86 @@ fn hint(text: String) -> Div {
         .child(text)
 }
 
+/// A dialog as 0.x drew one: in the middle of the window, its contents 18 × 20 pixels inside a
+/// frame with 8 pixel corners, at 0.x's line height, and no × (Escape or a button closes it).
+fn framed(dialog: Dialog) -> Dialog {
+    dialog
+        .centered()
+        .close_button(false)
+        .line_height(relative(theme::LINE_HEIGHT))
+        .pt(px(18.0))
+        .pb(px(18.0))
+        .pl(px(20.0))
+        .pr(px(20.0))
+        .border_color(rgb(theme::BORDER_STRONG))
+        .rounded(px(8.0))
+}
+
+/// A dialog's title, as 0.x's `h2`: 15 pixels and bold, 12 pixels above what follows.
+fn heading(text: String) -> Div {
+    div()
+        .pb(px(4.0))
+        .text_size(px(15.0))
+        .font_weight(FontWeight::BOLD)
+        .child(text)
+}
+
+/// A button as 0.x drew one: 30 pixels high, 13 pixel text.
+fn button(id: impl Into<ElementId>, label: String) -> Button {
+    Button::new(id).label(label).large().h(px(30.0)).px(px(12.0))
+}
+
+/// The dialog's main button, in the accent colour; one that cannot be used yet keeps its colour
+/// at half strength, as in 0.x.
+fn primary(id: impl Into<ElementId>, label: String, disabled: bool) -> Button {
+    button(id, label).primary().disabled(disabled).when(disabled, |button| {
+        button
+            .bg(rgb(theme::ACCENT).opacity(0.5))
+            .border_color(rgb(theme::ACCENT).opacity(0.0))
+            .text_color(rgb(theme::ACCENT_TEXT).opacity(0.6))
+    })
+}
+
+/// A checkbox with its label in 0.x's 13 pixel text.
+fn check(id: impl Into<ElementId>, label: String, checked: bool) -> Checkbox {
+    Checkbox::new(id).label(label).checked(checked).text_size(px(13.0))
+}
+
+/// A choice box as 0.x's `select`: a form's (32 pixels high) or a setting's (28).
+fn choice_box(select: Select<Vec<SharedString>>, setting: bool) -> Select<Vec<SharedString>> {
+    let (height, padding) = if setting { (28.0, 6.0) } else { (32.0, 8.0) };
+    select
+        .h(px(height))
+        .px(px(padding))
+        .text_size(px(13.0))
+        .bg(rgb(theme::BG))
+        .border_color(rgb(theme::BORDER_STRONG))
+        .when(setting, |select| select.rounded(px(4.0)))
+}
+
+/// How wide a setting's choice box is: its longest choice, its padding and the arrow, as 0.x's
+/// `select` sized itself.
+fn fitted(items: &[SharedString], window: &Window) -> Pixels {
+    let widest = items
+        .iter()
+        .map(|item| {
+            let run = TextRun {
+                len: item.len(),
+                font: font(theme::UI_FONT),
+                color: Hsla::default(),
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            };
+            window
+                .text_system()
+                .shape_line(item.clone(), px(13.0), &[run], None)
+                .width
+        })
+        .fold(px(0.0), |widest, width| if width > widest { width } else { widest });
+    widest + px(6.0 * 2.0 + 2.0 + 20.0)
+}
+
 /// A setting: what it is at the left, its control at the right.
 fn setting(label: String, control: impl IntoElement) -> Div {
     div()
@@ -78,14 +160,15 @@ fn chip(id: impl Into<ElementId>, label: String, selected: bool) -> Stateful<Div
         .role(Role::Button)
         .aria_label(label.clone())
         .aria_selected(selected)
-        .px(px(8.0))
+        .px(px(10.0))
         .py(px(2.0))
-        .rounded(px(10.0))
+        .rounded_full()
         .border_1()
-        .border_color(rgb(if selected { theme::ACCENT } else { theme::BORDER_STRONG }))
+        .border_color(rgb(if selected { theme::ACCENT } else { theme::BORDER }))
+        .bg(rgb(theme::BG))
+        .text_color(rgb(if selected { theme::TEXT } else { theme::MUTED }))
         .text_size(px(12.0))
         .cursor_pointer()
-        .hover(|style| style.border_color(rgb(theme::MUTED)))
         .child(label)
 }
 
@@ -326,20 +409,20 @@ impl Render for NewSessionForm {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let text = words(self.controller.read(cx).locale());
         let folder = self.folder.read(cx).value();
-        let mut form = div().flex().flex_col().gap(px(10.0)).child(field(
+        let mut form = div().flex().flex_col().gap(px(12.0)).child(field(
             text("dialog.folder"),
             div()
                 .flex()
-                .gap(px(6.0))
+                .gap(px(8.0))
                 .child(
                     div()
                         .flex_1()
                         .min_w_0()
-                        .child(Input::new(&self.folder).aria_label(text("dialog.folder"))),
+                        .child(theme::field(Input::new(&self.folder)).aria_label(text("dialog.folder"))),
                 )
                 .child(
-                    Button::new("browse")
-                        .label(text("dialog.browse"))
+                    button("browse", text("dialog.browse"))
+                        .h(px(32.0))
                         .on_click(cx.listener(|this, _, window, cx| this.browse(window, cx))),
                 ),
         ));
@@ -348,6 +431,7 @@ impl Render for NewSessionForm {
                 .id("recent")
                 .role(Role::Group)
                 .aria_label(text("dialog.recent"))
+                .mt(px(-4.0))
                 .flex()
                 .flex_wrap()
                 .gap(px(6.0));
@@ -368,31 +452,29 @@ impl Render for NewSessionForm {
         form = form
             .child(field(
                 text("dialog.name"),
-                Input::new(&self.name).aria_label(text("dialog.name")),
+                theme::field(Input::new(&self.name)).aria_label(text("dialog.name")),
             ))
             .child(
-                div().pl(px(4.0)).child(
-                    Checkbox::new("name-from-folder")
-                        .label(text("dialog.nameFromFolder"))
-                        .checked(self.name_from_folder)
-                        .on_click(cx.listener(|this, on: &bool, window, cx| {
-                            this.set_name_from_folder(*on, window, cx);
-                        })),
-                ),
+                check("name-from-folder", text("dialog.nameFromFolder"), self.name_from_folder)
+                    .mt(px(-6.0))
+                    .text_size(px(12.0))
+                    .text_color(rgb(theme::MUTED))
+                    .on_click(cx.listener(|this, on: &bool, window, cx| {
+                        this.set_name_from_folder(*on, window, cx);
+                    })),
             )
             .child(
-                Checkbox::new("worktree")
-                    .label(text("dialog.worktree"))
-                    .checked(self.worktree)
-                    .on_click(cx.listener(|this, on: &bool, _, cx| {
+                check("worktree", text("dialog.worktree"), self.worktree).on_click(cx.listener(
+                    |this, on: &bool, _, cx| {
                         this.worktree = *on;
                         cx.notify();
-                    })),
+                    },
+                )),
             );
         if self.worktree {
-            form = form.child(div().pl(px(4.0)).child(field(
+            form = form.child(div().pl(px(24.0)).child(field(
                 text("dialog.worktreeName"),
-                Input::new(&self.worktree_name).aria_label(text("dialog.worktreeName")),
+                theme::field(Input::new(&self.worktree_name)).aria_label(text("dialog.worktreeName")),
             )));
         }
         form = form.child(
@@ -403,6 +485,7 @@ impl Render for NewSessionForm {
                 .flex()
                 .items_center()
                 .gap(px(6.0))
+                .text_size(px(12.0))
                 .text_color(rgb(theme::MUTED))
                 .cursor_pointer()
                 .hover(|style| style.text_color(rgb(theme::TEXT)))
@@ -415,7 +498,7 @@ impl Render for NewSessionForm {
         );
         if self.advanced {
             let model = self.model.read(cx).value();
-            let mut suggestions = div().flex().flex_wrap().gap(px(6.0));
+            let mut suggestions = div().mt(px(-4.0)).flex().flex_wrap().gap(px(6.0));
             for (index, suggestion) in MODEL_SUGGESTIONS.into_iter().enumerate() {
                 suggestions = suggestions.child(
                     chip(("model", index), suggestion.to_owned(), model.as_ref() == suggestion).on_click(cx.listener(
@@ -430,12 +513,15 @@ impl Render for NewSessionForm {
             form = form
                 .child(field(
                     text("dialog.model"),
-                    Input::new(&self.model).aria_label(text("dialog.model")),
+                    theme::field(Input::new(&self.model)).aria_label(text("dialog.model")),
                 ))
                 .child(suggestions)
                 .child(field(
                     text("dialog.permissionMode"),
-                    Select::new(&self.permission).accessibility_label(text("dialog.permissionMode")),
+                    choice_box(
+                        Select::new(&self.permission).accessibility_label(text("dialog.permissionMode")),
+                        false,
+                    ),
                 ));
         }
         if let Some((error, distro)) = &self.error {
@@ -463,20 +549,12 @@ impl Render for NewSessionForm {
         }
         form.child(
             div()
-                .mt(px(6.0))
                 .flex()
                 .justify_end()
                 .gap(px(8.0))
+                .child(button("cancel", text("dialog.cancel")).on_click(|_, window, cx| window.close_dialog(cx)))
                 .child(
-                    Button::new("cancel")
-                        .label(text("dialog.cancel"))
-                        .on_click(|_, window, cx| window.close_dialog(cx)),
-                )
-                .child(
-                    Button::new("start")
-                        .primary()
-                        .label(text("dialog.start"))
-                        .disabled(folder.trim().is_empty() || self.busy)
+                    primary("start", text("dialog.start"), folder.trim().is_empty() || self.busy)
                         .on_click(cx.listener(|this, _, window, cx| this.submit(window, cx))),
                 ),
         )
@@ -488,11 +566,12 @@ pub fn open_new_session(controller: &Entity<Controller>, window_id: &str, window
     let controller = controller.clone();
     let focus = Cell::new(true);
     window.open_dialog(cx, move |dialog, window, cx| {
+        let dialog = framed(dialog);
         if focus.replace(false) {
             form.read(cx).folder.focus_handle(cx).focus(window, cx);
         }
         let title = words(controller.read(cx).locale())("dialog.title");
-        dialog.title(title).w(px(520.0)).child(form.clone())
+        dialog.title(heading(title)).w(px(520.0)).child(form.clone())
     });
 }
 
@@ -590,15 +669,12 @@ impl SettingsForm {
         }
     }
 
-    /// The three lists to choose from, in the current language, showing what is set.
-    fn choices(controller: &Entity<Controller>, window: &mut Window, cx: &mut Context<Self>) -> Choices {
-        let (locale, system, preferences) = {
+    /// What the three lists offer, in the current language: languages, what closing a window
+    /// does, permission modes.
+    fn lists(controller: &Entity<Controller>, cx: &App) -> [Vec<SharedString>; 3] {
+        let (locale, system) = {
             let controller = controller.read(cx);
-            (
-                controller.locale(),
-                controller.config().system_locale.clone(),
-                controller.state().preferences.clone(),
-            )
+            (controller.locale(), controller.config().system_locale.clone())
         };
         let text = words(locale);
         let system_name = system_language_name(&system, locale);
@@ -617,6 +693,13 @@ impl SettingsForm {
         .iter()
         .map(|key| text(key).into())
         .collect();
+        [languages, closing, permission_choices(text("dialog.default"))]
+    }
+
+    /// The three lists to choose from, in the current language, showing what is set.
+    fn choices(controller: &Entity<Controller>, window: &mut Window, cx: &mut Context<Self>) -> Choices {
+        let preferences = controller.read(cx).state().preferences.clone();
+        let [languages, closing, permissions] = Self::lists(controller, cx);
         let row = |found: Option<usize>| found.unwrap_or(0);
         let language = choice(
             languages,
@@ -631,7 +714,7 @@ impl SettingsForm {
             cx,
         );
         let permission = choice(
-            permission_choices(text("dialog.default")),
+            permissions,
             permission_row(preferences.default_permission_mode),
             window,
             cx,
@@ -707,7 +790,7 @@ impl SettingsForm {
 }
 
 impl Render for SettingsForm {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (locale, preferences, claude) = {
             let controller = self.controller.read(cx);
             (
@@ -720,8 +803,8 @@ impl Render for SettingsForm {
         let size = preferences.font_size;
         let step =
             |id: &'static str, label: String, hint: Option<String>, change: TextSizeChange, cx: &mut Context<Self>| {
-                Button::new(id)
-                    .label(label)
+                button(id, label)
+                    .min_w(px(30.0))
                     .when_some(hint, |button, hint| button.tooltip(hint))
                     .disabled(font_size_after(size, change) == size)
                     .on_click(cx.listener(move |this, _, _, cx| this.text_size(change, cx)))
@@ -737,7 +820,7 @@ impl Render for SettingsForm {
                 TextSizeChange::Smaller,
                 cx,
             ))
-            .child(div().w(px(24.0)).text_center().child(size.to_string()))
+            .child(div().min_w(px(16.0)).text_center().child(size.to_string()))
             .child(step(
                 "bigger",
                 "+".to_owned(),
@@ -765,16 +848,13 @@ impl Render for SettingsForm {
             .gap(px(6.0))
             .when(chosen.is_some(), |row| {
                 row.child(
-                    Button::new("claude-path")
-                        .label(text("settings.claudeUsePath"))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.set(cx, |preferences| preferences.claude_bin = None);
-                        })),
+                    button("claude-path", text("settings.claudeUsePath")).on_click(cx.listener(|this, _, _, cx| {
+                        this.set(cx, |preferences| preferences.claude_bin = None);
+                    })),
                 )
             })
             .child(
-                Button::new("claude-choose")
-                    .label(text("settings.claudeChoose"))
+                button("claude-choose", text("settings.claudeChoose"))
                     .on_click(cx.listener(|this, _, window, cx| this.choose_claude(window, cx))),
             );
         let claude_state = text(match (&chosen, &claude) {
@@ -784,89 +864,113 @@ impl Render for SettingsForm {
             (None, None) => "settings.claudeNotFound",
         });
         let claude_path = chosen.or(claude).unwrap_or_default();
+        // Each list's box as wide as its longest choice, as 0.x's were.
+        let [languages, closing, permissions] = Self::lists(&self.controller, cx);
+        let setting_choice = |state: &Entity<Choice>, label: String, items: &[SharedString]| {
+            div()
+                .w(fitted(items, window))
+                .child(choice_box(Select::new(state).accessibility_label(label), true))
+        };
+        // A setting's explanation sits closer to it than the next setting does.
+        let below = |line: Div| line.mt(px(-6.0));
 
         div()
             .flex()
             .flex_col()
-            .gap(px(8.0))
+            .gap(px(12.0))
             .child(setting(
                 text("settings.language"),
-                div()
-                    .w(px(220.0))
-                    .child(Select::new(&self.language).accessibility_label(text("settings.language"))),
+                setting_choice(&self.language, text("settings.language"), &languages),
             ))
             .child(setting(text("settings.textSize"), text_size))
-            .child(hint(size_hint))
+            .child(below(hint(size_hint)))
             .child(
-                Checkbox::new("snap")
-                    .label(text("settings.snap"))
-                    .checked(preferences.snap_to_grid)
-                    .on_click(cx.listener(|this, on: &bool, _, cx| {
+                check("snap", text("settings.snap"), preferences.snap_to_grid).on_click(cx.listener(
+                    |this, on: &bool, _, cx| {
                         let on = *on;
                         this.set(cx, move |preferences| preferences.snap_to_grid = on);
-                    })),
+                    },
+                )),
             )
-            .child(hint(text("settings.snapHint")))
-            .child(
-                Checkbox::new("autostart")
-                    .label(text("settings.autostart"))
-                    .checked(self.controller.read(cx).starts_with_system())
-                    .on_click(cx.listener(|this, on: &bool, _, cx| {
-                        let on = *on;
-                        this.controller.update(cx, |controller, cx| {
-                            controller.set_start_with_system(on, cx);
-                        });
-                        cx.notify();
-                    })),
-            )
-            .child(hint(text("settings.autostartHint")))
+            .child(below(hint(text("settings.snapHint"))))
             .child(setting(
                 text("settings.closeWindow"),
-                div()
-                    .w(px(220.0))
-                    .child(Select::new(&self.close_window).accessibility_label(text("settings.closeWindow"))),
+                setting_choice(&self.close_window, text("settings.closeWindow"), &closing),
             ))
-            .child(hint(text("settings.closeWindowHint")))
+            .child(below(hint(text("settings.closeWindowHint"))))
+            .child(
+                check(
+                    "autostart",
+                    text("settings.autostart"),
+                    self.controller.read(cx).starts_with_system(),
+                )
+                .on_click(cx.listener(|this, on: &bool, _, cx| {
+                    let on = *on;
+                    this.controller.update(cx, |controller, cx| {
+                        controller.set_start_with_system(on, cx);
+                    });
+                    cx.notify();
+                })),
+            )
+            .child(below(hint(text("settings.autostartHint"))))
             .child(setting(text("settings.claude"), claude_buttons))
             .child({
                 let line = format!("{claude_state} {claude_path}");
-                hint(line.clone()).id("claude").role(Role::Label).aria_value(line)
+                div()
+                    .id("claude")
+                    .role(Role::Label)
+                    .aria_value(line)
+                    .mt(px(-6.0))
+                    .flex()
+                    .gap(px(6.0))
+                    .text_color(rgb(theme::MUTED))
+                    .text_size(px(12.0))
+                    .line_height(px(17.0))
+                    .child(div().flex_none().child(claude_state))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis_start()
+                            .child(claude_path),
+                    )
             })
-            .child(hint(text("settings.claudeHint")))
+            .child(below(hint(text("settings.claudeHint"))))
             .child(setting(
                 text("settings.defaultModel"),
-                div()
-                    .w(px(220.0))
-                    .child(Input::new(&self.model).aria_label(text("settings.defaultModel"))),
+                div().w(px(160.0)).child(
+                    Input::new(&self.model)
+                        .aria_label(text("settings.defaultModel"))
+                        .h(px(28.0))
+                        .px(px(8.0))
+                        .text_size(px(13.0))
+                        .bg(rgb(theme::TERMINAL))
+                        .border_color(rgb(theme::BORDER))
+                        .rounded(px(4.0)),
+                ),
             ))
             .child(setting(
                 text("settings.defaultPermissionMode"),
-                div()
-                    .w(px(220.0))
-                    .child(Select::new(&self.permission).accessibility_label(text("settings.defaultPermissionMode"))),
+                setting_choice(&self.permission, text("settings.defaultPermissionMode"), &permissions),
             ))
-            .child(hint(text("settings.launchHint")))
+            .child(below(hint(text("settings.launchHint"))))
             // Only where this copy checks at all.
             .when(self.controller.read(cx).update_checks(), |form| {
                 form.child(
-                    Checkbox::new("updates")
-                        .label(text("settings.updates"))
-                        .checked(preferences.check_for_updates)
-                        .on_click(cx.listener(|this, on: &bool, _, cx| {
+                    check("updates", text("settings.updates"), preferences.check_for_updates).on_click(cx.listener(
+                        |this, on: &bool, _, cx| {
                             let on = *on;
                             this.set(cx, move |preferences| preferences.check_for_updates = on);
-                        })),
+                        },
+                    )),
                 )
-                .child(hint(text("settings.updatesHint")))
+                .child(below(hint(text("settings.updatesHint"))))
             })
-            .child(
-                div().mt(px(6.0)).flex().justify_end().child(
-                    Button::new("close")
-                        .primary()
-                        .label(text("settings.close"))
-                        .on_click(|_, window, cx| window.close_dialog(cx)),
-                ),
-            )
+            .child(div().flex().justify_end().child(
+                primary("close", text("settings.close"), false).on_click(|_, window, cx| window.close_dialog(cx)),
+            ))
     }
 }
 
@@ -880,159 +984,110 @@ pub fn open_settings(controller: &Entity<Controller>, window: &mut Window, cx: &
     let form = cx.new(|cx| SettingsForm::new(controller.clone(), window, cx));
     let controller = controller.clone();
     window.open_dialog(cx, move |dialog, _, cx| {
+        let dialog = framed(dialog);
         let title = words(controller.read(cx).locale())("settings.title");
-        dialog.title(title).w(px(560.0)).child(form.clone())
+        dialog.title(heading(title)).w(px(460.0)).child(form.clone())
     });
 }
 
-// ---------- closing a window ----------
+// ---------- questions (the system's message boxes, as in 0.x) ----------
 
-/// Asks what to do with the sessions of a window that is being closed: end them, keep them
-/// running, or leave the window open. The answer can be kept.
-pub struct CloseForm {
-    shell: WeakEntity<Shell>,
-    controller: Entity<Controller>,
-    /// How many sessions are in the window.
-    count: usize,
-    remember: bool,
-}
-
-impl CloseForm {
-    fn answer(&mut self, choice: Option<CloseWindow>, window: &mut Window, cx: &mut Context<Self>) {
-        let remember = self.remember;
-        let _ = self
-            .shell
-            .update(cx, |shell, cx| shell.answer_close(choice, remember, window, cx));
-    }
-}
-
-impl Render for CloseForm {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let locale = self.controller.read(cx).locale();
-        let text = words(locale);
-        let message = if self.count == 1 {
-            text("closeWindow.messageOne")
-        } else {
-            t(locale, "closeWindow.message", &[("count", &self.count.to_string())]).unwrap_or_default()
-        };
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(10.0))
-            .child(div().font_weight(FontWeight::SEMIBOLD).child(message))
-            .child(div().text_color(rgb(theme::MUTED)).child(text("closeWindow.detail")))
-            .child(
-                Checkbox::new("remember")
-                    .label(text("closeWindow.remember"))
-                    .checked(self.remember)
-                    .on_click(cx.listener(|this, on: &bool, _, cx| {
-                        this.remember = *on;
-                        cx.notify();
-                    })),
-            )
-            .child(
-                div()
-                    .mt(px(6.0))
-                    .flex()
-                    .justify_end()
-                    .gap(px(8.0))
-                    .child(Button::new("end").label(text("closeWindow.end")).on_click(cx.listener(
-                        |this, _, window, cx| {
-                            this.answer(Some(CloseWindow::End), window, cx);
-                        },
-                    )))
-                    .child(
-                        Button::new("keep")
-                            .primary()
-                            .label(text("closeWindow.keep"))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.answer(Some(CloseWindow::Keep), window, cx);
-                            })),
-                    )
-                    .child(
-                        Button::new("cancel")
-                            .label(text("dialog.cancel"))
-                            .on_click(cx.listener(|this, _, window, cx| this.answer(None, window, cx))),
-                    ),
-            )
-    }
-}
-
-pub fn open_close_window(
-    shell: WeakEntity<Shell>,
-    controller: &Entity<Controller>,
-    count: usize,
+/// Asks as 0.x's message boxes did (Electron's `dialog.showMessageBox`): the system's task dialog,
+/// titled `title`, with the answers other than OK and Cancel as command links, `default` chosen
+/// with Enter and `cancel` given by Escape. Electron told OK and Cancel apart by their English
+/// label, so in German every answer is a command link, as it was. The answer comes as its index.
+#[allow(clippy::too_many_arguments)]
+fn message_box(
+    level: PromptLevel,
+    title: &str,
+    message: &str,
+    detail: Option<&str>,
+    answers: &[String],
+    (default, cancel): (usize, usize),
+    checkbox: Option<(String, Arc<AtomicBool>)>,
     window: &mut Window,
     cx: &mut App,
-) {
-    let form = cx.new(|_| CloseForm {
-        shell,
-        controller: controller.clone(),
-        count,
-        remember: false,
+) -> futures::channel::oneshot::Receiver<usize> {
+    let buttons: Vec<PromptButton> = answers
+        .iter()
+        .map(|label| match label.to_lowercase().as_str() {
+            "ok" => PromptButton::Ok(label.clone().into()),
+            "cancel" => PromptButton::Cancel(label.clone().into()),
+            _ => PromptButton::Other(label.clone().into()),
+        })
+        .collect();
+    gpui_windows::set_next_prompt(gpui_windows::PromptStyle {
+        title: Some(title.to_owned()),
+        command_links: true,
+        checkbox,
+        default: Some(default),
+        cancel: Some(cancel),
+        as_electron: true,
     });
-    let controller = controller.clone();
-    window.open_dialog(cx, move |dialog, _, cx| {
-        let title = words(controller.read(cx).locale())("closeWindow.title");
-        dialog.title(title).w(px(480.0)).child(form.clone())
-    });
+    window.prompt(level, message, detail, &buttons, cx)
 }
 
-// ---------- a question ----------
-
-/// A question with one or two answers (taking over a session that runs elsewhere, deleting a
-/// workspace, something that did not work). The answer goes to the window that asked.
-pub struct QuestionForm {
-    shell: WeakEntity<Shell>,
-    question: crate::window::Question,
+/// "End the sessions in this window?" (0.x's `askToClose`): end them, keep them running in the
+/// tray, or cancel; and whether to ask again. The answer: 0 end, 1 keep, 2 cancel.
+pub fn ask_to_close(
+    controller: &Entity<Controller>,
+    count: usize,
+    remember: Arc<AtomicBool>,
+    window: &mut Window,
+    cx: &mut App,
+) -> futures::channel::oneshot::Receiver<usize> {
+    let locale = controller.read(cx).locale();
+    let text = words(locale);
+    let message = if count == 1 {
+        text("closeWindow.messageOne")
+    } else {
+        t(locale, "closeWindow.message", &[("count", &count.to_string())]).unwrap_or_default()
+    };
+    message_box(
+        PromptLevel::Info,
+        &text("closeWindow.title"),
+        &message,
+        Some(&text("closeWindow.detail")),
+        &[text("closeWindow.end"), text("closeWindow.keep"), text("dialog.cancel")],
+        (1, 2),
+        Some((text("closeWindow.remember"), remember)),
+        window,
+        cx,
+    )
 }
 
-impl QuestionForm {
-    fn answer(&mut self, yes: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let _ = self
-            .shell
-            .update(cx, |shell, cx| shell.answer_question(yes, window, cx));
-    }
-}
-
-impl Render for QuestionForm {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let question = &self.question;
-        let mut buttons = div().mt(px(6.0)).flex().justify_end().gap(px(8.0));
-        if let Some(cancel) = &question.cancel {
-            buttons = buttons.child(
-                Button::new("cancel")
-                    .label(cancel.clone())
-                    .on_click(cx.listener(|this, _, window, cx| this.answer(false, window, cx))),
-            );
-        }
-        let confirm = Button::new("confirm")
-            .label(question.confirm.clone())
-            .on_click(cx.listener(|this, _, window, cx| this.answer(true, window, cx)));
-        // Something that cannot be undone is not the default.
-        buttons = buttons.child(if question.danger {
-            confirm.danger()
-        } else {
-            confirm.primary()
-        });
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(10.0))
-            .child(div().font_weight(FontWeight::SEMIBOLD).child(question.message.clone()))
-            .when_some(question.detail.clone(), |form, detail| {
-                form.child(div().text_color(rgb(theme::MUTED)).child(detail))
-            })
-            .child(buttons)
-    }
-}
-
-pub fn open_question(shell: WeakEntity<Shell>, question: crate::window::Question, window: &mut Window, cx: &mut App) {
-    let title = question.title.clone();
-    let form = cx.new(|_| QuestionForm { shell, question });
-    window.open_dialog(cx, move |dialog, _, _| {
-        dialog.title(title.clone()).w(px(460.0)).child(form.clone())
-    });
+/// A question with one or two answers, or a message with OK. Yes is answer 0. Something that
+/// cannot be undone is not the default (0.x's `defaultId: 1` for deleting a workspace).
+pub fn ask(
+    question: &crate::window::Question,
+    window: &mut Window,
+    cx: &mut App,
+) -> futures::channel::oneshot::Receiver<usize> {
+    let (answers, default) = match &question.cancel {
+        Some(cancel) => (
+            vec![question.confirm.clone(), cancel.clone()],
+            usize::from(question.danger),
+        ),
+        // A message (0.x gave it no buttons, which is the system's OK).
+        None => (vec!["OK".to_owned()], 0),
+    };
+    let level = if question.error {
+        PromptLevel::Critical
+    } else {
+        PromptLevel::Info
+    };
+    let cancel = answers.len() - 1;
+    message_box(
+        level,
+        &question.title,
+        &question.message,
+        question.detail.as_deref(),
+        &answers,
+        (default, cancel),
+        None,
+        window,
+        cx,
+    )
 }
 
 // ---------- taking over from a terminal window ----------
@@ -1059,15 +1114,16 @@ impl Render for TerminalTakeoverForm {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let text = words(self.controller.read(cx).locale());
         let single = self.candidates.len() == 1;
-        let mut list = div().flex().flex_col().gap(px(6.0));
+        let mut list = div().flex().flex_col().gap(px(4.0));
         for candidate in &self.candidates {
             let id = candidate.claude_session_id.clone();
             let label = candidate.name.clone().unwrap_or_else(|| folder_name(&candidate.cwd));
             let entry = div()
                 .flex()
                 .flex_col()
+                .flex_1()
                 .min_w_0()
-                .child(div().font_weight(FontWeight::SEMIBOLD).child(label))
+                .child(div().overflow_hidden().whitespace_nowrap().text_ellipsis().child(label))
                 .child(
                     div()
                         .text_size(px(12.0))
@@ -1077,50 +1133,52 @@ impl Render for TerminalTakeoverForm {
                         .text_ellipsis()
                         .child(candidate.cwd.clone()),
                 );
+            // Each one in a box of its own, as 0.x listed them.
+            let item = div()
+                .flex()
+                .items_center()
+                .gap(px(10.0))
+                .px(px(8.0))
+                .py(px(6.0))
+                .border_1()
+                .border_color(rgb(theme::BORDER))
+                .rounded(px(theme::RADIUS))
+                .bg(rgb(theme::BG));
             list = list.child(if single {
-                div().child(entry)
+                item.child(entry)
             } else {
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(8.0))
-                    .child(
-                        Checkbox::new(SharedString::from(format!("take-{id}")))
-                            .checked(self.picked.contains(&id))
-                            .on_click(cx.listener(move |this, on: &bool, _, cx| {
-                                this.picked.retain(|picked| *picked != id);
-                                if *on {
-                                    this.picked.push(id.clone());
-                                }
-                                cx.notify();
-                            })),
-                    )
-                    .child(entry)
+                item.child(
+                    Checkbox::new(SharedString::from(format!("take-{id}")))
+                        .checked(self.picked.contains(&id))
+                        .on_click(cx.listener(move |this, on: &bool, _, cx| {
+                            this.picked.retain(|picked| *picked != id);
+                            if *on {
+                                this.picked.push(id.clone());
+                            }
+                            cx.notify();
+                        })),
+                )
+                .child(entry)
             });
         }
         div()
             .flex()
             .flex_col()
-            .gap(px(10.0))
+            .gap(px(12.0))
             .child(div().child(text(if single { "foreign.single" } else { "foreign.multiple" })))
             .child(list)
             .child(hint(text("foreign.detail")))
             .child(
                 div()
-                    .mt(px(6.0))
                     .flex()
                     .justify_end()
                     .gap(px(8.0))
                     .child(
-                        Button::new("cancel")
-                            .label(text("dialog.cancel"))
+                        button("cancel", text("dialog.cancel"))
                             .on_click(cx.listener(|this, _, window, cx| this.answer(false, window, cx))),
                     )
                     .child(
-                        Button::new("confirm")
-                            .primary()
-                            .label(text("takeover.confirm"))
-                            .disabled(self.picked.is_empty())
+                        primary("confirm", text("takeover.confirm"), self.picked.is_empty())
                             .on_click(cx.listener(|this, _, window, cx| this.answer(true, window, cx))),
                     ),
             )
@@ -1147,8 +1205,9 @@ pub fn open_terminal_takeover(
     });
     let controller = controller.clone();
     window.open_dialog(cx, move |dialog, _, cx| {
+        let dialog = framed(dialog);
         let title = words(controller.read(cx).locale())("foreign.title");
-        dialog.title(title).w(px(480.0)).child(form.clone())
+        dialog.title(heading(title)).w(px(520.0)).child(form.clone())
     });
 }
 
@@ -1188,23 +1247,16 @@ impl Render for SaveWorkspaceForm {
             .child(hint(text("workspace.nameHint")))
             .child(field(
                 text("workspace.nameLabel"),
-                Input::new(&self.name).aria_label(text("workspace.nameLabel")),
+                theme::field(Input::new(&self.name)).aria_label(text("workspace.nameLabel")),
             ))
             .child(
                 div()
-                    .mt(px(6.0))
                     .flex()
-                    .justify_end()
+                    .justify_center()
                     .gap(px(8.0))
+                    .child(button("cancel", text("dialog.cancel")).on_click(|_, window, cx| window.close_dialog(cx)))
                     .child(
-                        Button::new("cancel")
-                            .label(text("dialog.cancel"))
-                            .on_click(|_, window, cx| window.close_dialog(cx)),
-                    )
-                    .child(
-                        Button::new("save")
-                            .primary()
-                            .label(text("workspace.saveButton"))
+                        primary("save", text("workspace.saveButton"), false)
                             .on_click(cx.listener(|this, _, window, cx| this.save(window, cx))),
                     ),
             )
@@ -1238,6 +1290,7 @@ pub fn open_save_workspace(controller: &Entity<Controller>, window_id: &str, win
     });
     let focus = Cell::new(true);
     window.open_dialog(cx, move |dialog, window, cx| {
+        let dialog = framed(dialog);
         if focus.replace(false) {
             let name = form.read(cx).name.clone();
             name.update(cx, |name, cx| {
@@ -1246,7 +1299,7 @@ pub fn open_save_workspace(controller: &Entity<Controller>, window_id: &str, win
             });
         }
         let title = words(form.read(cx).controller.read(cx).locale())("workspace.nameTitle");
-        dialog.title(title).w(px(460.0)).child(form.clone())
+        dialog.title(heading(title)).w(px(520.0)).child(form.clone())
     });
 }
 
@@ -1286,16 +1339,19 @@ impl Render for AboutForm {
                 .child(label)
         };
         let version = t(locale, "about.version", &[("version", env!("CARGO_PKG_VERSION"))]).unwrap_or_default();
+        // 0.x's `.modal.about`: centred, 4 pixels between lines, more around the links.
         let mut about = div()
             .flex()
             .flex_col()
             .items_center()
-            .gap(px(8.0))
-            .child(img(self.logo.clone()).size(px(72.0)))
+            .gap(px(4.0))
+            .text_center()
+            .child(img(self.logo.clone()).size(px(72.0)).mt(px(4.0)))
             .child(
                 div()
+                    .mt(px(6.0))
                     .text_size(px(20.0))
-                    .font_weight(FontWeight::SEMIBOLD)
+                    .font_weight(FontWeight::BOLD)
                     .child("reframe"),
             )
             .child(
@@ -1303,26 +1359,33 @@ impl Render for AboutForm {
                     .id("version")
                     .role(Role::Label)
                     .aria_value(version.clone())
+                    .my(px(2.0))
                     .text_color(rgb(theme::MUTED))
                     .child(version),
             )
-            .child(div().text_center().child(text("about.tagline")))
             .child(
                 div()
+                    .my(px(2.0))
+                    .text_color(rgb(theme::MUTED))
+                    .child(text("about.tagline")),
+            )
+            .child(
+                div()
+                    .my(px(8.0))
                     .flex()
-                    .flex_wrap()
-                    .justify_center()
-                    .gap(px(16.0))
+                    .flex_col()
+                    .items_center()
+                    .gap(px(4.0))
                     .child(link("github", text("about.github"), REPO_URL))
                     .child(link("star", format!("⭐ {}", text("about.star")), REPO_URL)),
             )
             .child(
                 div()
+                    .my(px(8.0))
                     .flex()
                     .flex_wrap()
                     .justify_center()
                     .gap(px(4.0))
-                    .text_color(rgb(theme::MUTED))
                     .child(
                         div()
                             .id("made-with")
@@ -1337,6 +1400,8 @@ impl Render for AboutForm {
                     .id("license")
                     .role(Role::Button)
                     .aria_label(text("about.license"))
+                    .w_full()
+                    .mt(px(6.0))
                     .flex()
                     .gap(px(6.0))
                     .text_color(rgb(theme::MUTED))
@@ -1361,6 +1426,7 @@ impl Render for AboutForm {
                 .rounded(px(theme::RADIUS))
                 .bg(rgb(theme::BG))
                 .text_size(px(11.0))
+                .text_left()
                 .text_color(rgb(theme::MUTED))
                 .flex()
                 .flex_col()
@@ -1371,12 +1437,11 @@ impl Render for AboutForm {
             about = about.child(license);
         }
         about.child(
-            div().mt(px(6.0)).child(
-                Button::new("close")
-                    .primary()
-                    .label(text("about.close"))
-                    .on_click(|_, window, cx| window.close_dialog(cx)),
-            ),
+            div()
+                .mt(px(4.0))
+                .flex()
+                .justify_center()
+                .child(primary("close", text("about.close"), false).on_click(|_, window, cx| window.close_dialog(cx))),
         )
     }
 }
@@ -1391,7 +1456,7 @@ pub fn open_about(controller: &Entity<Controller>, window: &mut Window, cx: &mut
         logo,
         license_open: false,
     });
-    window.open_dialog(cx, move |dialog, _, _| dialog.w(px(440.0)).child(form.clone()));
+    window.open_dialog(cx, move |dialog, _, _| framed(dialog).w(px(420.0)).child(form.clone()));
 }
 
 /// The component library in reframe's colours.

@@ -202,3 +202,32 @@ fn names_a_folder_by_its_last_part() {
     assert_eq!(folder_name("/home/me/x"), "x");
     assert_eq!(folder_name("C:"), "C:");
 }
+
+/// What `Intl.RelativeTimeFormat(locale, { numeric: 'auto' })` gives for these, the way 0.x
+/// rounded them.
+#[test]
+fn how_long_ago_a_workspace_was_saved_in_words() {
+    let ago = |past: f64, locale| time_ago(now() - past, now(), locale);
+    let (minute, hour, day) = (MINUTE, HOUR, DAY);
+    for (past, english, german) in [
+        (0.0, "this minute", "in dieser Minute"),
+        (30.0 * 1000.0, "this minute", "in dieser Minute"),
+        (31.0 * 1000.0, "1 minute ago", "vor 1 Minute"),
+        (5.0 * minute, "5 minutes ago", "vor 5 Minuten"),
+        (59.5 * minute, "59 minutes ago", "vor 59 Minuten"),
+        (59.6 * minute, "1 hour ago", "vor 1 Stunde"),
+        (90.0 * minute, "1 hour ago", "vor 1 Stunde"),
+        (91.0 * minute, "2 hours ago", "vor 2 Stunden"),
+        (23.0 * hour, "23 hours ago", "vor 23 Stunden"),
+        (23.6 * hour, "yesterday", "gestern"),
+        (36.0 * hour, "yesterday", "gestern"),
+        (37.0 * hour, "2 days ago", "vorgestern"),
+        (3.0 * day, "3 days ago", "vor 3 Tagen"),
+        (1234.0 * day, "1,234 days ago", "vor 1.234 Tagen"),
+    ] {
+        assert_eq!(ago(past, Locale::En), english, "{past} ms");
+        assert_eq!(ago(past, Locale::De), german, "{past} ms");
+    }
+    // Saved by a clock that is ahead.
+    assert_eq!(ago(-2.0 * hour, Locale::En), "this minute");
+}

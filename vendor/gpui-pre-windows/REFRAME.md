@@ -26,6 +26,10 @@ What is changed:
 - **File types in the file dialog** (`platform.rs`: `set_next_open_file_types`). Upstream's
   dialog for opening a file has none; reframe's "Choose…" for claude offers "Programs" and "All
   files".
+- **Prompts like Electron's message boxes** (`window.rs`: `set_next_prompt`, `PromptStyle`).
+  Upstream's task dialog is titled "Info", "Warning" or "Critical" and shows every answer as a
+  button. reframe's questions have their own title, their answers as command links above the
+  system's Cancel button, a "Don't ask again" checkbox and a default answer, as in 0.x.
 
 When GPUI is upgraded, the new version of the crate goes here the same way (unchanged first),
 and these changes are made again on top of it.

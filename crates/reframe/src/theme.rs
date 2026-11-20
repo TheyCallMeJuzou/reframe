@@ -24,22 +24,17 @@ pub const TOOLBAR: f32 = 40.0;
 pub const LAYOUT_PADDING: f32 = 6.0;
 
 pub const UI_FONT: &str = "Segoe UI";
-/// Windows' own icon font (on Windows 10 and 11).
-pub const ICON_FONT: &str = "Segoe MDL2 Assets";
+/// The UI's line height, as a share of the font size (0.x's `font: 13px/1.4`; GPUI's own is 1.618).
+pub const LINE_HEIGHT: f32 = 1.4;
 
-/// Glyphs of the icon font.
-pub mod icon {
-    pub const COLLAPSE: &str = "\u{E921}";
-    pub const ZOOM: &str = "\u{E922}";
-    pub const UNZOOM: &str = "\u{E923}";
-    pub const CLOSE: &str = "\u{E8BB}";
-    pub const UP: &str = "\u{E70E}";
-    pub const DOWN: &str = "\u{E70D}";
-    pub const SETTINGS: &str = "\u{E713}";
-    pub const MORE: &str = "\u{E712}";
-    pub const CHECK: &str = "\u{E73E}";
-    pub const INFO: &str = "\u{E946}";
-    pub const EXIT_FULLSCREEN: &str = "\u{E73F}";
+/// A text field as 0.x drew one (`padding: 6px 8px`, 13 px text): 32 pixels high.
+pub fn field<E: gpui_kit::Styled>(input: E) -> E {
+    input
+        .h(px(32.0))
+        .px(px(8.0))
+        .text_size(px(13.0))
+        .bg(rgb(BG))
+        .border_color(rgb(BORDER_STRONG))
 }
 
 /// The colour of a status dot.

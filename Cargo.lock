@@ -5227,6 +5227,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "tempfile",
+ "usvg 0.46.0",
  "uuid",
  "windows 0.62.2",
  "windows-core 0.62.2",

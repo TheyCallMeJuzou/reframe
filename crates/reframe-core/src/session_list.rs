@@ -317,6 +317,57 @@ pub fn short_time(time: f64, now: f64, locale: Locale, local: &dyn Fn(f64) -> Lo
     }
 }
 
+/// How long ago something was, in words, as a saved workspace's row says it: "this minute",
+/// "5 minutes ago", "2 hours ago", "yesterday", "3 days ago" (rounded, as
+/// `Intl.RelativeTimeFormat` with `numeric: 'auto'` says it). A time a little ahead (another
+/// clock) is now.
+pub fn time_ago(time: f64, now: f64, locale: Locale) -> String {
+    // 0.x rounded the time from now, which is below zero, with Math.round (halves go up):
+    // 1.5 days ago was -1, yesterday.
+    let round = |past: f64| (past - 0.5).ceil().max(0.0) as u64;
+    let text = |key: &str, n: u64| {
+        let n = grouped(n, locale);
+        t(locale, key, &[("n", &n)]).unwrap_or(n)
+    };
+    let minutes = round((now - time).max(0.0) / MINUTE);
+    if minutes < 60 {
+        return match minutes {
+            0 => text("list.agoThisMinute", 0),
+            1 => text("list.agoMinute", 1),
+            n => text("list.agoMinutes", n),
+        };
+    }
+    let hours = round(minutes as f64 / 60.0);
+    if hours < 24 {
+        return match hours {
+            1 => text("list.agoHour", 1),
+            n => text("list.agoHours", n),
+        };
+    }
+    match round(hours as f64 / 24.0) {
+        1 => text("list.agoYesterday", 1),
+        2 => text("list.agoTwoDays", 2),
+        n => text("list.agoDays", n),
+    }
+}
+
+/// A whole number with its thousands marked, as the language writes it: 1,234 or 1.234.
+fn grouped(n: u64, locale: Locale) -> String {
+    let digits = n.to_string();
+    let mark = match locale {
+        Locale::En => ',',
+        Locale::De => '.',
+    };
+    let mut out = String::new();
+    for (i, digit) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(mark);
+        }
+        out.push(digit);
+    }
+    out
+}
+
 /// When a session was last used, exactly, for hovering its row: "Nov 9, 2026, 3:00 PM" or
 /// "09.11.2026, 15:00".
 pub fn exact_time(time: f64, locale: Locale, local: &dyn Fn(f64) -> LocalTime) -> String {
