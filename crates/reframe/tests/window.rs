@@ -144,6 +144,13 @@ fn shortcuts_reach_dialogs_tiles_and_the_text_size() {
     app.ui().wait("edit", "Folder");
     next_frame(&mut app);
     app.cmd(json!({ "cmd": "type", "text": setup.project() }));
+    // What the dialog shows now, for the report below if no session comes of it.
+    let typed: Vec<_> = app
+        .ui()
+        .with_role("edit")
+        .into_iter()
+        .map(|seen| format!("{:?} {:?}", seen.name, seen.value))
+        .collect();
     key(&mut app, "enter");
     // Without a session, what the dialog shows says why (its fields, an error).
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
@@ -161,9 +168,20 @@ fn shortcuts_reach_dialogs_tiles_and_the_text_size() {
                 .filter(|seen| matches!(seen.role, "edit" | "text" | "button"))
                 .map(|seen| format!("{} {:?} {:?}", seen.role, seen.name, seen.value))
                 .collect();
+            let log = setup.log();
+            let tail: Vec<_> = log
+                .lines()
+                .rev()
+                .take(25)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
             panic!(
-                "no session from the dialog; it shows {shown:#?}; the window: {}",
-                window(&mut app)
+                "no session from the dialog; before Enter its fields were {typed:#?}; now it shows {shown:#?}; \
+                 the window: {}; the log ends:\n{}",
+                window(&mut app),
+                tail.join("\n")
             );
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
