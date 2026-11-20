@@ -18,7 +18,12 @@ $guid = 'reframe-installer-test-5b0e'
 $appId = 'dev.reframe.installer-test'
 $cache = 'reframe-installer-test-updater'
 $profileFolder = 'reframe-installer-test'
-$work = Join-Path $env:TEMP 'rf-installer-test'
+# In long form: TEMP can be a short 8.3 path (C:\Users\RUNNER~1\... on CI), and shortcuts give
+# their target in long form, so the two would not compare equal.
+Add-Type -Namespace Native -Name LongPath -MemberDefinition '[DllImport("kernel32.dll", CharSet = CharSet.Unicode)] public static extern uint GetLongPathName(string shortPath, System.Text.StringBuilder longPath, uint size);'
+$long = New-Object System.Text.StringBuilder 1024
+$temp = if ([Native.LongPath]::GetLongPathName($env:TEMP, $long, 1024) -gt 0) { $long.ToString() } else { $env:TEMP }
+$work = Join-Path $temp 'rf-installer-test'
 $out = 'dist-installer-test'
 
 $installKey = "HKCU:\Software\$guid"
