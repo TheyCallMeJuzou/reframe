@@ -1,9 +1,0 @@
-out/
-dist/
-node_modules/
-spikes/
-package-lock.json
-docs/
-test-results/
-playwright-report/
-_site/
