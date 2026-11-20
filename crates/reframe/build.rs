@@ -12,9 +12,15 @@ fn main() {
     println!("cargo:rerun-if-changed=vendor/conpty");
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let source = manifest.join("vendor/conpty");
-    // OUT_DIR is target/<profile>/build/<crate>-<hash>/out; the executable is three levels up.
+    // OUT_DIR is target/<profile>/build/<crate>-<hash>/out (and in Cargo's newer layout
+    // target/<profile>/build/<crate>/<hash>/out): the executable is in the folder `build` is in.
     let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
-    let target = out.ancestors().nth(3).unwrap().to_path_buf();
+    let target = out
+        .ancestors()
+        .find(|dir| dir.file_name().is_some_and(|name| name == "build"))
+        .and_then(Path::parent)
+        .unwrap_or_else(|| out.ancestors().nth(3).unwrap())
+        .to_path_buf();
     for name in ["conpty.dll", "OpenConsole.exe"] {
         std::fs::copy(source.join(name), target.join(name)).unwrap_or_else(|err| panic!("copying {name}: {err}"));
     }
