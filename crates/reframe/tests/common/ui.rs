@@ -211,11 +211,29 @@ impl Ui {
         }
     }
 
-    /// Gives it the keyboard.
+    /// Gives it the keyboard, and for a text field waits until it has it: the app takes it a
+    /// moment later, and what is typed before would go elsewhere. (Choice boxes do not say that
+    /// they have it.)
     pub fn focus(&self, role: &str, name: &str) {
         let (element, _) = self.wait_element(role, name);
         // SAFETY: plain call on an element that is there.
         unsafe { element.SetFocus().expect("focus") };
+        if role != "edit" {
+            return;
+        }
+        let deadline = Instant::now() + WAIT;
+        loop {
+            // SAFETY: as above.
+            let focused = self
+                .find_element(role, name)
+                .and_then(|(element, _)| unsafe { element.CurrentHasKeyboardFocus() }.ok())
+                .is_some_and(|focused| focused.as_bool());
+            if focused {
+                return;
+            }
+            assert!(Instant::now() < deadline, "{role} {name:?} did not take the keyboard");
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
     }
 
     /// Waits until the element shows `value` (a text field, a choice box).

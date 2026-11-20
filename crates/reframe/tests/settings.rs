@@ -157,6 +157,7 @@ fn which_claude_code_runs_and_what_new_sessions_start_with() {
     ui.wait("text", &format!("Chosen: {other}"));
     ui.focus("edit", "Model for new sessions");
     app.cmd(json!({ "cmd": "type", "text": "opus" }));
+    ui.wait_value("edit", "Model for new sessions", "opus");
     choose(&mut app, &ui, "Permission mode for new sessions", "plan");
     wait_preference(&mut app, "claudeBin", json!(other));
     wait_preference(&mut app, "defaultModel", json!("opus"));
