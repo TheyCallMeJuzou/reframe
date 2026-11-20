@@ -112,9 +112,11 @@ fn main() {
             dialogs::apply_theme(cx);
             // reframe says when it quits: after its sessions were ended, not when a window goes.
             cx.set_quit_mode(QuitMode::Explicit);
-            // Under test, links are caught instead of opened.
+            // Under test, links are caught instead of opened, and nothing moves (dialogs come and go
+            // in one frame), as on a machine with Windows' animations off and on CI.
             if config.e2e {
                 browser::catch_links(cx);
+                cx.set_reduce_motion(true);
             }
             let e2e = config.e2e;
             let controller =

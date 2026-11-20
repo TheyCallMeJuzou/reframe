@@ -384,12 +384,18 @@ impl NewSessionForm {
         let created = self.controller.update(cx, |controller, cx| {
             controller.create_session_checked(&window_id, request, cx)
         });
+        // The session is made also if the dialog goes meanwhile: the dialog only shows how it went.
+        let (outcome, outcome_received) = futures::channel::oneshot::channel();
+        cx.spawn(async move |_, _| {
+            let _ = outcome.send(created.await);
+        })
+        .detach();
         self.busy = true;
         self.error = None;
         cx.notify();
         let handle = window.window_handle();
         self.pending = Some(cx.spawn(async move |this, cx| {
-            let created = created.await;
+            let Ok(created) = outcome_received.await else { return };
             let _ = this.update(cx, |this, cx| {
                 this.busy = false;
                 match created {
@@ -566,7 +572,12 @@ pub fn open_new_session(controller: &Entity<Controller>, window_id: &str, window
     let folder = form.read(cx).folder.focus_handle(cx);
     window.open_dialog(cx, move |dialog, _, cx| {
         let title = words(controller.read(cx).locale())("dialog.title");
-        framed(dialog).title(heading(title)).w(px(520.0)).child(form.clone())
+        framed(dialog)
+            .title(heading(title))
+            .w(px(520.0))
+            .child(form.clone())
+            // Enter starts the session (the form's fields take it); the dialog closes once it runs.
+            .on_ok(|_, _, _| false)
     });
     // The folder field has the keyboard once the dialog is drawn. Asked for while the dialog
     // draws itself, it could go unseen until some other frame came (on CI none did).
@@ -984,7 +995,12 @@ pub fn open_settings(controller: &Entity<Controller>, window: &mut Window, cx: &
     window.open_dialog(cx, move |dialog, _, cx| {
         let dialog = framed(dialog);
         let title = words(controller.read(cx).locale())("settings.title");
-        dialog.title(heading(title)).w(px(460.0)).child(form.clone())
+        // Enter in a field keeps Settings open (0.x's were no form); its button closes it.
+        dialog
+            .title(heading(title))
+            .w(px(460.0))
+            .child(form.clone())
+            .on_ok(|_, _, _| false)
     });
 }
 
@@ -1296,7 +1312,12 @@ pub fn open_save_workspace(controller: &Entity<Controller>, window_id: &str, win
     });
     window.open_dialog(cx, move |dialog, _, cx| {
         let title = words(form.read(cx).controller.read(cx).locale())("workspace.nameTitle");
-        framed(dialog).title(heading(title)).w(px(520.0)).child(form.clone())
+        // Enter saves (the name field takes it), and the dialog closes then.
+        framed(dialog)
+            .title(heading(title))
+            .w(px(520.0))
+            .child(form.clone())
+            .on_ok(|_, _, _| false)
     });
 }
 
