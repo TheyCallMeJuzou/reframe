@@ -13,7 +13,7 @@ $env:REFRAME_NODE = (Get-Command node).Source
 $env:REFRAME_LOCALE = 'en'
 Remove-Item Env:NO_COLOR -ErrorAction SilentlyContinue
 
-$exe = Join-Path $root ("target\" + $(if ($Release) { 'release' } else { 'debug' }) + "\reframe-native.exe")
+$exe = Join-Path $root ("target\" + $(if ($Release) { 'release' } else { 'debug' }) + "\reframe.exe")
 $arguments = @()
 for ($i = 0; $i -lt $Sessions; $i++) { $arguments += @('--new', "$dir\project") }
 $app = Start-Process $exe -ArgumentList $arguments -PassThru

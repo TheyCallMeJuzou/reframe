@@ -62,13 +62,13 @@ const STOP_MS: Duration = Duration::from_millis(5000);
 /// How long after the system said it is going down sessions that end still count as ended by
 /// it.
 const SYSTEM_ENDING_MS: Duration = Duration::from_millis(60_000);
-/// The profile's folder under `%APPDATA%`. The native app keeps one of its own until it takes
-/// over from the Electron version (1.0), whose folder is "reframe".
-const PROFILE_FOLDER: &str = "reframe-native";
+/// The profile's folder under `%APPDATA%`: the Electron version's (0.x), whose state file this
+/// version reads and writes in the same format.
+const PROFILE_FOLDER: &str = "reframe";
 /// What Windows knows reframe by: its notifications, its taskbar buttons, its entry among the
-/// programs started when the user logs in. The installed 0.x is "dev.reframe.app"; the native
-/// app takes that over with the profile.
-pub const APP_ID: &str = "dev.reframe.native";
+/// programs started when the user logs in. The Electron version's, so that all of it carries
+/// over.
+pub const APP_ID: &str = "dev.reframe.app";
 /// The uninstaller reframe's installer puts next to it (named as the Electron version's was).
 pub const UNINSTALLER: &str = "Uninstall reframe.exe";
 /// Marks a start by the system: reframe then stays in the tray.
@@ -142,9 +142,8 @@ fn windows_locale() -> String {
 }
 
 impl Config {
-    /// From this process's environment. Until the native app takes over from the Electron one it
-    /// keeps a profile of its own ([`PROFILE_FOLDER`]), so the two never write the same state
-    /// file.
+    /// From this process's environment. A development build uses the profile of the installed
+    /// one (as the Electron version's did); only one of them runs at a time.
     pub fn from_environment() -> Config {
         let env: HashMap<String, String> = std::env::vars().collect();
         let set = |name: &str| env.get(name).filter(|value| !value.is_empty()).cloned();

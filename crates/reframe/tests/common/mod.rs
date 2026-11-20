@@ -57,7 +57,7 @@ impl Setup {
     pub fn command(&self) -> Command {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
         let fake = root.join("test").join("fake-claude").join("fake-claude.mjs");
-        let mut command = Command::new(env!("CARGO_BIN_EXE_reframe-native"));
+        let mut command = Command::new(env!("CARGO_BIN_EXE_reframe"));
         command
             .env("REFRAME_E2E", "1")
             .env("REFRAME_USER_DATA", self.path("user-data"))

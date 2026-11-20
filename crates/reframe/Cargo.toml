@@ -6,7 +6,7 @@ license.workspace = true
 description = "Keep your Claude Code sessions side by side in one window"
 
 [[bin]]
-name = "reframe-native"
+name = "reframe"
 path = "src/main.rs"
 
 [dependencies]

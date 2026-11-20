@@ -464,7 +464,7 @@ impl TerminalView {
 
     /// Writes the visible screen to a file in the temp folder (Ctrl+Shift+D).
     fn dump(&self) {
-        let file = std::env::temp_dir().join(format!("reframe-native-{}.txt", self.pty.pid.unwrap_or(0)));
+        let file = std::env::temp_dir().join(format!("reframe-{}.txt", self.pty.pid.unwrap_or(0)));
         match std::fs::write(&file, self.pty.screen_text()) {
             Ok(()) => eprintln!("screen written to {}", file.display()),
             Err(err) => eprintln!("could not write {}: {err}", file.display()),
@@ -755,7 +755,7 @@ impl Render for TerminalView {
 /// Writes a clipboard image into the temp folder and returns the file. PNG, JPEG, GIF and WebP
 /// are written as they are; the bitmap Windows hands out for most copies is converted to PNG.
 pub fn save_clipboard_image(image: &Image) -> Option<std::path::PathBuf> {
-    let folder = std::env::temp_dir().join("reframe-native-paste");
+    let folder = std::env::temp_dir().join("reframe-paste");
     std::fs::create_dir_all(&folder).ok()?;
     let name = uuid::Uuid::new_v4().simple().to_string();
     let (extension, bytes) = match image.format {

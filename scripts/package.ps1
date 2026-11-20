@@ -47,7 +47,7 @@ New-Item -ItemType Directory -Force $out | Out-Null
 $stage = Join-Path $out 'stage'
 Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
 New-Item -ItemType Directory $stage | Out-Null
-Copy-Item target\release\reframe-native.exe (Join-Path $stage 'reframe.exe')
+Copy-Item target\release\reframe.exe $stage
 Copy-Item target\release\conpty.dll, target\release\OpenConsole.exe $stage
 Copy-Item LICENSE (Join-Path $stage 'LICENSE.txt')
 

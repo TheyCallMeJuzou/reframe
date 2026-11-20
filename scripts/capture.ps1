@@ -1,4 +1,4 @@
-# Saves a picture of each reframe-native window (only those windows, not the screen) as PNG.
+# Saves a picture of each window of a reframe built here (target\, so never an installed reframe's), as PNG.
 # Usage: powershell -File scripts\capture.ps1 <output folder>
 param([Parameter(Mandatory = $true)][string]$OutDir)
 
@@ -31,7 +31,9 @@ public static class Win {
 [Win]::SetProcessDPIAware() | Out-Null
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 $index = 0
-foreach ($process in Get-Process reframe-native -ErrorAction SilentlyContinue) {
+$built = Join-Path (Split-Path $PSScriptRoot -Parent) 'target'
+$processes = Get-Process reframe -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith("$built\", 'OrdinalIgnoreCase') }
+foreach ($process in $processes) {
     foreach ($hwnd in [Win]::WindowsOf([uint32]$process.Id)) {
         $rect = New-Object Win+RECT
         [Win]::GetWindowRect($hwnd, [ref]$rect) | Out-Null
@@ -50,4 +52,4 @@ foreach ($process in Get-Process reframe-native -ErrorAction SilentlyContinue) {
         $index++
     }
 }
-if ($index -eq 0) { "no reframe-native window found" }
+if ($index -eq 0) { "no window of a reframe built here found" }

@@ -55,7 +55,7 @@ fn claude_variables() -> Vec<String> {
 
 /// The app as a user has it: the real claude, the real WSL, Claude Code's own folder.
 fn real(setup: &Setup, locale: &str, notifications: bool) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_reframe-native"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_reframe"));
     for key in claude_variables() {
         command.env_remove(key);
     }

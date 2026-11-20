@@ -52,7 +52,7 @@ const WM_REVEAL: u32 = WM_APP + 2;
 /// The installer asks the running reframe to quit with this message, before it replaces it.
 const WM_QUIT_REQUEST: u32 = WM_APP + 3;
 /// The class of the window that takes these messages; its title is the profile's key.
-const CONTROL_CLASS: PCWSTR = w!("reframe-native-control");
+const CONTROL_CLASS: PCWSTR = w!("reframe-control");
 
 // ---------- windows ----------
 
@@ -678,7 +678,7 @@ mod tests {
     #[test]
     fn a_registry_text_is_set_read_and_taken_away() {
         // A key of its own, not the one Windows starts programs from.
-        let key = format!("Software\\reframe-native-test-{}", std::process::id());
+        let key = format!("Software\\reframe-test-{}", std::process::id());
         assert_eq!(registry_text(&key, "reframe"), None);
         let command = "\"C:\\Program Files\\reframe\\reframe.exe\" --autostart";
         set_registry_text(&key, "reframe", Some(command)).unwrap();
