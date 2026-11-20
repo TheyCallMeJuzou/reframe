@@ -20,6 +20,17 @@ pub fn node() -> String {
     text.lines().next().expect("node is not on the PATH").trim().to_owned()
 }
 
+/// Waits until the first window has drawn what the last event changed (and so listens to the
+/// next one, as a user who sees it would): until it stops drawing.
+pub fn next_frame(app: &mut App) {
+    let frames = |app: &mut App| app.cmd(json!({ "cmd": "window" }))["frames"].as_u64().unwrap();
+    wait_for("the window to come to rest", || {
+        let before = frames(app);
+        std::thread::sleep(Duration::from_millis(120));
+        (frames(app) == before).then_some(())
+    });
+}
+
 pub fn wait_for<T>(what: &str, mut look: impl FnMut() -> Option<T>) -> T {
     let deadline = Instant::now() + WAIT;
     loop {

@@ -4,7 +4,7 @@
 
 mod common;
 
-use common::{Setup, wait_for};
+use common::{Setup, next_frame, wait_for};
 use serde_json::{Value, json};
 
 fn rect(value: &Value) -> [f64; 4] {
@@ -138,6 +138,8 @@ fn shortcuts_reach_dialogs_tiles_and_the_text_size() {
     wait_for("the New session dialog", || {
         (window(&mut app)["dialog"] == true).then_some(())
     });
+    // Drawn, its folder field has the keyboard (a user types into what they see).
+    next_frame(&mut app);
     app.cmd(json!({ "cmd": "type", "text": setup.project() }));
     key(&mut app, "enter");
     let first = wait_for("the session from the dialog", || {
@@ -237,6 +239,7 @@ fn text_is_found_and_a_session_renamed_in_its_tile() {
     wait_for("the find bar", || {
         (window(&mut app)["find"]["session"] == id.as_str()).then_some(())
     });
+    next_frame(&mut app);
     app.cmd(json!({ "cmd": "type", "text": "fake cl" }));
     let found = wait_for("the text to be found", || {
         let find = window(&mut app)["find"].clone();
@@ -261,6 +264,7 @@ fn text_is_found_and_a_session_renamed_in_its_tile() {
     wait_for("the name field", || {
         (window(&mut app)["renaming"] == id.as_str()).then_some(())
     });
+    next_frame(&mut app);
     app.cmd(json!({ "cmd": "type", "text": "Mine" }));
     key(&mut app, "enter");
     wait_for("the name to be kept", || {
@@ -276,6 +280,7 @@ fn text_is_found_and_a_session_renamed_in_its_tile() {
     wait_for("the name field", || {
         (window(&mut app)["renaming"] == id.as_str()).then_some(())
     });
+    next_frame(&mut app);
     app.cmd(json!({ "cmd": "type", "text": "Other" }));
     app.cmd(json!({ "cmd": "key", "keys": "escape" }));
     wait_for("the field to go", || {

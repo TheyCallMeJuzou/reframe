@@ -8,7 +8,7 @@
 
 mod common;
 
-use common::{App, Setup, wait_for};
+use common::{App, Setup, next_frame, wait_for};
 use serde_json::{Value, json};
 
 fn rect(value: &Value) -> [f64; 4] {
@@ -179,6 +179,7 @@ fn groups_are_made_grown_renamed_recolored_collapsed_torn_out_dissolved_and_ende
     wait_for("the field for the group's name", || {
         (app.cmd(json!({ "cmd": "window" }))["renamingGroup"] == group.as_str()).then_some(())
     });
+    next_frame(&mut app);
     app.cmd(json!({ "cmd": "type", "text": "API" }));
     app.cmd(json!({ "cmd": "key", "keys": "enter" }));
     wait_for("the group's new name", || {
@@ -514,17 +515,6 @@ fn empty_windows_are_not_brought_back_and_files_are_typed_in_as_paths() {
     app.wait_status(&alpha, "idle");
     placed(&mut app, &second, 1);
     app.quit();
-}
-
-/// Waits until the window has drawn what the last event changed (and so listens to the next
-/// one): until it stops drawing.
-fn next_frame(app: &mut App) {
-    let frames = |app: &mut App| app.cmd(json!({ "cmd": "window" }))["frames"].as_u64().unwrap();
-    wait_for("the window to come to rest", || {
-        let before = frames(app);
-        std::thread::sleep(std::time::Duration::from_millis(120));
-        (frames(app) == before).then_some(())
-    });
 }
 
 #[test]
