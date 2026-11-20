@@ -23,8 +23,9 @@
 ---
 
 reframe 1.0 is a native Windows app (Rust, no web view): it starts in a fraction of a second and needs a fraction
-of the memory of the 0.x versions, which were built with Electron. macOS and Linux stay on
-[0.10](https://github.com/TheyCallMeJuzou/reframe/releases?q=v0.10) for now.
+of what the 0.x versions, built with Electron, needed: 23 MB of memory instead of 161 MB with three sessions, 32 MB on
+disk instead of 340 MB. macOS and Linux stay on [0.10](https://github.com/TheyCallMeJuzou/reframe/releases?q=v0.10)
+for now.
 
 ## What it does
 
@@ -80,8 +81,8 @@ Download reframe from the [website](https://theycallmejuzou.github.io/reframe/do
 
 The builds are not code-signed yet, so the first start needs a confirmation:
 
-- **Windows** (`reframe-Setup-<version>.exe`): installs for your user without admin rights. If SmartScreen warns, choose _More info_ → _Run anyway_. An installed 0.x updates to 1.0 by itself, keeping your sessions, windows, settings and shortcuts.
-- **Windows, portable** (`reframe-<version>-win-portable.zip`): unpack it anywhere (a USB stick, say) and start `reframe.exe`. It keeps its sessions, windows and settings in the folder `data` next to it and runs apart from an installed reframe. Both use the same Claude Code, though: sessions one of them runs show in the other as running elsewhere, and opening one there takes it over (after asking). It does not update itself: it tells you when there is a new version to download. If you let it start with the system and move the folder later, turn that on again. Before unpacking, right-click the ZIP → _Properties_ → tick _Unblock_: otherwise Windows marks every unpacked file as downloaded, and SmartScreen asks on the first start.
+- **Windows** (`reframe-Setup-<version>.exe`): installs for your user without admin rights. If SmartScreen warns, choose _More info_ → _Run anyway_. An installed 0.x updates to 1.0 by itself, keeping your sessions, windows, settings and shortcuts. To bring the windows of a portable 0.x along, copy its `data\state.json` into `%APPDATA%\reframe` (in place of the one there) before the first start.
+- **Windows, portable** (`reframe-<version>-win-portable.zip`): unpack it anywhere (a USB stick, say) and start `reframe.exe`. It keeps its sessions, windows and settings in the folder `data` next to it and runs apart from an installed reframe. Both use the same Claude Code, though: sessions one of them runs show in the other as running elsewhere, and opening one there takes it over (after asking). It does not update itself: it tells you when there is a new version to download; to move to it, put the old copy's `data` folder next to the new `reframe.exe`. If you let it start with the system and move the folder later, turn that on again. Before unpacking, right-click the ZIP → _Properties_ → tick _Unblock_: otherwise Windows marks every unpacked file as downloaded, and SmartScreen asks on the first start.
 - **macOS and Linux**: reframe 0.10 (the Electron version), from its [release](https://github.com/TheyCallMeJuzou/reframe/releases?q=v0.10). It does not update to 1.0.
 
 ### Uninstall
@@ -148,8 +149,9 @@ The app log is in the profile directory, under `logs/main.log`.
 - **One process** owns the state (`state.json` in the profile, written atomically with a backup, the same format as 0.x), the windows and the sessions.
 - Each `claude` runs in a **pseudo console** (ConPTY, the one Windows Terminal ships, bundled with reframe) and is read by [alacritty_terminal](https://crates.io/crates/alacritty_terminal); any window draws any session's screen, so tiles move between windows without restarting anything.
 - **Status** comes from Claude Code's HTTP hooks (passed per session with `--settings`, merged with your own hooks; your settings files are never changed) and from Claude Code's session registry.
+- **Questions and menus** are Windows' own: questions are task dialogs, as the message boxes of 0.x were, and right-click menus follow the system's light or dark mode.
 - **Taking over** a session that runs elsewhere ends it there the way you would (Ctrl+C), then resumes it in reframe under the same session id. reframe follows window drags and new terminal windows (window events), maps consoles to their terminal windows, and finds a claude in WSL by the console of its terminal's `wsl.exe`, which reframe asks through the interop socket of claude's WSL session.
-- GPUI's Windows backend is a copy with a few changes of reframe's (`vendor/gpui-pre-windows`, see its `REFRAME.md`): windows only draw when something changed, notifications play their sound, pictures dragged out of a browser are taken, and terminal tabs dragged over reframe are noticed.
+- GPUI's Windows backend is a copy with a few changes of reframe's (`vendor/gpui-pre-windows`, see its `REFRAME.md`): windows only draw when something changed, notifications play their sound, pictures dragged out of a browser are taken, terminal tabs dragged over reframe are noticed, and questions get their own title, command links and "Don't ask again".
 
 Design notes from the move to the native app, with measurements: [docs/FINDINGS.md](docs/FINDINGS.md).
 
