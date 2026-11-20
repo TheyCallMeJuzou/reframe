@@ -8,6 +8,7 @@
 mod list;
 mod open;
 mod terminal;
+mod update;
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -61,9 +62,15 @@ const STOP_MS: Duration = Duration::from_millis(5000);
 /// How long after the system said it is going down sessions that end still count as ended by
 /// it.
 const SYSTEM_ENDING_MS: Duration = Duration::from_millis(60_000);
-/// What Windows knows reframe by among the programs it starts when the user logs in. The native
-/// app has a name of its own until it takes over from the Electron one.
-const AUTOSTART_NAME: &str = "reframe-native";
+/// The profile's folder under `%APPDATA%`. The native app keeps one of its own until it takes
+/// over from the Electron version (1.0), whose folder is "reframe".
+const PROFILE_FOLDER: &str = "reframe-native";
+/// What Windows knows reframe by: its notifications, its taskbar buttons, its entry among the
+/// programs started when the user logs in. The installed 0.x is "dev.reframe.app"; the native
+/// app takes that over with the profile.
+pub const APP_ID: &str = "dev.reframe.native";
+/// The uninstaller reframe's installer puts next to it (named as the Electron version's was).
+pub const UNINSTALLER: &str = "Uninstall reframe.exe";
 /// Marks a start by the system: reframe then stays in the tray.
 pub const AUTOSTART_ARG: &str = "--autostart";
 /// How long quitting waits for the sessions to end (each gets Ctrl+C, then its process tree is
@@ -82,6 +89,46 @@ pub struct Config {
     /// The language Windows shows itself in (`REFRAME_LOCALE` in its place, for tests), as
     /// "de-AT".
     pub system_locale: String,
+    pub copy: CopyKind,
+    /// What Windows knows this copy by (see [`APP_ID`]); a portable copy has one of its own.
+    pub app_id: String,
+}
+
+/// What kind of copy of reframe this is: it decides where the profile is and what the copy does
+/// about updates.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CopyKind {
+    /// A debug build (`cargo run`).
+    Development,
+    /// A release build that was not installed.
+    Release,
+    /// Installed by reframe's installer (its uninstaller is next to it): it updates itself.
+    Installed,
+    /// The portable copy: a folder "data" next to it holds its profile, so the folder can move
+    /// and runs apart from an installed reframe. It only tells about updates.
+    Portable,
+}
+
+impl CopyKind {
+    /// What a copy at `exe` is.
+    pub fn of(exe: &Path) -> CopyKind {
+        if cfg!(debug_assertions) {
+            return CopyKind::Development;
+        }
+        let folder = exe.parent().unwrap_or(Path::new(""));
+        if folder.join("data").is_dir() {
+            CopyKind::Portable
+        } else if folder.join(UNINSTALLER).is_file() {
+            CopyKind::Installed
+        } else {
+            CopyKind::Release
+        }
+    }
+
+    /// As a second start tells it to the running reframe (see [`crate::win::TrayEvent::Reveal`]).
+    pub fn build(self) -> usize {
+        if self == CopyKind::Development { 1 } else { 2 }
+    }
 }
 
 /// The name of the user's language in Windows, as "de-AT".
@@ -96,16 +143,30 @@ fn windows_locale() -> String {
 
 impl Config {
     /// From this process's environment. Until the native app takes over from the Electron one it
-    /// keeps a profile of its own (`reframe-native`), so the two never write the same state file.
+    /// keeps a profile of its own ([`PROFILE_FOLDER`]), so the two never write the same state
+    /// file.
     pub fn from_environment() -> Config {
         let env: HashMap<String, String> = std::env::vars().collect();
         let set = |name: &str| env.get(name).filter(|value| !value.is_empty()).cloned();
         let home = PathBuf::from(set("USERPROFILE").unwrap_or_default());
+        let exe = std::env::current_exe().unwrap_or_default();
+        let copy = CopyKind::of(&exe);
+        let portable_data = exe.parent().unwrap_or(Path::new("")).join("data");
+        // Tests and side-by-side runs use a profile of their own; the portable copy keeps it next
+        // to itself.
         let user_data = match set("REFRAME_USER_DATA") {
             Some(dir) => PathBuf::from(dir),
+            None if copy == CopyKind::Portable => portable_data.clone(),
             None => set("APPDATA")
                 .map_or_else(|| home.join("AppData").join("Roaming"), PathBuf::from)
-                .join("reframe-native"),
+                .join(PROFILE_FOLDER),
+        };
+        // Windows would put a portable copy's windows and notifications with the installed one's.
+        let app_id = if copy == CopyKind::Portable {
+            let key = crate::win::profile_key(&portable_data);
+            format!("{APP_ID}.portable.{}", key.trim_start_matches("reframe-"))
+        } else {
+            APP_ID.to_owned()
         };
         let e2e = set("REFRAME_E2E").is_some();
         let system_locale = set("REFRAME_LOCALE").unwrap_or_else(windows_locale);
@@ -115,6 +176,8 @@ impl Config {
             home,
             e2e,
             system_locale,
+            copy,
+            app_id,
         }
     }
 }
@@ -157,6 +220,10 @@ pub enum AppEvent {
     Workspaces,
     /// A window is to come to the front.
     ShowWindow(String),
+    /// An update was downloaded; it is installed on quit or with "Restart to update".
+    UpdateReady(String),
+    /// A newer version is out, for the portable copy to download by hand.
+    UpdateAvailable(String),
 }
 
 pub use list::local_time;
@@ -217,6 +284,7 @@ pub struct Controller {
     wsl: Arc<WslDistros>,
     /// Terminal windows whose drop is being handled (a second report of it is ignored).
     taking_over: HashSet<isize>,
+    updates: update::Updates,
     _session_events: Subscription,
 }
 
@@ -360,7 +428,7 @@ impl Controller {
 
         // The end-to-end tests leave the system alone.
         let starts_with_system =
-            !config.e2e && crate::win::registry_text(crate::win::RUN_KEY, AUTOSTART_NAME).is_some();
+            !config.e2e && crate::win::registry_text(crate::win::RUN_KEY, &config.app_id).is_some();
         let mut controller = Self {
             claude_home,
             transcripts,
@@ -378,6 +446,7 @@ impl Controller {
             starts_pending: HashSet::new(),
             wsl,
             taking_over: HashSet::new(),
+            updates: update::Updates::new(&config),
             starts_with_system,
             system_ending: None,
             ended_while_system_ending: HashSet::new(),
@@ -455,7 +524,7 @@ impl Controller {
         } else {
             command.and_then(|command| {
                 let command = enabled.then_some(command.as_str());
-                crate::win::set_registry_text(crate::win::RUN_KEY, AUTOSTART_NAME, command)
+                crate::win::set_registry_text(crate::win::RUN_KEY, &self.config.app_id, command)
             })
         };
         match changed {
@@ -1348,6 +1417,7 @@ impl Controller {
                 }
                 this.hooks.stop();
                 this.save(cx);
+                this.install_update_on_quit();
                 this.log.info("reframe stopped", None);
             });
             crate::win::remove_tray_icon();

@@ -779,6 +779,19 @@ impl Render for SettingsForm {
                 div().w(px(220.0)).child(Select::new(&self.permission)),
             ))
             .child(hint(text("settings.launchHint")))
+            // Only where this copy checks at all.
+            .when(self.controller.read(cx).update_checks(), |form| {
+                form.child(
+                    Checkbox::new("updates")
+                        .label(text("settings.updates"))
+                        .checked(preferences.check_for_updates)
+                        .on_click(cx.listener(|this, on: &bool, _, cx| {
+                            let on = *on;
+                            this.set(cx, move |preferences| preferences.check_for_updates = on);
+                        })),
+                )
+                .child(hint(text("settings.updatesHint")))
+            })
             .child(
                 div().mt(px(6.0)).flex().justify_end().child(
                     Button::new("close")

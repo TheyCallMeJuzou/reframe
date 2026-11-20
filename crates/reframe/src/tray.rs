@@ -26,10 +26,13 @@ const NEW_SESSION: u32 = 1;
 const NEW_WINDOW: u32 = 2;
 const ABOUT: u32 = 3;
 const QUIT: u32 = 4;
+/// "Restart to update", or in the portable copy "Download reframe X".
+const UPDATE: u32 = 5;
 
-/// The name Windows knows reframe's notifications by. The installed 0.x is `dev.reframe.app`;
-/// the native app takes that over when it takes over the profile.
-const APP_ID: &str = "dev.reframe.native";
+/// What update notifications are known by when they are clicked (a session's are known by
+/// its id).
+const UPDATE_READY_TAG: &str = "update:ready";
+const UPDATE_AVAILABLE_TAG: &str = "update:available";
 
 /// The window that takes the tray's messages, for tests to send it what Windows would.
 #[derive(Default)]
@@ -78,22 +81,49 @@ pub fn start(controller: &Entity<Controller>, cx: &mut App) {
     })
     .detach();
 
-    cx.set_app_identity(APP_ID, "reframe");
+    let app_id = controller.read(cx).config().app_id.clone();
+    cx.set_app_identity(&app_id, "reframe");
     cx.on_system_notification_response({
         let controller = controller.clone();
         move |response, cx| {
-            controller.update(cx, |controller, cx| {
-                controller.log().info(
-                    "notification clicked",
-                    Some(json!({ "session": response.tag.as_ref() })),
-                );
-                controller.focus_session(&response.tag, cx);
-            });
+            let tag = response.tag.as_ref();
+            controller
+                .read(cx)
+                .log()
+                .info("notification clicked", Some(json!({ "tag": tag })));
+            match tag {
+                // The portable copy's new version is downloaded by hand.
+                UPDATE_AVAILABLE_TAG => cx.open_url(reframe_core::links::RELEASES_URL),
+                UPDATE_READY_TAG => {}
+                session => controller.update(cx, |controller, cx| controller.focus_session(session, cx)),
+            }
         }
     });
 
     cx.subscribe(controller, |controller, event, cx| match event {
         AppEvent::Notify(session, kind) => notify(&controller, session, *kind, cx),
+        AppEvent::UpdateReady(version) => {
+            refresh(&controller, cx);
+            notify_update(
+                &controller,
+                UPDATE_READY_TAG,
+                "update.readyTitle",
+                "update.readyBody",
+                version,
+                cx,
+            );
+        }
+        AppEvent::UpdateAvailable(version) => {
+            refresh(&controller, cx);
+            notify_update(
+                &controller,
+                UPDATE_AVAILABLE_TAG,
+                "update.availableTitle",
+                "update.availableBody",
+                version,
+                cx,
+            );
+        }
         // Whatever else happens may change what the menu says.
         _ => refresh(&controller, cx),
     })
@@ -181,9 +211,22 @@ fn refresh_with(controller: &Entity<Controller>, badges: &mut Option<HashMap<Str
             children: workspaces,
         },
         TrayEntry::Separator,
-        item(ABOUT, "tray.about"),
-        item(QUIT, "tray.quit"),
     ]);
+    // Once an update is downloaded; in the portable copy, a newer version to download by hand.
+    let update = match (controller.update_ready(), controller.update_available()) {
+        (Some(version), _) => t(locale, "tray.restartToUpdate", &[("version", version)]),
+        (None, Some(version)) => t(locale, "tray.downloadUpdate", &[("version", version)]),
+        (None, None) => None,
+    };
+    if let Some(label) = update {
+        menu.push(TrayEntry::Item {
+            id: UPDATE,
+            label,
+            checked: None,
+            enabled: true,
+        });
+    }
+    menu.extend([item(ABOUT, "tray.about"), item(QUIT, "tray.quit")]);
     let tooltip = match controller.waiting_total(cx) {
         0 => text("tray.tooltip"),
         1 => text("title.waitingOne"),
@@ -283,6 +326,13 @@ pub fn handle(controller: &Entity<Controller>, event: TrayEvent, cx: &mut App) {
             }
         }
         TrayEvent::Command(QUIT) => controller.update(cx, |controller, cx| controller.shutdown(cx)),
+        TrayEvent::Command(UPDATE) => {
+            if controller.read(cx).update_ready().is_some() {
+                controller.update(cx, |controller, cx| controller.restart_to_update(cx));
+            } else if controller.read(cx).update_available().is_some() {
+                cx.open_url(reframe_core::links::RELEASES_URL);
+            }
+        }
         TrayEvent::Command(id) if id >= WORKSPACE => {
             let index = (id - WORKSPACE) as usize;
             let workspace = controller
@@ -310,15 +360,78 @@ pub fn handle(controller: &Entity<Controller>, event: TrayEvent, cx: &mut App) {
             });
         }
         TrayEvent::Reveal { build } => {
-            // Which build was started matters once there is an installed one (it says so then).
+            let name = |build: usize| if build == 2 { "installed" } else { "development" };
             controller.read(cx).log().info(
                 "reframe was started again, showing its windows",
-                Some(json!({ "build": if build == 2 { "installed" } else { "development" } })),
+                Some(json!({ "build": name(build) })),
             );
             reveal_windows(controller, cx);
+            // The installed reframe started while a development build runs, or the other way
+            // round: it says so, or one ends up trying out the build that is not running.
+            let own = controller.read(cx).config().copy.build();
+            if build != own && (build == 1 || build == 2) {
+                other_build_started(controller, name(build), name(own), cx);
+            }
         }
         TrayEvent::SystemEnding => controller.update(cx, |controller, cx| controller.system_ending(cx)),
+        TrayEvent::Quit => {
+            controller
+                .read(cx)
+                .log()
+                .info("the installer asks reframe to quit", None);
+            controller.update(cx, |controller, cx| controller.shutdown(cx));
+        }
     }
+}
+
+/// Another build of reframe (installed or development) was started for the same profile; this
+/// one keeps running and says so.
+fn other_build_started(controller: &Entity<Controller>, started: &str, running: &str, cx: &mut App) {
+    let (locale, first) = {
+        let controller = controller.read(cx);
+        controller.log().info(
+            "another build was started, this one keeps running",
+            Some(json!({ "started": started, "running": running })),
+        );
+        let first = controller.state().windows.first().map(|window| window.id.clone());
+        (controller.locale(), first)
+    };
+    let Some(first) = first else { return };
+    let text = |key: &str, params: &[(&str, &str)]| t(locale, key, params).unwrap_or_default();
+    let started = text(&format!("otherBuild.{started}"), &[]);
+    let running = text(&format!("otherBuild.{running}"), &[]);
+    let question = window::Question {
+        title: text("otherBuild.title", &[]),
+        message: text("otherBuild.message", &[("started", &started), ("running", &running)]),
+        detail: Some(text("otherBuild.detail", &[])),
+        confirm: text("about.close", &[]),
+        cancel: None,
+        danger: false,
+    };
+    drop(window::ask(&first, question, cx));
+}
+
+/// An update was downloaded, or (portable copy) a newer version is out.
+fn notify_update(
+    controller: &Entity<Controller>,
+    tag: &'static str,
+    title: &str,
+    body: &str,
+    version: &str,
+    cx: &mut App,
+) {
+    let controller = controller.read(cx);
+    if controller.config().env.contains_key("REFRAME_DISABLE_NOTIFICATIONS") {
+        return;
+    }
+    let locale = controller.locale();
+    let params = [("version", version)];
+    cx.show_system_notification(SystemNotification {
+        tag: tag.into(),
+        title: t(locale, title, &params).unwrap_or_default().into(),
+        body: t(locale, body, &params).unwrap_or_default().into(),
+        actions: Vec::new(),
+    });
 }
 
 /// A session is done or needs the user: a notification says so, unless the user is looking at

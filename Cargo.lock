@@ -5215,6 +5215,8 @@ name = "reframe"
 version = "0.1.0"
 dependencies = [
  "alacritty_terminal",
+ "base64",
+ "embed-resource",
  "futures",
  "gpui-kit",
  "image",
@@ -5224,6 +5226,7 @@ dependencies = [
  "reframe-core",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "uuid",
  "windows 0.62.2",

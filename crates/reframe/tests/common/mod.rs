@@ -92,9 +92,14 @@ impl Setup {
 
     /// Starts the app with arguments (`--autostart`).
     pub fn launch_with(&self, args: &[&str]) -> App {
+        self.launch_command(self.command(), args)
+    }
+
+    /// Starts the app as `command` says (from [`Setup::command`], with more set).
+    pub fn launch_command(&self, mut command: Command, args: &[&str]) -> App {
         let port_file = self.path("user-data").join("e2e-port");
         let _ = std::fs::remove_file(&port_file);
-        let child = self.command().args(args).spawn().expect("the app did not start");
+        let child = command.args(args).spawn().expect("the app did not start");
         let port: u16 = wait_for("the app to be ready", || {
             std::fs::read_to_string(&port_file).ok()?.parse().ok()
         });

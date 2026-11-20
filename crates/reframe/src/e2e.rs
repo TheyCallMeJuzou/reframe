@@ -744,6 +744,39 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
             controller.update(cx, |controller, cx| controller.shutdown(cx));
             json!({ "ok": true })
         }
+        // What the updater knows; with "mode" ("install" or "notify") this copy updates as an
+        // installed or a portable one does; with "check" it checks now.
+        Some("updates") => {
+            let mode = match text("mode").as_deref() {
+                Some("install") => Some(crate::updates::UpdateMode::Install),
+                Some("notify") => Some(crate::updates::UpdateMode::Notify),
+                _ => None,
+            };
+            controller.update(cx, |controller, cx| {
+                if let Some(mode) = mode {
+                    controller.fake_update_mode(mode, cx);
+                }
+                if flag("check") {
+                    controller.check_for_updates(cx);
+                }
+                json!({
+                    "mode": match controller.update_mode() {
+                        crate::updates::UpdateMode::None => "none",
+                        crate::updates::UpdateMode::Install => "install",
+                        crate::updates::UpdateMode::Notify => "notify",
+                    },
+                    "checks": controller.update_checks(),
+                    "ready": controller.update_ready(),
+                    "available": controller.update_available(),
+                })
+            })
+        }
+        // A second start of reframe (1: a development build, 2: an installed one).
+        Some("second_start") => {
+            let build = command.get("build").and_then(Value::as_u64).unwrap_or(1) as usize;
+            tray::handle(controller, TrayEvent::Reveal { build }, cx);
+            json!({ "ok": true })
+        }
         other => json!({ "error": format!("unknown command: {other:?}") }),
     }
 }

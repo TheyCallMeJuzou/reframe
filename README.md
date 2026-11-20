@@ -31,6 +31,29 @@ Until it takes over from the Electron version it keeps a profile of its own
 Sessions that were open are resumed on the next start. `--new <folder>` starts a new session
 there right away, without the dialog.
 
+## Packaging
+
+`scripts\package.ps1` builds what a release publishes into `dist\`: the installer
+(`reframe-Setup-<version>.exe`, NSIS, from `installer\reframe.nsi`), `latest.yml` for the
+updaters, and the portable ZIP. It needs NSIS 3 (`makensis` on the PATH, in its usual folder, in
+`MAKENSIS`, or electron-builder's download of it).
+
+The installer installs per user where the Electron version's installer did
+(`%LOCALAPPDATA%\Programs\reframe`, same uninstall entry), so that it installs over an installed
+0.x, also when that copy's updater runs it. It removes the Electron files, keeps the user's data,
+shortcuts and autostart entry, and clears the updater's downloads. Arguments as electron-updater
+passes them: `--updated` (run by an updater), `/S` (no window), `--force-run` (start reframe
+afterwards, which a manual install does anyway). Run by hand while reframe runs, it asks reframe
+to quit as the user would. `scripts\test-installer.ps1` tries all of this out under names of its
+own (it cannot touch an installed reframe): over a stand-in of the Electron version, fresh, over a
+running reframe, uninstalled, and the portable copy.
+
+An installed copy (its uninstaller is next to it) checks the releases on GitHub half a minute
+after the start and then every six hours (Settings can turn that off), downloads a newer
+installer, checks its SHA-512 against `latest.yml`, and installs it when reframe quits or with
+"Restart to update" in the tray menu. A portable copy (a folder `data` next to `reframe.exe`, which
+holds its profile) only tells that there is a newer version.
+
 ## Where it stands
 
 Done: sessions (start, resume, restart, end), the window with its split layout, separators that
@@ -65,7 +88,9 @@ A terminal window with claude in it (also in WSL) dragged onto reframe, or a Win
 torn out over it, is offered for taking over: its sessions continue in reframe where it was let go,
 and a tab with only a shell left is closed by typing "exit" there.
 
-Still to come: installer and updater. Not there yet: a Windows Terminal tab dragged over reframe
+Installer, updater and the portable copy: see Packaging. Still to come: the switch from the
+Electron version (the profile, the app id and the version 1.0.0). Not there yet: a Windows
+Terminal tab dragged over reframe
 shows no drop place before it is let go (GPUI's drop target takes no drags without data), and a
 file that exists only in memory (a picture dragged out of a browser) is not taken by a tile.
 

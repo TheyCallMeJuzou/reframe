@@ -9,6 +9,7 @@ mod e2e;
 mod find;
 mod foreign;
 mod glyphs;
+mod http;
 mod input;
 mod keys;
 mod process;
@@ -18,6 +19,7 @@ mod terminal;
 mod terminal_view;
 mod theme;
 mod tray;
+mod updates;
 mod watcher;
 mod win;
 mod window;
@@ -63,6 +65,10 @@ fn main() {
     if let Some(code) = wsl::print_parent_pid_from_args() {
         std::process::exit(code);
     }
+    // Started by the installer: asks a running reframe to quit, or marks a shortcut as reframe's.
+    if let Some(code) = installer_helper() {
+        std::process::exit(code);
+    }
     pty::prepare_environment();
     let args = parse_args();
     let config = Config::from_environment();
@@ -70,18 +76,14 @@ fn main() {
     // One reframe per profile: the running one shows its windows and this one leaves.
     let profile = win::profile_key(&config.user_data);
     if !win::claim_profile(&profile) {
-        let build = if cfg!(debug_assertions) {
-            "development"
-        } else {
-            "installed"
-        };
+        let build = config.copy.build();
         reframe_core::log::Logger::new(config.user_data.join("logs")).info(
             "reframe already runs, showing its windows",
-            Some(serde_json::json!({ "build": build })),
+            Some(serde_json::json!({ "build": if build == 1 { "development" } else { "installed" } })),
         );
         // It may still be starting.
         for _ in 0..50 {
-            if win::reveal_running(&profile, if cfg!(debug_assertions) { 1 } else { 2 }) {
+            if win::reveal_running(&profile, build) {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(100));
@@ -123,6 +125,7 @@ fn main() {
                 foreign::start(&controller, cx);
                 controller.update(cx, |controller, cx| {
                     controller.resume_sessions(cx);
+                    controller.start_update_checks(cx);
                     let first = windows.first().map(|(id, _)| id.clone()).unwrap_or_default();
                     for folder in &args.new {
                         let request = NewSessionRequest {
@@ -141,6 +144,36 @@ fn main() {
         })
         .detach();
     });
+}
+
+/// What the installer has reframe do: `--quit` asks the reframe that runs for this copy's
+/// profile to quit (0 when one was asked, 1 when none runs); `--shortcut-app-id <link> <id>`
+/// gives a shortcut the id Windows knows reframe by. `None` for a normal start.
+fn installer_helper() -> Option<i32> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args.first().map(String::as_str) {
+        Some("--quit") => {
+            let config = Config::from_environment();
+            Some(if win::ask_running_to_quit(&win::profile_key(&config.user_data)) {
+                0
+            } else {
+                1
+            })
+        }
+        Some("--shortcut-app-id") => {
+            let (Some(link), Some(id)) = (args.get(1), args.get(2)) else {
+                return Some(2);
+            };
+            Some(match win::set_shortcut_app_id(std::path::Path::new(link), id) {
+                Ok(()) => 0,
+                Err(error) => {
+                    eprintln!("{link}: {error}");
+                    1
+                }
+            })
+        }
+        _ => None,
+    }
 }
 
 /// Says why reframe does not start, and exits.

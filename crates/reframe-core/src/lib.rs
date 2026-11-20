@@ -36,3 +36,5 @@ pub mod foreign_match;
 pub mod session_list;
 
 pub mod session_logic;
+
+pub mod updates;

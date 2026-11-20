@@ -49,6 +49,8 @@ use windows::core::{HSTRING, PCWSTR, w};
 const WM_TRAY: u32 = WM_APP + 1;
 /// A second reframe that was started tells the running one with this message.
 const WM_REVEAL: u32 = WM_APP + 2;
+/// The installer asks the running reframe to quit with this message, before it replaces it.
+const WM_QUIT_REQUEST: u32 = WM_APP + 3;
 /// The class of the window that takes these messages; its title is the profile's key.
 const CONTROL_CLASS: PCWSTR = w!("reframe-native-control");
 
@@ -151,6 +153,63 @@ pub fn reveal_running(key: &str, build: usize) -> bool {
     }
 }
 
+/// Asks the reframe that runs for the profile to quit as the user would (its sessions end and
+/// resume on the next start). False when none runs.
+pub fn ask_running_to_quit(key: &str) -> bool {
+    let title = HSTRING::from(key);
+    // SAFETY: plain calls with valid strings.
+    unsafe {
+        let Ok(control) = FindWindowW(CONTROL_CLASS, &title) else {
+            return false;
+        };
+        PostMessageW(Some(control), WM_QUIT_REQUEST, WPARAM(0), LPARAM(0)).is_ok()
+    }
+}
+
+/// Gives a shortcut the id Windows knows reframe by, so that a taskbar button pinned from it is
+/// the one of the running reframe, and its notifications show under its name. The installer has
+/// reframe do this for the Start menu entry it makes.
+pub fn set_shortcut_app_id(link: &std::path::Path, app_id: &str) -> windows::core::Result<()> {
+    use windows::Win32::Storage::EnhancedStorage::PKEY_AppUserModel_ID;
+    use windows::Win32::System::Com::StructuredStorage::{
+        PROPVARIANT, PROPVARIANT_0, PROPVARIANT_0_0, PROPVARIANT_0_0_0,
+    };
+    use windows::Win32::System::Com::{
+        CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, IPersistFile, STGM_READWRITE,
+    };
+    use windows::Win32::System::Variant::VT_LPWSTR;
+    use windows::Win32::UI::Shell::PropertiesSystem::IPropertyStore;
+    use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
+    use windows::core::{Interface, PWSTR};
+
+    // SAFETY: COM objects used as documented; the string the value points to outlives the call
+    // that copies it, and the value is not cleared (it does not own the string).
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let shortcut: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)?;
+        let file: IPersistFile = shortcut.cast()?;
+        file.Load(&HSTRING::from(link.as_os_str()), STGM_READWRITE)?;
+        let store: IPropertyStore = shortcut.cast()?;
+        let mut id: Vec<u16> = app_id.encode_utf16().chain(std::iter::once(0)).collect();
+        let value = PROPVARIANT {
+            Anonymous: PROPVARIANT_0 {
+                Anonymous: std::mem::ManuallyDrop::new(PROPVARIANT_0_0 {
+                    vt: VT_LPWSTR,
+                    wReserved1: 0,
+                    wReserved2: 0,
+                    wReserved3: 0,
+                    Anonymous: PROPVARIANT_0_0_0 {
+                        pwszVal: PWSTR(id.as_mut_ptr()),
+                    },
+                }),
+            },
+        };
+        store.SetValue(&PKEY_AppUserModel_ID, &value)?;
+        store.Commit()?;
+        file.Save(PCWSTR::null(), true)
+    }
+}
+
 /// reframe is told first when the system goes down, before the claudes it runs are closed
 /// (which then must not count as ended by the user).
 pub fn shut_down_first() {
@@ -174,6 +233,8 @@ pub enum TrayEvent {
     Reveal { build: usize },
     /// Windows shuts down, restarts or logs the user off.
     SystemEnding,
+    /// The installer asks reframe to quit.
+    Quit,
 }
 
 /// An entry of the tray menu.
@@ -422,6 +483,10 @@ unsafe extern "system" fn control_proc(window: HWND, message: u32, wparam: WPARA
         }
         WM_REVEAL => {
             send(TrayEvent::Reveal { build: wparam.0 });
+            LRESULT(0)
+        }
+        WM_QUIT_REQUEST => {
+            send(TrayEvent::Quit);
             LRESULT(0)
         }
         // Windows asks every window whether it may go down, then tells them that it does.
