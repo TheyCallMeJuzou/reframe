@@ -142,14 +142,29 @@ fn shortcuts_reach_dialogs_tiles_and_the_text_size() {
     next_frame(&mut app);
     app.cmd(json!({ "cmd": "type", "text": setup.project() }));
     key(&mut app, "enter");
-    let first = wait_for("the session from the dialog", || {
+    // Without a session, what the dialog shows says why (its fields, an error).
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let first = loop {
         let state = app.state();
-        let sessions = state["sessions"].as_object().unwrap();
-        sessions.values().next().map(|session| {
+        if let Some(session) = state["sessions"].as_object().unwrap().values().next() {
             assert_eq!(session["name"], "project");
-            session["id"].as_str().unwrap().to_owned()
-        })
-    });
+            break session["id"].as_str().unwrap().to_owned();
+        }
+        if std::time::Instant::now() > deadline {
+            let shown: Vec<_> = app
+                .ui()
+                .all()
+                .into_iter()
+                .filter(|seen| matches!(seen.role, "edit" | "text" | "button"))
+                .map(|seen| format!("{} {:?} {:?}", seen.role, seen.name, seen.value))
+                .collect();
+            panic!(
+                "no session from the dialog; it shows {shown:#?}; the window: {}",
+                window(&mut app)
+            );
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    };
     wait_for("the dialog to close and the tile to take the keyboard", || {
         let shown = window(&mut app);
         (shown["dialog"] == false && shown["focused"] == first.as_str()).then_some(())
