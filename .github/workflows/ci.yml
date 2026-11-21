@@ -1,6 +1,7 @@
 # Checks every push and pull request on Windows and Linux (macOS stays on 0.10.x for now): formatting, clippy,
 # the unit tests, the end-to-end tests (the app with a fake claude, driven over its test channel, and on
-# Windows through UI Automation too), and on Windows the installer, tried out under names of its own.
+# Windows through UI Automation too), the Windows installer, tried out under names of its own, and the Linux
+# AppImage and .deb as the release builds them.
 name: CI
 
 on:
@@ -51,3 +52,10 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Tests (unit and end to end)
         run: xvfb-run -a -s "-screen 0 1600x1000x24" dbus-run-session -- cargo test --workspace
+      # As the release builds them; the AppImage has to start here (it says no reframe runs to ask to quit: 1).
+      - name: AppImage and .deb, tried out
+        run: |
+          scripts/package-linux.sh
+          set +e
+          APPIMAGE_EXTRACT_AND_RUN=1 dist/reframe-*-x86_64.AppImage --quit
+          test $? -eq 1
