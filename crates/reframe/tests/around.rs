@@ -5,11 +5,14 @@
 
 mod common;
 
+#[cfg(windows)]
 use std::process::Command;
 
 use common::{App, Setup, wait_for};
 use serde_json::{Value, json};
+#[cfg(windows)]
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+#[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{SendMessageW, WM_QUERYENDSESSION};
 
 fn new_session(app: &mut App, setup: &Setup, name: &str) -> String {
@@ -269,6 +272,8 @@ fn started_by_the_system_windows_stay_hidden_and_a_second_start_shows_them() {
     app.quit();
 }
 
+// Windows' WM_QUERYENDSESSION to the control window (Linux: logind, see linux.rs).
+#[cfg(windows)]
 #[test]
 fn sessions_the_system_ends_on_its_way_down_resume_on_the_next_start() {
     let setup = Setup::new();

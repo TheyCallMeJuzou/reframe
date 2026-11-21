@@ -4,6 +4,7 @@
 
 mod common;
 
+#[cfg(windows)]
 use std::os::windows::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime};
@@ -183,6 +184,9 @@ fn select_several_open_them_together_and_see_new_ones_pop_up() {
 /// session, or `resume` one. `start` gives it a console whose input Ctrl+C can be typed into.
 struct Outside {
     pid: u32,
+    /// Linux: the test's own child (reaped when it goes). Windows: `start` runs it on its own.
+    #[cfg_attr(windows, allow(dead_code))]
+    child: Option<std::process::Child>,
 }
 
 fn run_outside(setup: &Setup, resume: Option<&str>) -> Outside {
@@ -198,6 +202,52 @@ fn run_outside(setup: &Setup, resume: Option<&str>) -> Outside {
     std::fs::write(&no_hooks, "{}").unwrap();
     let id = resume.map_or_else(|| uuid::Uuid::new_v4().to_string(), str::to_owned);
     let flag = if resume.is_some() { "--resume" } else { "--session-id" };
+    let child = start_outside(setup, &fake, flag, &id, &no_hooks);
+    let pid = wait_for("the outside claude to start", || {
+        setup.fake_log().iter().rev().find_map(|entry| {
+            (entry["event"] == "start" && args(entry).contains(&id.as_str()) && args(entry).contains(&flag))
+                .then(|| entry["pid"].as_u64())
+                .flatten()
+        })
+    });
+    Outside { pid: pid as u32, child }
+}
+
+/// In a terminal of its own: on Linux a process group of its own (a terminal's Ctrl+C goes to its
+/// group; reframe sends SIGINT to it).
+#[cfg(not(windows))]
+fn start_outside(
+    setup: &Setup,
+    fake: &str,
+    flag: &str,
+    id: &str,
+    no_hooks: &std::path::Path,
+) -> Option<std::process::Child> {
+    use std::os::unix::process::CommandExt;
+    let child = Command::new(node())
+        .args([fake, flag, id, "--settings"])
+        .arg(no_hooks)
+        .current_dir(setup.project())
+        .env("REFRAME_CLAUDE_HOME", setup.path("claude-home"))
+        .env("REFRAME_FAKE_LOG", setup.path("fake.log"))
+        // Input that stays open, as a terminal's does (at its end the fake would be done).
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    Some(child)
+}
+
+#[cfg(windows)]
+fn start_outside(
+    setup: &Setup,
+    fake: &str,
+    flag: &str,
+    id: &str,
+    no_hooks: &std::path::Path,
+) -> Option<std::process::Child> {
     let line = format!(
         "/c start \"\" /min \"{}\" \"{fake}\" {flag} {id} --settings \"{}\"",
         node(),
@@ -215,14 +265,7 @@ fn run_outside(setup: &Setup, resume: Option<&str>) -> Outside {
         .status()
         .unwrap();
     assert!(status.success());
-    let pid = wait_for("the outside claude to start", || {
-        setup.fake_log().iter().rev().find_map(|entry| {
-            (entry["event"] == "start" && args(entry).contains(&id.as_str()) && args(entry).contains(&flag))
-                .then(|| entry["pid"].as_u64())
-                .flatten()
-        })
-    });
-    Outside { pid: pid as u32 }
+    None
 }
 
 /// Gone with the test, also one that failed: it would hold on to the test's output.
@@ -240,7 +283,16 @@ impl Outside {
             .any(|entry| entry["event"] == "exit" && entry["pid"].as_u64() == Some(u64::from(self.pid)))
     }
 
-    fn kill(&self) {
+    #[cfg(not(windows))]
+    fn kill(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+
+    #[cfg(windows)]
+    fn kill(&mut self) {
         let _ = Command::new("taskkill")
             .args(["/PID", &self.pid.to_string(), "/T", "/F"])
             .stdout(Stdio::null())

@@ -124,6 +124,8 @@ fn key(app: &mut common::App, keys: &str) {
 }
 
 /// What `e2e/shortcuts.spec.ts`, `new-session.spec.ts` and `text-size.spec.ts` checked.
+// UI Automation finds and presses the dialogs' fields: on Windows (the dialogs are the same code on Linux).
+#[cfg(windows)]
 #[test]
 fn shortcuts_reach_dialogs_tiles_and_the_text_size() {
     let setup = Setup::new();
@@ -339,7 +341,7 @@ fn text_is_found_and_a_session_renamed_in_its_tile() {
 }
 
 /// A window comes back as big as it was. The state keeps the whole window, frame and all, as
-/// 0.x did (`e2e/windows.spec.ts` sets a window's bounds that way).
+/// 0.x did on Windows (`e2e/windows.spec.ts` sets a window's bounds that way).
 #[test]
 fn a_window_opens_as_big_as_it_was_left() {
     let setup = Setup::new();
@@ -347,10 +349,16 @@ fn a_window_opens_as_big_as_it_was_left() {
     app.cmd(json!({ "cmd": "resize", "width": 910.0, "height": 640.0 }));
     let frame = window(&mut app)["frame"].clone();
     let (frame_width, frame_height) = (frame[0].as_f64().unwrap(), frame[1].as_f64().unwrap());
-    assert!(
-        frame_width > 0.0 && frame_height > 20.0,
-        "a frame with a title bar: {frame}"
-    );
+    // On Linux GPUI tells of the window as it is placed (the desktop's frame, if any, is around
+    // it): nothing to add.
+    if cfg!(windows) {
+        assert!(
+            frame_width > 0.0 && frame_height > 20.0,
+            "a frame with a title bar: {frame}"
+        );
+    } else {
+        assert_eq!(frame, json!([0.0, 0.0]));
+    }
     wait_for("the size to be remembered", || {
         let bounds = app.state()["windows"][0]["bounds"].clone();
         (bounds["width"] == (910.0 + frame_width).round() && bounds["height"] == (640.0 + frame_height).round())

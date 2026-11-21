@@ -489,8 +489,19 @@ fn empty_windows_are_not_brought_back_and_files_are_typed_in_as_paths() {
     placed(&mut app, &main, 1);
 
     // Files dropped onto a tile: their paths, quoted where a shell would need it.
-    app.cmd(json!({ "cmd": "drop_files", "session": alpha, "paths": ["C:\\shots\\a.png", "C:\\My Pictures\\b.png"] }));
-    app.wait_screen(&alpha, "C:\\shots\\a.png \"C:\\My Pictures\\b.png\"");
+    let (paths, typed) = if cfg!(windows) {
+        (
+            ["C:\\shots\\a.png", "C:\\My Pictures\\b.png"],
+            "C:\\shots\\a.png \"C:\\My Pictures\\b.png\"",
+        )
+    } else {
+        (
+            ["/shots/a.png", "/My Pictures/b.png"],
+            "/shots/a.png '/My Pictures/b.png'",
+        )
+    };
+    app.cmd(json!({ "cmd": "drop_files", "session": alpha, "paths": paths }));
+    app.wait_screen(&alpha, typed);
     wait_for("the tile to take the keyboard", || {
         (app.cmd(json!({ "cmd": "window" }))["focused"] == alpha.as_str()).then_some(())
     });
@@ -601,8 +612,13 @@ fn the_pointer_drags_tiles_opens_menus_and_brings_files() {
     // their paths typed in when they are let go.
     let b = tile_rect(&shown, &beta);
     let (over_a, over_b) = ((a[0] + 200.0, a[1] + 120.0), (b[0] + 200.0, b[1] + 120.0));
+    let (path, typed) = if cfg!(windows) {
+        ("C:\\shots\\one two.png", "\"C:\\shots\\one two.png\"")
+    } else {
+        ("/shots/one two.png", "'/shots/one two.png'")
+    };
     app.cmd(json!({
-        "cmd": "file_drag", "type": "enter", "x": over_a.0, "y": over_a.1, "paths": ["C:\\shots\\one two.png"],
+        "cmd": "file_drag", "type": "enter", "x": over_a.0, "y": over_a.1, "paths": [path],
     }));
     wait_for("alpha to take the files", || {
         (app.cmd(json!({ "cmd": "window" }))["filesOver"] == alpha.as_str()).then_some(())
@@ -614,7 +630,7 @@ fn the_pointer_drags_tiles_opens_menus_and_brings_files() {
     });
     next_frame(&mut app);
     app.cmd(json!({ "cmd": "file_drag", "type": "drop", "x": over_b.0, "y": over_b.1 }));
-    app.wait_screen(&beta, "\"C:\\shots\\one two.png\"");
+    app.wait_screen(&beta, typed);
     assert!(!app.screen(&alpha).contains("one two"));
     wait_for("the mark to go", || {
         app.cmd(json!({ "cmd": "window" }))["filesOver"].is_null().then_some(())

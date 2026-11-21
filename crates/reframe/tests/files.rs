@@ -68,9 +68,19 @@ fn dropping_files_and_pasting_text_files_and_pictures() {
     app.wait_status(&alpha, "idle");
     let claude_id = app.record(&alpha)["claudeSessionId"].as_str().unwrap().to_owned();
 
-    // A file that exists only in the drag: its path when it is let go over the tile.
-    let (x, y) = cell(&mut app, &alpha, 30, 10);
-    app.cmd(json!({ "cmd": "ole_drop", "x": x, "y": y, "files": [["note one.txt", "hello"]] }));
+    // A file that exists only in the drag (Windows: a real OLE drag; Linux drops files that
+    // exist): its path when it is let go over the tile.
+    #[cfg(windows)]
+    {
+        let (x, y) = cell(&mut app, &alpha, 30, 10);
+        app.cmd(json!({ "cmd": "ole_drop", "x": x, "y": y, "files": [["note one.txt", "hello"]] }));
+    }
+    #[cfg(not(windows))]
+    {
+        let note = setup.path("note one.txt");
+        std::fs::write(&note, "hello").unwrap();
+        app.cmd(json!({ "cmd": "drop_files", "session": alpha, "paths": [note] }));
+    }
     wait_for("the dropped path", || {
         let log = setup.log();
         assert!(!log.contains(r#""dragged":false"#), "the drag did not start: {log}");
@@ -83,7 +93,11 @@ fn dropping_files_and_pasting_text_files_and_pictures() {
     assert_eq!(std::fs::read_to_string(dropped).unwrap(), "hello");
 
     // Ctrl+V: text first, then copied files (quoted as needed), then a picture.
-    let copied = r"C:\My Pictures\shot.png";
+    let copied = if cfg!(windows) {
+        r"C:\My Pictures\shot.png"
+    } else {
+        "/My Pictures/shot.png"
+    };
     let paste = |app: &mut App, contents: Value| {
         let mut command = json!({ "cmd": "clipboard" });
         command
@@ -99,10 +113,17 @@ fn dropping_files_and_pasting_text_files_and_pictures() {
     paste(&mut app, json!({ "text": "", "image": true }));
     let pasted = wait_prompts(&setup, &claude_id, 4);
     assert_eq!(pasted[1], "pasted words");
-    assert_eq!(pasted[2], format!("\"{copied}\""));
-    let picture = unquoted(&pasted[3]);
-    assert!(picture.ends_with(".png"), "{picture}");
-    assert_eq!(&std::fs::read(picture).unwrap()[1..4], b"PNG");
+    if cfg!(windows) {
+        assert_eq!(pasted[2], format!("\"{copied}\""));
+        // Saved, and pasted as its path.
+        let picture = unquoted(&pasted[3]);
+        assert!(picture.ends_with(".png"), "{picture}");
+        assert_eq!(&std::fs::read(picture).unwrap()[1..4], b"PNG");
+    } else {
+        assert_eq!(pasted[2], format!("'{copied}'"));
+        // Claude Code reads it from the clipboard itself, on Ctrl+V.
+        assert_eq!(pasted[3], "[Image #1]");
+    }
 
     // Right-click copies the selection (caught: the real clipboard stays as it is) and clears it,
     // so the next right-click pastes. "FAKE CLAUDE" is on the first line: a double click selects

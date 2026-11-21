@@ -2,6 +2,8 @@
 //! `e2e/wsl.spec.ts` checked. A session in a WSL folder runs its claude in that distribution
 //! through wsl.exe; no hooks reach reframe from there, so its status comes from Claude Code's
 //! registry there. Needs `node` on the PATH.
+// WSL is a Windows thing.
+#![cfg(windows)]
 
 mod common;
 

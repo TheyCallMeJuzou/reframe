@@ -3,6 +3,8 @@
 //! the text size has buttons too; update checks can be turned off where reframe checks; what
 //! closing a window with sessions does can be chosen; starting with the system is turned on and
 //! off here; snapping can be turned off; which claude runs and what new sessions start with.
+// UI Automation finds and presses the dialogs' fields: on Windows (the dialogs are the same code on Linux).
+#![cfg(windows)]
 
 mod common;
 

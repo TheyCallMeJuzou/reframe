@@ -87,6 +87,16 @@ let line = '';
 let asking = false;
 let lastInterrupt = 0;
 let images = 0;
+// Ctrl+C: it asks to press it again; twice within two seconds it ends. In a terminal it arrives as
+// input (the terminal is raw); sent from elsewhere (reframe takes a claude over so on Linux) it is
+// SIGINT, which Claude Code takes the same way.
+function interrupt() {
+  if (Date.now() - lastInterrupt < 2000) exit(0);
+  lastInterrupt = Date.now();
+  process.stdout.write('\r\nPress Ctrl-C again to exit\r\n> ');
+  line = '';
+}
+process.on('SIGINT', interrupt);
 if (process.stdin.isTTY) process.stdin.setRawMode(true);
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', async (input) => {
@@ -100,10 +110,7 @@ process.stdin.on('data', async (input) => {
   const chunk = ['\x1bv', '\x16'].reduce((text, key) => text.replaceAll(key, () => `[Image #${++images}]`), typed);
   for (const ch of chunk) {
     if (ch === '\x03') {
-      if (Date.now() - lastInterrupt < 2000) exit(0);
-      lastInterrupt = Date.now();
-      process.stdout.write('\r\nPress Ctrl-C again to exit\r\n> ');
-      line = '';
+      interrupt();
     } else if (ch === '\r') {
       const prompt = line;
       line = '';

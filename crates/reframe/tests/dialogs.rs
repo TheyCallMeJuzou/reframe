@@ -1,5 +1,7 @@
 //! The dialogs as a user (and a screen reader) meets them, through UI Automation: what the
 //! Electron version's `e2e/about.spec.ts` and `e2e/dialog.spec.ts` checked.
+// UI Automation finds and presses the dialogs' fields: on Windows (the dialogs are the same code on Linux).
+#![cfg(windows)]
 
 mod common;
 

@@ -17,6 +17,8 @@ fn starts(setup: &Setup) -> Vec<Value> {
         .collect()
 }
 
+// A cmd launcher (claude.cmd): Windows'.
+#[cfg(windows)]
 #[test]
 fn claude_behind_an_unknown_launcher_in_a_folder_with_a_space_runs_with_its_status() {
     let setup = Setup::new();
@@ -99,6 +101,8 @@ fn a_worktree_session_started_again_without_a_transcript_runs_in_its_worktree() 
     app.quit();
 }
 
+// UI Automation finds and presses the dialogs' fields: on Windows (the dialogs are the same code on Linux).
+#[cfg(windows)]
 #[test]
 fn a_session_started_anew_after_its_transcript_was_lost_starts_without_one_after_a_restart_too() {
     let setup = Setup::new();
@@ -140,6 +144,8 @@ fn a_session_started_anew_after_its_transcript_was_lost_starts_without_one_after
     app.quit();
 }
 
+// UI Automation finds and presses the dialogs' fields: on Windows (the dialogs are the same code on Linux).
+#[cfg(windows)]
 #[test]
 fn f11_full_screen_is_kept_after_a_restart() {
     let setup = Setup::new();
@@ -190,6 +196,21 @@ fn waiting() -> Waiting {
     )
 }
 
+#[cfg(not(windows))]
+fn alive(pid: u32) -> bool {
+    std::fs::read_to_string(format!("/proc/{pid}/stat"))
+        .is_ok_and(|stat| stat.rsplit_once(") ").is_some_and(|(_, rest)| !rest.starts_with('Z')))
+}
+
+/// When Linux says the process started (clock ticks after boot), as Claude Code's registry has it.
+#[cfg(not(windows))]
+fn process_start(pid: u32) -> String {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap();
+    let (_, rest) = stat.rsplit_once(") ").unwrap();
+    rest.split_whitespace().nth(19).unwrap().to_owned()
+}
+
+#[cfg(windows)]
 fn alive(pid: u32) -> bool {
     let output = Command::new("tasklist")
         .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
@@ -199,6 +220,7 @@ fn alive(pid: u32) -> bool {
 }
 
 /// When Windows says the process started, as Claude Code's registry has it.
+#[cfg(windows)]
 fn process_start(pid: u32) -> String {
     let output = Command::new("powershell")
         .args([

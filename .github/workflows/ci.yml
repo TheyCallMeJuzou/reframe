@@ -1,6 +1,6 @@
-# Checks every push and pull request on Windows, where reframe 1.0 runs (macOS and Linux stay on 0.10.x for
-# now): formatting, clippy, the unit tests, the end-to-end tests (the app with a fake claude, driven over its
-# test channel and UI Automation), and the installer, tried out under names of its own.
+# Checks every push and pull request on Windows and Linux (macOS stays on 0.10.x for now): formatting, clippy,
+# the unit tests, the end-to-end tests (the app with a fake claude, driven over its test channel, and on
+# Windows through UI Automation too), and on Windows the installer, tried out under names of its own.
 name: CI
 
 on:
@@ -29,3 +29,25 @@ jobs:
         run: cargo test --workspace
       - name: Installer, tried out
         run: powershell -File scripts/test-installer.ps1
+
+  linux:
+    # The oldest Ubuntu reframe is built on: what it runs on needs this glibc (2.35) or newer.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 24
+      - name: Packages (GPUI's, and a display, a session bus and software rendering for the tests)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libwayland-dev libxkbcommon-dev \
+            libxkbcommon-x11-dev libx11-xcb-dev libxcb1-dev libfontconfig-dev libegl1 libgl1-mesa-dri \
+            mesa-vulkan-drivers libvulkan1 xvfb dbus-x11 fonts-dejavu-core
+      - name: Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          rustup default stable
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Tests (unit and end to end)
+        run: xvfb-run -a -s "-screen 0 1600x1000x24" dbus-run-session -- cargo test --workspace

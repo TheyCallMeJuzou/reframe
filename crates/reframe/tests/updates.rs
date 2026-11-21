@@ -3,6 +3,8 @@
 //! `src/main/updates.test.ts` and `e2e/settings.spec.ts`: an installed copy downloads a newer
 //! version, checks it and installs it on quit or with "Restart to update"; a download that does
 //! not match is thrown away; a portable copy only tells; another build started says so.
+// The installer and its feed (latest.yml): Windows'. Linux's AppImage has tests of its own.
+#![cfg(windows)]
 
 mod common;
 

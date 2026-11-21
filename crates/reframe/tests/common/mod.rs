@@ -2,6 +2,7 @@
 //! `node` on the PATH (the fake claude is a script).
 #![allow(dead_code)] // each test file uses its share
 
+#[cfg(windows)]
 pub mod ui;
 
 use std::io::{BufRead, BufReader, Write};
@@ -15,7 +16,8 @@ use serde_json::{Value, json};
 pub const WAIT: Duration = Duration::from_secs(20);
 
 pub fn node() -> String {
-    let found = Command::new("where").arg("node").output().expect("where node");
+    let finder = if cfg!(windows) { "where" } else { "which" };
+    let found = Command::new(finder).arg("node").output().expect("where node");
     let text = String::from_utf8_lossy(&found.stdout);
     text.lines().next().expect("node is not on the PATH").trim().to_owned()
 }
@@ -159,6 +161,7 @@ impl App {
     }
 
     /// The app as UI Automation (a screen reader) sees it.
+    #[cfg(windows)]
     pub fn ui(&self) -> ui::Ui {
         ui::Ui::new(self.child.id())
     }

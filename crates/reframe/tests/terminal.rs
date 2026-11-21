@@ -5,6 +5,8 @@
 //! question, and check that the session moved into reframe and that the console, with only cmd
 //! left, was closed by typing "exit". One claude runs in WSL (the stand-in), in a shell that the
 //! stand-in wsl.exe plays. Needs `node` on the PATH; opens console windows for a moment.
+// Terminal windows of Windows' own, dragged onto reframe and taken over: a Windows thing.
+#![cfg(windows)]
 
 mod common;
 

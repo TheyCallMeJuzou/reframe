@@ -15,6 +15,8 @@
 //! its text back; it is skipped when the clipboard holds anything else. The terminal tests open a
 //! console window, or a Windows Terminal window, of their own. Pictures of the windows land in
 //! `target/real-shots`.
+// Against the real claude on Windows and in WSL.
+#![cfg(windows)]
 
 mod common;
 
