@@ -30,7 +30,7 @@ impl Locale {
 
 /// How many messages there are (`en` and `de` have the same keys): 0.x's 215, and the long
 /// "… ago" times it took from the system.
-pub const MESSAGE_COUNT: usize = 223;
+pub const MESSAGE_COUNT: usize = 227;
 
 #[rustfmt::skip]
 static EN: [(&str, &str); MESSAGE_COUNT] = [
@@ -232,6 +232,8 @@ static EN: [(&str, &str); MESSAGE_COUNT] = [
     ("closeWindow.detail", "Ended, they stay in the session list and the window closes for good. Kept, they go on running and the window waits in the tray."),
     ("closeWindow.end", "End sessions"),
     ("closeWindow.keep", "Keep in the tray"),
+    ("closeWindow.keepNoTray", "Keep running"),
+    ("closeWindow.detailNoTray", "Ended, they stay in the session list and the window closes for good. Kept, they go on running and the window waits minimized."),
     ("closeWindow.remember", "Don't ask again (Settings can change it)"),
     ("about.github", "reframe on GitHub"),
     ("about.star", "Give reframe a star on GitHub"),
@@ -243,6 +245,8 @@ static EN: [(&str, &str); MESSAGE_COUNT] = [
     ("otherBuild.detail", "To use the other one, quit this one from the tray menu (\"Quit reframe\") and start it again."),
     ("otherBuild.installed", "installed version"),
     ("otherBuild.development", "development build (cargo run)"),
+    ("olderRunning.title", "reframe 0.x is still running"),
+    ("olderRunning.message", "The older reframe runs with the same sessions and windows. Quit it first (tray menu, \"Quit reframe\"), then start reframe again."),
     ("startFailed.title", "reframe could not start"),
     ("startFailed.message", "Something went wrong while starting: {error}\n\nThe log tells more: {log}"),
     ("state.newerTitle", "reframe cannot open its sessions"),
@@ -459,6 +463,8 @@ static DE: [(&str, &str); MESSAGE_COUNT] = [
     ("closeWindow.detail", "Beendet bleiben sie in der Session-Liste, und das Fenster schließt sich ganz. Behalten laufen sie weiter, und das Fenster wartet im Tray."),
     ("closeWindow.end", "Sessions beenden"),
     ("closeWindow.keep", "Im Tray behalten"),
+    ("closeWindow.keepNoTray", "Weiterlaufen lassen"),
+    ("closeWindow.detailNoTray", "Beendet bleiben sie in der Session-Liste, und das Fenster schließt sich ganz. Behalten laufen sie weiter, und das Fenster wartet minimiert."),
     ("closeWindow.remember", "Nicht mehr fragen (in den Einstellungen änderbar)"),
     ("about.github", "reframe auf GitHub"),
     ("about.star", "reframe auf GitHub einen Stern geben"),
@@ -470,6 +476,8 @@ static DE: [(&str, &str); MESSAGE_COUNT] = [
     ("otherBuild.detail", "Um die andere zu nutzen, beende diese über das Tray-Menü (\"reframe beenden\") und starte die andere erneut."),
     ("otherBuild.installed", "installierte Version"),
     ("otherBuild.development", "Entwicklerversion (cargo run)"),
+    ("olderRunning.title", "reframe 0.x läuft noch"),
+    ("olderRunning.message", "Das ältere reframe läuft mit denselben Sessions und Fenstern. Beende es zuerst (Tray-Menü, \"reframe beenden\") und starte reframe dann erneut."),
     ("startFailed.title", "reframe konnte nicht starten"),
     ("startFailed.message", "Beim Starten ist etwas schiefgegangen: {error}\n\nMehr steht im Log: {log}"),
     ("state.newerTitle", "reframe kann seine Sessions nicht öffnen"),
@@ -637,12 +645,20 @@ mod tests {
     #[test]
     fn both_tables_have_the_originals_entries_and_the_times_ago() {
         // `const en = { … }` in src/shared/i18n.ts has 215 keys, and `de` is a `Record<MessageKey, string>`;
-        // 0.x took "2 hours ago" from Intl.RelativeTimeFormat, which are 8 more here.
+        // 0.x took "2 hours ago" from Intl.RelativeTimeFormat, which are 8 more here; and 4 are
+        // Linux's: a window kept without a tray, and 0.x still running.
         let ago = keys().filter(|key| key.as_str().starts_with("list.ago")).count();
         assert_eq!(ago, 8);
-        assert_eq!(EN.len(), 215 + ago);
-        assert_eq!(DE.len(), 215 + ago);
-        assert_eq!(keys().count(), 215 + ago);
+        let linux = [
+            "closeWindow.keepNoTray",
+            "closeWindow.detailNoTray",
+            "olderRunning.title",
+            "olderRunning.message",
+        ];
+        assert!(linux.iter().all(|name| MessageKey::new(name).is_some()));
+        assert_eq!(EN.len(), 215 + ago + linux.len());
+        assert_eq!(DE.len(), 215 + ago + linux.len());
+        assert_eq!(keys().count(), 215 + ago + linux.len());
     }
 
     #[test]

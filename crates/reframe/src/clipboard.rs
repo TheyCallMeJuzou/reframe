@@ -20,6 +20,17 @@ pub fn read(cx: &App) -> Option<ClipboardItem> {
     }
 }
 
+/// Files copied in a Linux file manager (see `platform::clipboard_files`); none from the
+/// stand-in, whose files are its entries.
+#[cfg(not(windows))]
+pub fn copied_files(cx: &App) -> Vec<std::path::PathBuf> {
+    if cx.has_global::<FakeClipboard>() {
+        Vec::new()
+    } else {
+        crate::platform::clipboard_files()
+    }
+}
+
 pub fn write(item: ClipboardItem, cx: &mut App) {
     if cx.has_global::<FakeClipboard>() {
         let text = item.text().unwrap_or_default();

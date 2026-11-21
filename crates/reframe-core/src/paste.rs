@@ -53,9 +53,35 @@ pub fn format_paths_for_wsl<S: AsRef<str>>(paths: &[S], distro: &str, mount_root
     format_paths(&linux, Quoting::Posix)
 }
 
+/// Local paths from a list of `file://` addresses, one per line, as Linux file managers put copied
+/// files into the clipboard (GNOME's list starts with "copy" or "cut"). From the Electron
+/// version's `src/main/clipboard-formats.ts` (`fileUrls`); an address of another machine is no
+/// local path (Node's `fileURLToPath` refuses it).
+pub fn file_urls(text: &str) -> Vec<String> {
+    text.lines()
+        .map(str::trim)
+        .filter_map(|line| {
+            let rest = line.strip_prefix("file://")?;
+            let path = rest.strip_prefix("localhost").unwrap_or(rest);
+            if !path.starts_with('/') {
+                return None;
+            }
+            crate::hooks::decode_uri_component(path)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn copied_files_are_their_local_paths() {
+        let gnome = "copy\nfile:///home/me/My%20Files/a.txt\nfile:///tmp/%C3%BC.png\n";
+        assert_eq!(file_urls(gnome), ["/home/me/My Files/a.txt", "/tmp/\u{fc}.png"]);
+        assert_eq!(file_urls("file://localhost/etc/hosts\r\n"), ["/etc/hosts"]);
+        assert!(file_urls("file://server/share/a\nhttps://example.com/\nplain text").is_empty());
+    }
 
     #[test]
     fn quotes_windows_paths_only_where_cmd_and_powershell_would_need_it() {

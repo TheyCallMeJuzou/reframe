@@ -354,7 +354,10 @@ impl TerminalView {
     /// its path on Windows; on Linux Claude Code reads it from the clipboard itself, on Ctrl+V
     /// (as with 0.x).
     fn paste(&mut self, cx: &mut Context<Self>) {
-        let Some(item) = crate::clipboard::read(cx) else { return };
+        let Some(item) = crate::clipboard::read(cx) else {
+            self.paste_copied_files(cx);
+            return;
+        };
         let bracketed = self.mode().contains(TermMode::BRACKETED_PASTE);
         // Text first. (GPUI's `text()` would also give copied files' paths as text, unquoted and
         // run together: they are typed as paths below.)
@@ -368,6 +371,10 @@ impl TerminalView {
             .collect();
         if !text.is_empty() {
             self.type_bytes(input::paste_bytes(&text, bracketed), cx);
+            return;
+        }
+        // Files copied in a Linux file manager, which GPUI does not read (as 0.x: before an image).
+        if self.paste_copied_files(cx) {
             return;
         }
         for entry in item.entries() {
@@ -396,6 +403,21 @@ impl TerminalView {
                 _ => {}
             }
         }
+    }
+
+    /// Files copied in a Linux file manager are typed in as their paths (GPUI does not read
+    /// them; see `platform::clipboard_files`). Whether there were any.
+    fn paste_copied_files(&mut self, cx: &mut Context<Self>) -> bool {
+        #[cfg(not(windows))]
+        {
+            let files = crate::clipboard::copied_files(cx);
+            if !files.is_empty() {
+                self.type_paths(&files, cx);
+                return true;
+            }
+        }
+        let _ = cx;
+        false
     }
 
     /// Files (copied, or dropped onto the tile) are typed in as their paths, like in a terminal.

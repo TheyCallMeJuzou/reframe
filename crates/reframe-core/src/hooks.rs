@@ -298,7 +298,7 @@ fn match_route(url: &str) -> Option<(&str, &str)> {
 
 /// As JavaScript's `decodeURIComponent`: percent escapes as the UTF-8 bytes of characters. `None` (there: an
 /// exception) for an escape that is not two hex digits or for bytes that are not UTF-8.
-fn decode_uri_component(text: &str) -> Option<String> {
+pub(crate) fn decode_uri_component(text: &str) -> Option<String> {
     fn flush(escaped: &mut Vec<u8>, decoded: &mut String) -> Option<()> {
         decoded.push_str(std::str::from_utf8(escaped).ok()?);
         escaped.clear();

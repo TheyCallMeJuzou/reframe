@@ -1169,12 +1169,21 @@ pub fn ask_to_close(
     } else {
         t(locale, "closeWindow.message", &[("count", &count.to_string())]).unwrap_or_default()
     };
+    // Without a tray to keep it in (some Linux desktops), a kept window waits minimized.
+    #[cfg(windows)]
+    let (keep, detail) = ("closeWindow.keep", "closeWindow.detail");
+    #[cfg(not(windows))]
+    let (keep, detail) = if crate::platform::has_tray() {
+        ("closeWindow.keep", "closeWindow.detail")
+    } else {
+        ("closeWindow.keepNoTray", "closeWindow.detailNoTray")
+    };
     message_box(
         PromptLevel::Info,
         &text("closeWindow.title"),
         &message,
-        Some(&text("closeWindow.detail")),
-        &[text("closeWindow.end"), text("closeWindow.keep"), text("dialog.cancel")],
+        Some(&text(detail)),
+        &[text("closeWindow.end"), text(keep), text("dialog.cancel")],
         (1, 2),
         Some((text("closeWindow.remember"), remember)),
         window,

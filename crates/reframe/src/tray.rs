@@ -132,7 +132,7 @@ pub fn start(controller: &Entity<Controller>, cx: &mut App) {
 }
 
 /// Brings the tray's menu and tooltip in step with the windows and their sessions.
-fn refresh(controller: &Entity<Controller>, cx: &mut App) {
+pub fn refresh(controller: &Entity<Controller>, cx: &mut App) {
     let mut badges = None;
     refresh_with(controller, &mut badges, cx);
     if let Some(counts) = badges {
@@ -264,26 +264,27 @@ fn refresh_with(controller: &Entity<Controller>, badges: &mut Option<HashMap<Str
     badges.replace(counts.into_iter().collect());
 }
 
-fn first_shell(controller: &Entity<Controller>, cx: &App) -> Option<Entity<Shell>> {
-    let id = controller.read(cx).state().windows.first()?.id.clone();
-    window::shell(&id, cx)
-}
-
 /// Shows the first window and does something in it.
 fn in_first_window(
     controller: &Entity<Controller>,
     cx: &mut App,
     run: impl FnOnce(&mut Shell, &mut Window, &mut Context<Shell>) + 'static,
 ) {
-    let Some(shell) = first_shell(controller, cx) else {
+    let Some(id) = controller
+        .read(cx)
+        .state()
+        .windows
+        .first()
+        .map(|window| window.id.clone())
+    else {
+        return;
+    };
+    let Some(shell) = window::show_window(controller, &id, cx) else {
         return;
     };
     let handle = shell.read(cx).handle();
     let _ = handle.update(cx, |_, window, cx| {
-        shell.update(cx, |shell, cx| {
-            shell.show(true, cx);
-            run(shell, window, cx);
-        });
+        shell.update(cx, |shell, cx| run(shell, window, cx));
     });
 }
 
@@ -304,9 +305,7 @@ pub fn reveal_windows(controller: &Entity<Controller>, cx: &mut App) {
         }
     };
     for id in ids {
-        if let Some(shell) = window::shell(&id, cx) {
-            shell.update(cx, |shell, cx| shell.show(true, cx));
-        }
+        window::show_window(controller, &id, cx);
     }
 }
 
@@ -322,10 +321,17 @@ pub fn handle(controller: &Entity<Controller>, event: TrayEvent, cx: &mut App) {
         TrayEvent::Command(ABOUT) => {
             in_first_window(controller, cx, |shell, window, cx| shell.open_about(window, cx));
         }
+        // Next to the first window.
         TrayEvent::Command(NEW_WINDOW) => {
-            if let Some(shell) = first_shell(controller, cx) {
-                shell.update(cx, |shell, cx| shell.new_window(cx));
-            }
+            let near = controller
+                .read(cx)
+                .state()
+                .windows
+                .first()
+                .and_then(|window| window.bounds);
+            controller.update(cx, |controller, cx| {
+                controller.new_window(near, cx);
+            });
         }
         TrayEvent::Command(QUIT) => controller.update(cx, |controller, cx| controller.shutdown(cx)),
         TrayEvent::Command(UPDATE) => {
@@ -349,17 +355,15 @@ pub fn handle(controller: &Entity<Controller>, event: TrayEvent, cx: &mut App) {
         // A window's entry: shown when it is hidden, hidden when it is shown.
         TrayEvent::Command(id) => {
             let index = id.saturating_sub(WINDOW) as usize;
-            let window = controller.read(cx).state().windows.get(index).cloned();
-            let Some(shell) = window.as_ref().and_then(|window| window::shell(&window.id, cx)) else {
+            let Some(window) = controller.read(cx).state().windows.get(index).cloned() else {
                 return;
             };
-            shell.update(cx, |shell, cx| {
-                if shell.is_away() {
-                    shell.show(true, cx);
-                } else {
-                    shell.put_away(cx);
+            match window::shell(&window.id, cx) {
+                Some(shell) if !shell.read(cx).is_away() => shell.update(cx, |shell, cx| shell.put_away(cx)),
+                _ => {
+                    window::show_window(controller, &window.id, cx);
                 }
-            });
+            }
         }
         TrayEvent::Reveal { build } => {
             let name = |build: usize| if build == 2 { "installed" } else { "development" };

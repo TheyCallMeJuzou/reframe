@@ -432,6 +432,17 @@ impl Controller {
 
         // The end-to-end tests leave the system alone.
         let starts_with_system = !config.e2e && crate::platform::starts_with_system(&config.app_id);
+        // On Linux the entry names the file to start, which an AppImage's update can move: it is
+        // written anew at each start.
+        if starts_with_system
+            && cfg!(not(windows))
+            && let Err(error) = crate::platform::set_start_with_system(&config.app_id, true)
+        {
+            log.warn(
+                "could not renew starting with the system",
+                Some(json!({ "error": error })),
+            );
+        }
         let mut controller = Self {
             claude_home,
             transcripts,

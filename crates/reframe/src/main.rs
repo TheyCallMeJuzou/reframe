@@ -106,6 +106,17 @@ fn main() {
     }
 
     let start_failed = StartFailed::of(&config);
+    // reframe 0.x on Linux keeps its lock elsewhere: it must not run on the same state file.
+    #[cfg(not(windows))]
+    if let Some(pid) = platform::older_reframe_running(&config.user_data) {
+        start_failed.log.warn(
+            "reframe 0.x runs on this profile",
+            Some(serde_json::json!({ "pid": pid })),
+        );
+        let text = |key: &str| t(start_failed.locale, key, &[]).unwrap_or_default();
+        start_failed.show(&text("olderRunning.title"), &text("olderRunning.message"));
+        std::process::exit(1);
+    }
     // The component library's own icons: the arrow of a choice box, the check mark, clearing a field.
     gpui_kit::application()
         .with_assets(gpui_kit::assets::Assets)
@@ -148,11 +159,18 @@ fn main() {
                             .map(|(index, window)| (window.id.clone(), shown(index, window.hidden)))
                             .collect()
                     };
+                    // On Linux whether there is a tray decides how a window waits out of sight
+                    // (see `window::open`): the tray comes first there.
+                    #[cfg(not(windows))]
+                    tray::start(&controller, cx);
                     for (id, shown) in &windows {
                         window::open(&controller, id, *shown, cx);
                     }
                     window::init(&controller, cx);
+                    #[cfg(windows)]
                     tray::start(&controller, cx);
+                    #[cfg(not(windows))]
+                    tray::refresh(&controller, cx);
                     #[cfg(windows)]
                     foreign::start(&controller, cx);
                     controller.update(cx, |controller, cx| {

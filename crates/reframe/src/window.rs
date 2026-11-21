@@ -481,12 +481,45 @@ pub fn window_at_screen(screen: Point<Pixels>, except: Option<EntityId>, cx: &Ap
 
 /// Opens a window for every one that is added to the state from now on.
 pub fn init(controller: &Entity<Controller>, cx: &mut App) {
-    cx.subscribe(controller, |controller, event, cx| {
-        if let AppEvent::WindowOpened(id) = event {
-            open(&controller, id, true, cx);
+    cx.subscribe(controller, |controller, event, cx| match event {
+        AppEvent::WindowOpened(id) => open(&controller, id, true, cx),
+        // A window kept in the tray on Linux has no window of GPUI's: it opens again.
+        #[cfg(not(windows))]
+        AppEvent::ShowWindow(id) if shell(id, cx).is_none() => {
+            show_window(&controller, id, cx);
         }
+        #[cfg(not(windows))]
+        AppEvent::FocusTile { window, session } if shell(window, cx).is_none() => {
+            if let Some(shell) = show_window(&controller, window, cx) {
+                shell.update(cx, |shell, cx| shell.focus_tile(session.clone(), cx));
+            }
+        }
+        _ => {}
     })
     .detach();
+}
+
+/// Shows one of the state's windows: brings it back from the tray, or (on Linux, where a window
+/// in the tray is closed) opens it again. The window, if there is one.
+pub fn show_window(controller: &Entity<Controller>, window_id: &str, cx: &mut App) -> Option<Entity<Shell>> {
+    if let Some(shell) = shell(window_id, cx) {
+        shell.update(cx, |shell, cx| shell.show(true, cx));
+        return Some(shell);
+    }
+    // On Windows every window of the state has its window, shown or not.
+    if cfg!(windows)
+        || !controller
+            .read(cx)
+            .state()
+            .windows
+            .iter()
+            .any(|window| window.id == window_id)
+    {
+        return None;
+    }
+    controller.update(cx, |controller, cx| controller.set_window_hidden(window_id, false, cx));
+    open(controller, window_id, true, cx);
+    shell(window_id, cx)
 }
 
 fn to_rect(bounds: Bounds<Pixels>) -> Rect {
@@ -545,6 +578,10 @@ impl Shell {
             this.active = window.is_window_active();
             if this.active {
                 this.focused_at = FOCUS_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+                // Minimized instead of kept in a tray (Linux), the user brought it back.
+                if this.away && cfg!(not(windows)) {
+                    this.show(false, cx);
+                }
                 cx.notify();
             }
         })
@@ -885,12 +922,24 @@ impl Shell {
                 .spawn(async move { platform::hide(hwnd) })
                 .detach();
         }
-        // GPUI hides no single window on Linux: it goes to the taskbar (or the dock).
+        // GPUI hides no single window on Linux: with a tray to find it in again, the window
+        // closes (its sessions run on in reframe) and opens again when it is shown; without one
+        // it is minimized, so it stays in the dock (or taskbar).
         #[cfg(not(windows))]
         if !self.controller.read(cx).config().e2e {
-            let handle = self.handle;
+            let (handle, window_id) = (self.handle, self.window_id.clone());
+            let in_tray = platform::has_tray();
             cx.defer(move |cx| {
-                let _ = handle.update(cx, |_, window, _| window.minimize_window());
+                if in_tray {
+                    cx.default_global::<Shells>().0.remove(&window_id);
+                }
+                let _ = handle.update(cx, |_, window, _| {
+                    if in_tray {
+                        window.remove_window();
+                    } else {
+                        window.minimize_window();
+                    }
+                });
             });
         }
         cx.notify();
@@ -1558,7 +1607,7 @@ impl Shell {
             .map(|(id, _)| id.clone())
     }
 
-    fn focus_tile(&mut self, session_id: String, cx: &mut Context<Self>) {
+    pub fn focus_tile(&mut self, session_id: String, cx: &mut Context<Self>) {
         self.focus_next = Some(session_id);
         cx.notify();
     }
@@ -3474,6 +3523,17 @@ impl Element for LayoutElement {
 
 /// Opens the window for one of the state's windows. `shown`: on screen, not kept in the tray.
 pub fn open(controller: &Entity<Controller>, window_id: &str, shown: bool, cx: &mut App) {
+    // On Linux a window in the tray has no window of GPUI's (see `Shell::put_away`): it opens
+    // when it is shown. Without a tray it waits minimized. (Tests keep every window.)
+    #[cfg(not(windows))]
+    let minimized = if !shown && !controller.read(cx).config().e2e {
+        if platform::has_tray() {
+            return;
+        }
+        true
+    } else {
+        false
+    };
     // Where it was, if its top edge is still on a connected display; else only as big as it was.
     let saved = controller
         .read(cx)
@@ -3545,6 +3605,10 @@ pub fn open(controller: &Entity<Controller>, window_id: &str, shown: bool, cx: &
             move |window, cx| shell.update(cx, |shell, cx| shell.request_close(window, cx)).is_err()
         });
         cx.default_global::<Shells>().0.insert(window_id, shell.downgrade());
+        #[cfg(not(windows))]
+        if minimized {
+            window.minimize_window();
+        }
         shell
     });
     if let Err(error) = opened {
