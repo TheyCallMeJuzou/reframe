@@ -23,9 +23,9 @@ use reframe_core::session_list::SessionList;
 use reframe_core::state::{CloseWindow, Side};
 
 use crate::app::{Controller, NewSessionRequest};
+use crate::platform::{self, TrayEntry, TrayEvent};
 use crate::sessions::status_name;
 use crate::tray;
-use crate::win::{self, TrayEntry, TrayEvent};
 use crate::window::{self, DragKind, MenuEntry, RenameTarget, Shell};
 
 type Command = (Value, Sender<Value>);
@@ -137,7 +137,7 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
         }
         // The tray icon's tooltip and menu; a separator is null.
         Some("tray") => {
-            let (tooltip, menu) = win::tray();
+            let (tooltip, menu) = platform::tray();
             let menu: Vec<Value> = menu.iter().map(tray_json).collect();
             json!({ "tooltip": tooltip, "menu": menu })
         }
@@ -147,7 +147,7 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
                 Some(TrayEvent::Clicked)
             } else {
                 let label = text("label").unwrap_or_default();
-                tray_command(&win::tray().1, &label).map(TrayEvent::Command)
+                tray_command(&platform::tray().1, &label).map(TrayEvent::Command)
             };
             match event {
                 Some(event) => {
@@ -557,7 +557,7 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
             let screen = window.bounds();
             // How much bigger the whole window is, in the state's pixels.
             let frame = {
-                let frame = crate::win::window_frame();
+                let frame = crate::platform::window_frame();
                 let scale = window.scale_factor();
                 [frame.width as f32 / scale, frame.height as f32 / scale]
             };
@@ -658,6 +658,7 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
         },
         // The terminal window a process's console is in (its tab's window, or its own console
         // window).
+        #[cfg(windows)]
         Some("terminal_window_of") => {
             let pid = number("pid") as u32;
             match crate::console::console_owners(&[pid]) {
@@ -671,6 +672,7 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
         // What reframe's GPUI reports while something from another program is dragged over a
         // window: a point of the window (logical), or "end"; "source" is the terminal window the
         // drag comes from (instead of the window in front).
+        #[cfg(windows)]
         Some("tab_drag") => {
             let Some(watcher) = crate::foreign::watcher(cx) else {
                 return json!({ "error": "no watcher" });
@@ -696,6 +698,7 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
             });
             json!({ "ok": true })
         }
+        #[cfg(windows)]
         Some("drop_terminal_window") | Some("terminal_appeared") => {
             let hwnd = number("hwnd") as isize;
             let Some(shell) = shell_of(controller, text("window"), cx) else {
@@ -723,7 +726,7 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
                 cx.update(|cx| {
                     let drop = crate::foreign::ForeignDrop {
                         hwnd,
-                        title: win::window_title(hwnd),
+                        title: platform::window_title(hwnd),
                         window_id,
                         at,
                         sessions,
@@ -847,6 +850,7 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
         // A real OLE drag let go over a point of the window (logical): "files" ([name, text] pairs)
         // that exist only in the drag, or without files something no program knows (a terminal
         // tab). The pointer moves there for it (see `ole_drop`).
+        #[cfg(windows)]
         Some("ole_drop") => {
             let Some(shell) = shell_of(controller, text("window"), cx) else {
                 return json!({ "error": "no window" });
@@ -898,13 +902,14 @@ fn run(controller: &Entity<Controller>, command: &Value, cx: &mut App) -> Value 
             }
         }
         // Puts the window ("window") where another one ("over") is, with its size, in front of it.
+        #[cfg(windows)]
         Some("place_over") => {
             let hwnd_of =
                 |id: Option<String>, cx: &App| shell_of(controller, id, cx).and_then(|shell| shell.read(cx).hwnd());
             let (Some(window), Some(over)) = (hwnd_of(text("window"), cx), hwnd_of(text("over"), cx)) else {
                 return json!({ "error": "no window" });
             };
-            let placed = win::place_like(window, over);
+            let placed = platform::place_like(window, over);
             json!({ "ok": placed })
         }
         // The web links opened so far (caught instead of opened).

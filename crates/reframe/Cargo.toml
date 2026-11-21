@@ -13,13 +13,21 @@ path = "src/main.rs"
 alacritty_terminal = "0.26.0"
 futures = "0.3.34"
 gpui-kit = "0.9.1"
-# The Windows backend GPUI runs on (reframe's copy, see vendor/): what it adds to it.
-gpui-pre-windows = "0.3.12"
 indexmap = "2.14.2"
 notify = "8.2.2"
 image = { version = "0.25.10", default-features = false, features = ["png", "bmp", "tiff"] }
 uuid = { version = "1.29.2", features = ["v4"] }
 reframe-core = { path = "../reframe-core" }
+raw-window-handle = "0.6"
+base64 = "0.22.1"
+sha2 = "0.10.9"
+serde_json = { workspace = true, features = ["preserve_order"] }
+serde = { workspace = true, features = ["derive"] }
+
+
+[target.'cfg(windows)'.dependencies]
+# The Windows backend GPUI runs on (reframe's copy, see vendor/): what it adds to it.
+gpui-pre-windows = "0.3.12"
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_Globalization",
@@ -52,13 +60,13 @@ windows = { version = "0.62", features = [
     "Win32_UI_Shell_PropertiesSystem",
     "Win32_UI_WindowsAndMessaging",
 ] }
-raw-window-handle = "0.6"
 # For COM objects of reframe's own (`#[implement]`), the version `windows` uses.
 windows-core = "0.62"
-base64 = "0.22.1"
-sha2 = "0.10.9"
-serde_json = { workspace = true, features = ["preserve_order"] }
-serde = { workspace = true, features = ["derive"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+# Update checks and downloads (Windows uses WinHTTP).
+ureq = "3"
 
 [build-dependencies]
 embed-resource = "3.0.12"

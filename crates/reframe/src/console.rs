@@ -7,7 +7,7 @@
 
 use std::os::windows::process::CommandExt;
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use reframe_core::foreign_match::{AttachedProcess, ConsoleOwner};
 use windows_sys::Win32::Foundation::{CloseHandle, GENERIC_READ, GENERIC_WRITE, GetLastError, INVALID_HANDLE_VALUE};
@@ -21,8 +21,6 @@ use windows_sys::Win32::System::Threading::{
 };
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{MAPVK_VK_TO_VSC, MapVirtualKeyW, VkKeyScanW};
 use windows_sys::Win32::UI::WindowsAndMessaging::{GA_ROOTOWNER, GW_OWNER, GetAncestor, GetWindow};
-
-use crate::process::{is_alive, kill_tree};
 
 /// The argument that makes reframe a console helper.
 pub const HELPER_ARG: &str = "--console-helper";
@@ -286,48 +284,7 @@ pub fn type_into_console(pid: u32, text: &str) -> Result<(), String> {
     helper(&["type".to_owned(), pid.to_string(), text.to_owned()]).map(|_| ())
 }
 
-/// How a claude outside reframe was ended.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum StopResult {
-    Exited,
-    Killed,
-    Failed,
-}
-
-fn exits_within(pid: u32, time: Duration) -> bool {
-    let end = Instant::now() + time;
-    while Instant::now() < end {
-        if !is_alive(pid) {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(200));
-    }
-    !is_alive(pid)
-}
-
-/// Ends a claude that runs outside reframe the way its user would: Ctrl+C twice in its terminal.
-/// Only when that does not work is the process tree killed. Used before reframe continues the
-/// session itself, so the same conversation never runs in two places. Blocks for seconds: call it
-/// off the UI thread. `warn` is told what went wrong on the way.
-pub fn stop_external_claude(pid: u32, warn: &dyn Fn(&str, String)) -> StopResult {
-    if !is_alive(pid) {
-        return StopResult::Exited;
-    }
-    let typed = helper(&["interrupt".to_owned(), pid.to_string()]);
-    if let Err(error) = typed {
-        warn("could not type Ctrl+C into the other terminal", error);
-    }
-    if exits_within(pid, Duration::from_millis(6000)) {
-        return StopResult::Exited;
-    }
-    warn(
-        "claude in the other terminal did not exit on Ctrl+C, killing it",
-        pid.to_string(),
-    );
-    kill_tree(pid);
-    if exits_within(pid, Duration::from_millis(3000)) {
-        StopResult::Killed
-    } else {
-        StopResult::Failed
-    }
+/// Types Ctrl+C twice into the console `pid` is attached to (see `crate::takeover`).
+pub fn interrupt(pid: u32) -> Result<(), String> {
+    helper(&["interrupt".to_owned(), pid.to_string()]).map(|_| ())
 }

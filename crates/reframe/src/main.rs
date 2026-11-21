@@ -5,27 +5,31 @@ mod app;
 mod browser;
 mod clipboard;
 mod colors;
+#[cfg(windows)]
 mod console;
 mod dialogs;
 mod e2e;
 mod find;
+#[cfg(windows)]
 mod foreign;
 mod glyphs;
 mod http;
 mod icons;
 mod input;
 mod keys;
+#[cfg(windows)]
 mod ole_drop;
+mod platform;
 mod process;
 mod pty;
 mod sessions;
+mod takeover;
 mod terminal;
 mod terminal_view;
 mod theme;
 mod tray;
 mod updates;
 mod watcher;
-mod win;
 mod window;
 mod wsl;
 
@@ -66,6 +70,7 @@ fn parse_args() -> Args {
 
 fn main() {
     // A copy of reframe started to type into another console: it does only that.
+    #[cfg(windows)]
     if let Some(code) = console::run_from_args() {
         std::process::exit(code);
     }
@@ -83,8 +88,8 @@ fn main() {
     log_panics(&config);
 
     // One reframe per profile: the running one shows its windows and this one leaves.
-    let profile = win::profile_key(&config.user_data);
-    if !win::claim_profile(&profile) {
+    let profile = platform::profile_key(&config.user_data);
+    if !platform::claim_profile(&profile) {
         let build = config.copy.build();
         reframe_core::log::Logger::new(config.user_data.join("logs")).info(
             "reframe already runs, showing its windows",
@@ -92,7 +97,7 @@ fn main() {
         );
         // It may still be starting.
         for _ in 0..50 {
-            if win::reveal_running(&profile, build) {
+            if platform::reveal_running(&profile, build) {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(100));
@@ -106,8 +111,10 @@ fn main() {
         .with_assets(gpui_kit::assets::Assets)
         .run(move |cx| {
             gpui_kit::init(cx);
+            theme::choose_fonts(cx);
             // A picture dragged out of a browser exists only in the drag: written there when it is
             // dropped, and cleared with the other dropped files.
+            #[cfg(windows)]
             gpui_windows::set_dropped_files_folder(reframe_core::cleanup::drops_dir());
             dialogs::apply_theme(cx);
             // reframe says when it quits: after its sessions were ended, not when a window goes.
@@ -146,6 +153,7 @@ fn main() {
                     }
                     window::init(&controller, cx);
                     tray::start(&controller, cx);
+                    #[cfg(windows)]
                     foreign::start(&controller, cx);
                     controller.update(cx, |controller, cx| {
                         controller.resume_sessions(cx);
@@ -179,17 +187,20 @@ fn installer_helper() -> Option<i32> {
     match args.first().map(String::as_str) {
         Some("--quit") => {
             let config = Config::from_environment();
-            Some(if win::ask_running_to_quit(&win::profile_key(&config.user_data)) {
-                0
-            } else {
-                1
-            })
+            Some(
+                if platform::ask_running_to_quit(&platform::profile_key(&config.user_data)) {
+                    0
+                } else {
+                    1
+                },
+            )
         }
+        #[cfg(windows)]
         Some("--shortcut-app-id") => {
             let (Some(link), Some(id)) = (args.get(1), args.get(2)) else {
                 return Some(2);
             };
-            Some(match win::set_shortcut_app_id(std::path::Path::new(link), id) {
+            Some(match platform::set_shortcut_app_id(std::path::Path::new(link), id) {
                 Ok(()) => 0,
                 Err(error) => {
                     eprintln!("{link}: {error}");
@@ -256,7 +267,7 @@ impl StartFailed {
     fn show(&self, title: &str, message: &str) {
         eprintln!("{title}: {message}");
         if !self.quiet {
-            win::error_box(title, message);
+            platform::error_box(title, message);
         }
     }
 }

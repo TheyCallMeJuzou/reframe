@@ -526,6 +526,22 @@ pub fn resolve_locale(system_locale: &str) -> Locale {
     }
 }
 
+/// The user's language on Linux and other POSIX systems, as "de-AT": from `LC_ALL`, `LC_MESSAGES`
+/// or `LANG`, the first that is set ("de_AT.UTF-8@euro" becomes "de-AT"; "C" and "POSIX" say
+/// nothing, which is English).
+pub fn posix_locale(lc_all: Option<&str>, lc_messages: Option<&str>, lang: Option<&str>) -> String {
+    let value = [lc_all, lc_messages, lang]
+        .into_iter()
+        .flatten()
+        .find(|value| !value.is_empty())
+        .unwrap_or("");
+    let name = value.split(['.', '@']).next().unwrap_or("");
+    if name.is_empty() || name == "C" || name == "POSIX" {
+        return "en-US".into();
+    }
+    name.replace('_', "-")
+}
+
 /// The locale in use: the chosen language, or the system's while the setting says "system". (In the Electron
 /// version this is a line of `src/main/app.ts`, `chosen === 'system' ? this.systemLocale : chosen`.)
 pub fn locale_of(language: Language, system_locale: Locale) -> Locale {
@@ -598,6 +614,19 @@ mod tests {
     use std::collections::HashSet;
 
     use super::*;
+
+    #[test]
+    fn a_posix_locale_is_read_like_the_system_reads_it() {
+        assert_eq!(posix_locale(None, None, Some("de_AT.UTF-8")), "de-AT");
+        assert_eq!(posix_locale(Some("en_GB.UTF-8"), None, Some("de_DE.UTF-8")), "en-GB");
+        assert_eq!(posix_locale(Some(""), Some("de_CH@euro"), None), "de-CH");
+        assert_eq!(posix_locale(None, None, Some("C.UTF-8")), "en-US");
+        assert_eq!(posix_locale(None, None, None), "en-US");
+        assert_eq!(
+            resolve_locale(&posix_locale(None, None, Some("de_DE.UTF-8"))),
+            Locale::De
+        );
+    }
 
     fn key(name: &str) -> MessageKey {
         MessageKey::new(name).expect("a message key")

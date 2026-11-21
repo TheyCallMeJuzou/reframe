@@ -27,8 +27,8 @@ use serde_json::json;
 use uuid::Uuid;
 
 use super::{AppEvent, Controller, now_ms};
-use crate::console::{StopResult, stop_external_claude};
 use crate::process::{is_alive, process_start};
+use crate::takeover::{StopResult, stop_external_claude};
 use crate::window::{self, Question};
 
 impl Controller {

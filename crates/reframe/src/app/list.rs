@@ -537,6 +537,7 @@ impl Controller {
 }
 
 /// A moment in the user's time zone, as Windows knows it.
+#[cfg(windows)]
 pub fn local_time(ms: f64) -> LocalTime {
     use windows_sys::Win32::Foundation::{FILETIME, SYSTEMTIME};
     use windows_sys::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime};
@@ -571,5 +572,24 @@ pub fn local_time(ms: f64) -> LocalTime {
         day: u32::from(local.wDay),
         hour: u32::from(local.wHour),
         minute: u32::from(local.wMinute),
+    }
+}
+
+/// A moment in the user's time zone, as the C library knows it (`TZ`, `/etc/localtime`).
+#[cfg(not(windows))]
+pub fn local_time(ms: f64) -> LocalTime {
+    let seconds = (ms.max(0.0) / 1000.0) as libc::time_t;
+    // SAFETY: an all-zero `tm` is a valid value to be filled in.
+    let mut local: libc::tm = unsafe { std::mem::zeroed() };
+    // SAFETY: plain values in and out; localtime_r keeps nothing.
+    if unsafe { libc::localtime_r(&seconds, &mut local) }.is_null() {
+        return reframe_core::session_list::utc_time(ms);
+    }
+    LocalTime {
+        year: local.tm_year + 1900,
+        month: u32::try_from(local.tm_mon + 1).unwrap_or(1),
+        day: u32::try_from(local.tm_mday).unwrap_or(1),
+        hour: u32::try_from(local.tm_hour).unwrap_or(0),
+        minute: u32::try_from(local.tm_min).unwrap_or(0),
     }
 }

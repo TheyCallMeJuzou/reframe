@@ -9,21 +9,25 @@
 
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
-use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+#[cfg(windows)]
 use reframe_core::claude::registry::RegistryEntry;
 use reframe_core::log::Logger;
-use reframe_core::wsl::{WSL_SHARES, linux_path_of};
+use reframe_core::wsl::WSL_SHARES;
+#[cfg(windows)]
+use reframe_core::wsl::linux_path_of;
 use reframe_core::wsl_distro::{
-    PROBE_SCRIPT, WslInfo, decode_wsl_output, interop_of, is_idle, looks_like_claude, parent_pid_command,
-    parse_distro_list, parse_probe, shells_of,
+    PROBE_SCRIPT, WslInfo, decode_wsl_output, looks_like_claude, parse_distro_list, parse_probe,
 };
+#[cfg(windows)]
+use reframe_core::wsl_distro::{interop_of, is_idle, parent_pid_command, shells_of};
 use serde_json::json;
-use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
+
+use crate::process::NoWindow;
 
 /// How long reading from a distribution's share may take before it counts as no answer: the
 /// share starts a distribution that is not running, which takes seconds.
@@ -33,6 +37,7 @@ const NO_CLAUDE: Duration = Duration::from_millis(30_000);
 /// How long the list of running distributions holds.
 const RUNNING: Duration = Duration::from_millis(3000);
 /// How long a claude whose terminal could not be told is left alone before it is asked again.
+#[cfg(windows)]
 const NO_TERMINAL: Duration = Duration::from_millis(5000);
 
 /// wsl.exe, or a stand-in script run by node (as in the end-to-end tests).
@@ -83,6 +88,7 @@ pub struct WslDistros {
     running_now: Mutex<Option<(Instant, Vec<String>)>>,
     /// Processes that keep distributions running (started from the session list).
     keepers: Mutex<HashMap<String, Child>>,
+    #[cfg(windows)]
     terminals: Mutex<HashMap<String, (Instant, Option<u32>)>>,
     /// Distributions Claude Code was found in since the controller last asked.
     found: Mutex<HashSet<String>>,
@@ -103,6 +109,7 @@ impl WslDistros {
             probing: Mutex::new(()),
             running_now: Mutex::new(None),
             keepers: Mutex::new(HashMap::new()),
+            #[cfg(windows)]
             terminals: Mutex::new(HashMap::new()),
             found: Mutex::new(HashSet::new()),
         }
@@ -110,6 +117,9 @@ impl WslDistros {
 
     /// Runs wsl.exe with these arguments; its output, or what went wrong.
     fn run(&self, args: &[&str], timeout: Duration) -> Result<String, String> {
+        if cfg!(not(windows)) {
+            return Err("WSL is a Windows thing".into());
+        }
         let mut child = Command::new(&self.command.file)
             .args(&self.command.prefix_args)
             .args(args)
@@ -117,7 +127,7 @@ impl WslDistros {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
-            .creation_flags(CREATE_NO_WINDOW)
+            .no_window()
             .spawn()
             .map_err(|error| error.to_string())?;
         let mut stdout = child.stdout.take().ok_or("no output")?;
@@ -276,11 +286,13 @@ impl WslDistros {
 
     /// The shells between a claude and WSL's own process for its terminal (see
     /// `wsl_distro::shells_of`).
+    #[cfg(windows)]
     pub fn shells_of(&self, distro: &str, pid: u32) -> Vec<u32> {
         shells_of(pid, &|pid, file| self.read_proc(distro, pid, file))
     }
 
     /// Whether a Linux process runs no program of its own (a shell at its prompt).
+    #[cfg(windows)]
     pub fn idle(&self, distro: &str, pid: u32) -> bool {
         is_idle(pid, &|pid, file| self.read_proc(distro, pid, file))
     }
@@ -289,6 +301,7 @@ impl WslDistros {
     /// program (wsl.exe) that started the WSL session it runs in. A Windows program started
     /// through that session's interop socket is that program's child, so reframe's own
     /// executable, run that way, tells which it is. Asked once per claude.
+    #[cfg(windows)]
     pub fn terminal_of(&self, distro: &str, entry: &RegistryEntry) -> Option<u32> {
         let started = entry
             .proc_start
@@ -312,6 +325,7 @@ impl WslDistros {
         terminal
     }
 
+    #[cfg(windows)]
     fn ask_terminal(&self, distro: &str, pid: u32) -> Option<u32> {
         let interop = interop_of(&self.read_proc(distro, pid, "environ").unwrap_or_default());
         let info = self.info(distro);
@@ -389,7 +403,7 @@ impl WslDistros {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .creation_flags(CREATE_NO_WINDOW)
+            .no_window()
             .spawn();
         match keeper {
             Ok(keeper) => {

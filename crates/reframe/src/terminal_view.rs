@@ -18,9 +18,8 @@ use reframe_core::paste::{Quoting, format_paths};
 use crate::find::{self, Step};
 use crate::pty::{Pty, TermSize};
 use crate::terminal::Terminal;
-use crate::{colors, glyphs, input};
+use crate::{colors, glyphs, input, theme};
 
-const FONT_FAMILY: &str = "Cascadia Mono";
 /// The terminals' font size, the same in every window (a preference).
 pub struct TerminalFontSize(pub f32);
 
@@ -351,8 +350,9 @@ impl TerminalView {
             .is_some_and(|selection| !selection.is_empty())
     }
 
-    /// Text is pasted as text and copied files as their paths. For an image, Claude Code's own
-    /// image-paste key (Alt+V) is sent and it reads the clipboard itself.
+    /// Text is pasted as text and copied files as their paths. An image is saved and pasted as
+    /// its path on Windows; on Linux Claude Code reads it from the clipboard itself, on Ctrl+V
+    /// (as with 0.x).
     fn paste(&mut self, cx: &mut Context<Self>) {
         let Some(item) = crate::clipboard::read(cx) else { return };
         let bracketed = self.mode().contains(TermMode::BRACKETED_PASTE);
@@ -379,6 +379,10 @@ impl TerminalView {
                 // An image is saved to a file here and pasted as its path, which Claude Code
                 // attaches as an image. Its own clipboard reader (Alt+V) starts PowerShell and
                 // took about ten seconds for a small picture; it stays as the fallback.
+                ClipboardEntry::Image(_) if cfg!(not(windows)) => {
+                    self.type_bytes(b"\x16".to_vec(), cx);
+                    return;
+                }
                 ClipboardEntry::Image(image) => {
                     match save_clipboard_image(image) {
                         Some(file) => {
@@ -397,7 +401,7 @@ impl TerminalView {
     /// Files (copied, or dropped onto the tile) are typed in as their paths, like in a terminal.
     pub fn type_paths(&mut self, paths: &[std::path::PathBuf], cx: &mut Context<Self>) {
         let paths: Vec<String> = paths.iter().map(|path| self.path_for_session(path)).collect();
-        let quoting = if self.wsl.is_some() {
+        let quoting = if self.wsl.is_some() || cfg!(not(windows)) {
             Quoting::Posix
         } else {
             Quoting::Windows
@@ -830,9 +834,9 @@ impl IntoElement for TerminalElement {
 }
 
 fn terminal_font(flags: Flags) -> Font {
-    let mut font = font(FONT_FAMILY);
+    let mut font = font(theme::terminal_font());
     // Symbols the terminal font lacks come from the monochrome symbol font before the colour emoji font.
-    font.fallbacks = Some(FontFallbacks::from_fonts(vec!["Segoe UI Symbol".into()]));
+    font.fallbacks = Some(FontFallbacks::from_fonts(theme::symbol_fonts().to_vec()));
     if flags.contains(Flags::BOLD) {
         font.weight = FontWeight::BOLD;
     }
@@ -914,7 +918,7 @@ impl Element for TerminalElement {
     ) -> Self::PrepaintState {
         // Cell size from the font: the advance of a character, and its height times the line height.
         let text_system = window.text_system().clone();
-        let font_id = text_system.resolve_font(&font(FONT_FAMILY));
+        let font_id = text_system.resolve_font(&font(theme::terminal_font()));
         let font_size = font_size(cx);
         let cell_width = text_system
             .advance(font_id, font_size, 'm')

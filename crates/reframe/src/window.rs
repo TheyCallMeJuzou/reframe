@@ -16,6 +16,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use futures::channel::oneshot;
 
 use gpui_kit::component::input::{Input, InputEvent, InputState};
+#[cfg(not(windows))]
+use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{Sizable as _, WindowExt as _};
 use gpui_kit::prelude::FluentBuilder;
@@ -38,9 +40,9 @@ use crate::dialogs;
 use crate::find::Step;
 use crate::icons::{Icon, icon};
 use crate::keys;
+use crate::platform;
 use crate::terminal_view::TerminalView;
 use crate::theme;
-use crate::win;
 
 /// A separator being dragged.
 struct SeparatorDrag {
@@ -154,6 +156,7 @@ pub type TerminalAnswer = Option<(Vec<String>, Option<DropTarget>)>;
 
 /// Asks in a window which sessions of a terminal window dropped at `at` (in the window, logical)
 /// to take over. `None` when the window is gone or the user cancelled.
+#[cfg(windows)]
 pub fn ask_terminal(
     window_id: &str,
     candidates: Vec<TerminalCandidate>,
@@ -184,6 +187,7 @@ pub fn ask_terminal(
 /// The window of reframe at a point of the screen in pixels (as Windows tells the pointer), and
 /// the point in it (logical, as GPUI places things); where windows overlap, the one that was
 /// active last.
+#[cfg(windows)]
 pub fn window_at_physical(x: i32, y: i32, cx: &App) -> Option<(String, Point<Pixels>)> {
     shells(cx)
         .iter()
@@ -191,7 +195,7 @@ pub fn window_at_physical(x: i32, y: i32, cx: &App) -> Option<(String, Point<Pix
         .filter(|shell| !shell.away)
         .filter_map(|shell| {
             let hwnd = shell.hwnd?;
-            let (left, top, width, height) = win::client_rect(hwnd)?;
+            let (left, top, width, height) = platform::client_rect(hwnd)?;
             let inside = x >= left && y >= top && x < left + width && y < top + height;
             inside.then(|| {
                 let local = point(px((x - left) as f32 / shell.scale), px((y - top) as f32 / shell.scale));
@@ -201,7 +205,7 @@ pub fn window_at_physical(x: i32, y: i32, cx: &App) -> Option<(String, Point<Pix
         .collect::<Vec<_>>()
         .into_iter()
         // Where windows overlap, the one in front.
-        .min_by_key(|(hwnd, ..)| win::stacking_place(*hwnd))
+        .min_by_key(|(hwnd, ..)| platform::stacking_place(*hwnd))
         .map(|(_, id, local)| (id, local))
 }
 
@@ -255,11 +259,69 @@ impl MenuEntry {
 struct OpenMenu {
     entries: Vec<MenuEntry>,
     /// What the entry numbered n + 1 does.
+    #[cfg_attr(not(windows), allow(dead_code))]
     actions: Vec<MenuAction>,
+    /// On Linux the window draws the menu itself (GPUI shows no system menus there): the menu,
+    /// where it is, and what closes it. None under the test channel.
+    #[cfg(not(windows))]
+    drawn: Option<(Entity<PopupMenu>, Point<Pixels>, Subscription)>,
+}
+
+/// Fills the component library's menu from the entries (Linux).
+#[cfg(not(windows))]
+fn menu_items(
+    mut menu: PopupMenu,
+    entries: &[MenuEntry],
+    shell: &WeakEntity<Shell>,
+    window: &mut Window,
+    cx: &mut Context<PopupMenu>,
+) -> PopupMenu {
+    for entry in entries {
+        if entry.separator {
+            menu = menu.separator();
+        }
+        if !entry.children.is_empty() && entry.enabled {
+            let (children, shell) = (entry.children.clone(), shell.clone());
+            menu = menu.submenu(entry.label.clone(), window, cx, move |menu, window, cx| {
+                menu_items(menu, &children, &shell, window, cx)
+            });
+            continue;
+        }
+        let item = match &entry.swatch {
+            Some(color) => {
+                let (label, color) = (entry.label.clone(), theme::parse_color(color));
+                PopupMenuItem::element(move |_, _| {
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.0))
+                        .child(div().size(px(10.0)).flex_none().rounded_full().bg(color))
+                        .child(label.clone())
+                })
+            }
+            None => PopupMenuItem::new(entry.label.clone()),
+        };
+        let mut item = item.checked(entry.checked).disabled(!entry.enabled);
+        if let Some(action) = entry.action.clone() {
+            let shell = shell.clone();
+            item = item.on_click(move |_, window, cx| {
+                // Once the menu is gone: what the entry does may want the keyboard (renaming).
+                let (shell, action) = (shell.clone(), action.clone());
+                window.defer(cx, move |window, cx| {
+                    let _ = shell.update(cx, |shell, cx| {
+                        shell.menu = None;
+                        shell.run_menu_action(&action, window, cx);
+                    });
+                });
+            });
+        }
+        menu = menu.item(item);
+    }
+    menu
 }
 
 /// The entries as Windows' menu takes them, numbered in order; their actions go to `actions`.
-fn context_entries(entries: &[MenuEntry], actions: &mut Vec<MenuAction>) -> Vec<win::ContextEntry> {
+fn context_entries(entries: &[MenuEntry], actions: &mut Vec<MenuAction>) -> Vec<platform::ContextEntry> {
     entries
         .iter()
         .map(|entry| {
@@ -275,7 +337,7 @@ fn context_entries(entries: &[MenuEntry], actions: &mut Vec<MenuAction>) -> Vec<
                 let part = |at: usize| u8::from_str_radix(&hex[at..at + 2], 16).ok();
                 Some((part(0)?, part(2)?, part(4)?))
             });
-            win::ContextEntry {
+            platform::ContextEntry {
                 label: entry.label.clone(),
                 enabled: entry.enabled,
                 checked: entry.checked,
@@ -384,8 +446,9 @@ pub fn shell(window_id: &str, cx: &App) -> Option<Entity<Shell>> {
     cx.try_global::<Shells>()?.0.get(window_id)?.upgrade()
 }
 
-/// A window's context menu was answered (`win::show_context_menu`): its window does what was
+/// A window's context menu was answered (`platform::show_context_menu`): its window does what was
 /// picked.
+#[cfg(windows)]
 pub fn menu_answered(hwnd: isize, picked: Option<u32>, cx: &mut App) {
     let Some(shell) = shells(cx).into_iter().find(|shell| shell.read(cx).hwnd == Some(hwnd)) else {
         return;
@@ -514,7 +577,7 @@ impl Shell {
             asked: 0,
             away: !shown,
             active: window.is_window_active(),
-            hwnd: win::hwnd_of(window),
+            hwnd: platform::hwnd_of(window),
             focused_at: FOCUS_COUNT.fetch_add(1, Ordering::Relaxed) + 1,
             screen: window.bounds(),
             drawn: 0,
@@ -707,7 +770,7 @@ impl Shell {
         // The state keeps the whole window, as 0.x did; GPUI tells of its client area.
         let frame = WindowFrame {
             scale: f64::from(window.scale_factor()),
-            ..win::window_frame()
+            ..platform::window_frame()
         };
         let outer = frame.outer_of(reframe_core::state::Bounds {
             x: f64::from(f32::from(bounds.origin.x)),
@@ -818,7 +881,17 @@ impl Shell {
         });
         if let Some(hwnd) = self.hwnd {
             // Posted: Windows tells the window at once that it is hidden.
-            cx.foreground_executor().spawn(async move { win::hide(hwnd) }).detach();
+            cx.foreground_executor()
+                .spawn(async move { platform::hide(hwnd) })
+                .detach();
+        }
+        // GPUI hides no single window on Linux: it goes to the taskbar (or the dock).
+        #[cfg(not(windows))]
+        if !self.controller.read(cx).config().e2e {
+            let handle = self.handle;
+            cx.defer(move |cx| {
+                let _ = handle.update(cx, |_, window, _| window.minimize_window());
+            });
         }
         cx.notify();
     }
@@ -835,7 +908,7 @@ impl Shell {
         let (hwnd, handle) = (self.hwnd, self.handle);
         cx.spawn(async move |_, cx| {
             if let Some(hwnd) = hwnd {
-                win::show(hwnd, activate);
+                platform::show(hwnd, activate);
             }
             if activate {
                 let _ = cx.update(|cx| handle.update(cx, |_, window, _| window.activate_window()));
@@ -855,15 +928,30 @@ impl Shell {
         self.hwnd
     }
 
-    /// Whether Windows shows the window (minimized counts).
+    /// Whether the system shows the window (minimized counts).
     pub fn is_on_screen(&self) -> bool {
-        self.hwnd.is_some_and(win::is_visible)
+        if cfg!(windows) {
+            self.hwnd.is_some_and(platform::is_visible)
+        } else {
+            !self.away
+        }
     }
 
-    /// The window's taskbar button flashes until the window is looked at.
+    /// The window's taskbar button flashes until the window is looked at (on Linux the desktop
+    /// is asked to draw attention to it, as it can).
     pub fn flash(&self, cx: &App) {
         if let Some(hwnd) = self.hwnd {
-            cx.foreground_executor().spawn(async move { win::flash(hwnd) }).detach();
+            cx.foreground_executor()
+                .spawn(async move { platform::flash(hwnd) })
+                .detach();
+        }
+        #[cfg(not(windows))]
+        {
+            let handle = self.handle;
+            cx.spawn(async move |cx| {
+                let _ = cx.update(|cx| handle.update(cx, |_, window, _| window.request_attention()));
+            })
+            .detach();
         }
     }
 
@@ -981,25 +1069,52 @@ impl Shell {
         }
         let mut actions = Vec::new();
         let items = context_entries(&entries, &mut actions);
-        self.menu = Some(OpenMenu { entries, actions });
+        let e2e = self.controller.read(cx).config().e2e;
+        #[cfg(not(windows))]
+        let drawn = (!e2e).then(|| {
+            let shell = cx.weak_entity();
+            let shown = entries.clone();
+            let view = PopupMenu::build(window, cx, move |menu, window, cx| {
+                menu_items(menu, &shown, &shell, window, cx)
+            });
+            let dismissed = cx.subscribe(&view, |this, _, _: &DismissEvent, cx| {
+                this.menu = None;
+                cx.notify();
+            });
+            (view, position, dismissed)
+        });
+        self.menu = Some(OpenMenu {
+            entries,
+            actions,
+            #[cfg(not(windows))]
+            drawn,
+        });
         // The menu has the keyboard: the window's keys reach it (Escape closes it), whatever had
-        // the keyboard before (a field that is gone by now). The system's menu takes it anyway.
+        // the keyboard before (a field that is gone by now). The system's menu takes it anyway;
+        // one drawn in the window gets it.
         window.focus(&self.focus, cx);
+        #[cfg(not(windows))]
+        if let Some((view, ..)) = self.menu.as_ref().and_then(|menu| menu.drawn.as_ref()) {
+            let focus = view.read(cx).focus_handle(cx);
+            window.focus(&focus, cx);
+        }
         cx.notify();
-        if self.controller.read(cx).config().e2e {
+        if e2e || cfg!(not(windows)) {
+            let _ = items;
             return;
         }
         let Some(hwnd) = self.hwnd else { return };
-        let Some((left, top, ..)) = win::client_rect(hwnd) else {
+        let Some((left, top, ..)) = platform::client_rect(hwnd) else {
             return;
         };
         let scale = window.scale_factor();
         let x = left + (f32::from(position.x) * scale).round() as i32;
         let y = top + (f32::from(position.y) * scale).round() as i32;
-        win::show_context_menu(hwnd, x, y, items);
+        platform::show_context_menu(hwnd, x, y, items);
     }
 
     /// The system's menu closed: with the entry numbered `picked`, or without one.
+    #[cfg(windows)]
     pub fn menu_answered(&mut self, picked: Option<u32>, window: &mut Window, cx: &mut Context<Self>) {
         let Some(menu) = self.menu.take() else { return };
         cx.notify();
@@ -1905,14 +2020,16 @@ impl Shell {
 
     /// A terminal window with claudes is dragged over this window (at `at`, logical): where it
     /// would go is shown; `None` when it left.
+    #[cfg(windows)]
     pub fn set_foreign_hover(&mut self, at: Option<Point<Pixels>>, cx: &mut Context<Self>) {
         let preview = at.and_then(|at| self.drop_spot_at(at, "", DragKind::Tile, cx).1);
         self.set_drop_preview(preview, cx);
     }
 
     /// A point of this window (logical) on the screen, in pixels.
+    #[cfg(windows)]
     pub fn to_physical(&self, at: Point<Pixels>) -> Option<(i32, i32)> {
-        let (left, top, ..) = win::client_rect(self.hwnd?)?;
+        let (left, top, ..) = platform::client_rect(self.hwnd?)?;
         Some((
             left + (f32::from(at.x) * self.scale).round() as i32,
             top + (f32::from(at.y) * self.scale).round() as i32,
@@ -2969,7 +3086,7 @@ impl Render for Shell {
             .flex_col()
             .bg(rgb(theme::BG))
             .text_color(rgb(theme::TEXT))
-            .font_family(theme::UI_FONT)
+            .font_family(theme::ui_font())
             .text_size(px(13.0))
             .line_height(relative(theme::LINE_HEIGHT))
             .track_focus(&self.focus)
@@ -3085,14 +3202,67 @@ impl Render for Shell {
                     .child(drag.label.clone()),
             );
         }
-        if self.menu.is_some() {
+        // A menu drawn in the window (Linux) closes itself when the pointer goes down elsewhere.
+        #[cfg(not(windows))]
+        let drawn = self.menu.as_ref().and_then(|menu| menu.drawn.as_ref());
+        #[cfg(windows)]
+        let drawn: Option<()> = None;
+        #[cfg(not(windows))]
+        if let Some((view, position, _)) = drawn {
+            root = root.child(
+                deferred(
+                    anchored()
+                        .position(*position)
+                        .snap_to_window_with_margin(px(8.0))
+                        .child(view.clone()),
+                )
+                .with_priority(1),
+            );
+        }
+        if self.menu.is_some() && drawn.is_none() {
             root = root.capture_any_mouse_down(cx.listener(|this, _, _, cx| {
                 this.menu = None;
                 cx.notify();
             }));
         }
+        #[cfg(not(windows))]
+        let root = client_frame(root.into_any_element(), self.title(cx), cx.weak_entity(), window);
         root
     }
+}
+
+/// The frame a Linux desktop leaves to the app (GNOME, WSLg: client-side decorations): a title
+/// bar with the window's title and its buttons, and edges to resize it by. Where the desktop
+/// draws the frame itself, only the content.
+#[cfg(not(windows))]
+fn client_frame(content: AnyElement, title: String, shell: WeakEntity<Shell>, window: &Window) -> AnyElement {
+    use gpui_kit::component::{TitleBar, window_border};
+    let drawn_here = matches!(window.window_decorations(), Decorations::Client { .. });
+    let title_bar = TitleBar::new()
+        .bg(rgb(theme::SURFACE))
+        .border_color(rgb(theme::BORDER))
+        // Closing asks reframe first, as the system's close button does.
+        .on_close_window(move |_, window, cx| {
+            let _ = shell.update(cx, |shell, cx| shell.request_close(window, cx));
+        })
+        .child(
+            div()
+                .text_size(px(13.0))
+                .text_color(rgb(theme::TEXT))
+                .font_family(theme::ui_font())
+                .child(title),
+        );
+    window_border()
+        .child(
+            div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .bg(rgb(theme::BG))
+                .when(drawn_here, |frame| frame.child(title_bar))
+                .child(div().flex_1().min_h_0().child(content)),
+        )
+        .into_any_element()
 }
 
 /// How long the full screen hint is shown.
@@ -3111,7 +3281,7 @@ fn vertical_label(text: &str, color: Hsla, window: &mut Window) -> impl IntoElem
     let measure = |text: &str, window: &mut Window| {
         let run = TextRun {
             len: text.len(),
-            font: font(theme::UI_FONT),
+            font: font(theme::ui_font()),
             color,
             background_color: None,
             underline: None,
@@ -3149,7 +3319,7 @@ fn vertical_label(text: &str, color: Hsla, window: &mut Window) -> impl IntoElem
         .replace('"', "&quot;");
     let svg = format!(
         r#"<svg xmlns="http://www.w3.org/2000/svg" width="{BREADTH}" height="{length}" viewBox="0 0 {BREADTH} {length}"><text transform="translate({BASELINE} {length}) rotate(-90)" font-family="{}" font-size="{SIZE}" fill="white">{escaped}</text></svg>"#,
-        theme::UI_FONT
+        theme::ui_font()
     );
     // The atlas keeps the drawn label under this key.
     let key = SharedString::from(format!("reframe/vertical-label/{svg}"));
@@ -3313,7 +3483,7 @@ pub fn open(controller: &Entity<Controller>, window_id: &str, shown: bool, cx: &
         .find(|window| window.id == window_id)
         .and_then(|window| Some((window.bounds?, window.maximized, window.fullscreen == Some(true))));
     // The state keeps whole windows, frame and all, as 0.x did; GPUI places client areas.
-    let frame = win::window_frame();
+    let frame = platform::window_frame();
     let size_of = |bounds: reframe_core::state::Bounds| size(px(bounds.width as f32), px(bounds.height as f32));
     let window_bounds = match saved {
         Some((saved, maximized, fullscreen)) => {
@@ -3360,6 +3530,9 @@ pub fn open(controller: &Entity<Controller>, window_id: &str, shown: bool, cx: &
         show: shown,
         // Driven by a test, a window does not take the keyboard from whoever is working.
         focus: shown && !controller.read(cx).config().e2e,
+        // On Linux the desktop finds reframe's entry (its icon, its name) by this: 0.x's
+        // `reframe.desktop` (`StartupWMClass=reframe`).
+        app_id: cfg!(not(windows)).then(|| "reframe".to_owned()),
         ..WindowOptions::default()
     };
     let (controller, window_id) = (controller.clone(), window_id.to_owned());

@@ -1,6 +1,6 @@
 //! What reframe asks of Windows itself, beyond what GPUI offers: windows hidden and shown, the
 //! tray icon with its menu, one reframe per profile, being told when the system goes down, and
-//! starting with the system.
+//! starting with the system (see `platform`).
 //!
 //! Takes the place of what Electron did for the old version (`Tray`, `requestSingleInstanceLock`,
 //! `setLoginItemSettings`, the `query-session-end` event) and of its `src/main/win32.ts`.
@@ -50,6 +50,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WS_OVERLAPPEDWINDOW,
 };
 use windows::core::{HSTRING, PCSTR, PCWSTR, PWSTR, w};
+
+use super::{ContextEntry, TrayEntry, TrayEvent, WindowEvent};
 
 /// The tray icon tells of the mouse with this message.
 const WM_TRAY: u32 = WM_APP + 1;
@@ -122,17 +124,6 @@ pub fn flash(window: isize) {
 }
 
 // ---------- one reframe per profile ----------
-
-/// A name for the profile that Windows takes in names of its own: no backslashes.
-pub fn profile_key(user_data: &std::path::Path) -> String {
-    // FNV-1a over the path as Windows compares it.
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in user_data.to_string_lossy().to_lowercase().bytes() {
-        hash ^= u64::from(byte);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    format!("reframe-{hash:016x}")
-}
 
 /// Whether this is the only reframe for the profile. The claim lasts as long as the process.
 pub fn claim_profile(key: &str) -> bool {
@@ -229,42 +220,6 @@ pub fn shut_down_first() {
 
 // ---------- the tray icon and the window that takes its messages ----------
 
-/// What reaches reframe through its control window.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TrayEvent {
-    /// A click on the tray icon.
-    Clicked,
-    /// An entry of the tray menu was picked.
-    Command(u32),
-    /// reframe was started a second time: the windows are shown. `build` is 1 for a development
-    /// build and 2 for an installed one.
-    Reveal { build: usize },
-    /// Windows shuts down, restarts or logs the user off.
-    SystemEnding,
-    /// The installer asks reframe to quit.
-    Quit,
-    /// A window's context menu was answered: the number of the entry picked, or none.
-    ContextMenu { window: isize, picked: Option<u32> },
-}
-
-/// An entry of the tray menu.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum TrayEntry {
-    Item {
-        id: u32,
-        label: String,
-        /// With a check mark or without; `None` for an entry that has none.
-        checked: Option<bool>,
-        enabled: bool,
-    },
-    Separator,
-    /// An entry that opens more entries.
-    Submenu {
-        label: String,
-        children: Vec<TrayEntry>,
-    },
-}
-
 /// Fills a native menu with entries (a submenu is a menu of its own, which its parent destroys).
 ///
 /// # Safety
@@ -322,22 +277,6 @@ thread_local! {
     static CONTROL: RefCell<Option<Control>> = const { RefCell::new(None) };
     /// The context menu to show next.
     static PENDING_MENU: RefCell<Option<PendingMenu>> = const { RefCell::new(None) };
-}
-
-/// An entry of a window's context menu (a tile's, a group's, the session list's), as Windows
-/// shows it: 0.x's menus were the system's too.
-#[derive(Clone, Debug)]
-pub struct ContextEntry {
-    pub label: String,
-    pub enabled: bool,
-    pub checked: bool,
-    /// A dot in this colour (red, green, blue) before the label: a group's.
-    pub swatch: Option<(u8, u8, u8)>,
-    /// A line above it.
-    pub separator: bool,
-    /// What comes back when it is picked (not 0); a submenu's is not used.
-    pub id: u32,
-    pub children: Vec<ContextEntry>,
 }
 
 /// Shows a window's context menu at a point on the screen (pixels), once the GPUI update that
@@ -790,6 +729,29 @@ pub fn set_badge(window: isize, description: Option<&str>) {
 /// Where Windows keeps what it starts when the user logs in.
 pub const RUN_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 
+/// Whether Windows starts reframe (by its app id) when the user logs in.
+pub fn starts_with_system(app_id: &str) -> bool {
+    registry_text(RUN_KEY, app_id).is_some()
+}
+
+/// Has Windows start this copy of reframe when the user logs in (in the tray), or no longer.
+pub fn set_start_with_system(app_id: &str, enabled: bool) -> Result<(), String> {
+    let command = std::env::current_exe()
+        .map(|exe| format!("\"{}\" {}", exe.display(), crate::app::AUTOSTART_ARG))
+        .map_err(|error| error.to_string())?;
+    set_registry_text(RUN_KEY, app_id, enabled.then_some(command.as_str()))
+}
+
+/// The name of the user's language in Windows, as "de-AT".
+pub fn system_locale() -> String {
+    use windows_sys::Win32::Globalization::GetUserDefaultLocaleName;
+    let mut name = [0u16; 85];
+    // SAFETY: the buffer is as long as the length says.
+    let length = unsafe { GetUserDefaultLocaleName(name.as_mut_ptr(), name.len() as i32) };
+    // The length counts the terminating zero.
+    String::from_utf16_lossy(&name[..usize::try_from(length - 1).unwrap_or(0)])
+}
+
 /// A text value under one of the user's registry keys, if it is there.
 pub fn registry_text(key_path: &str, name: &str) -> Option<String> {
     let mut key = HKEY::default();
@@ -911,31 +873,9 @@ mod tests {
             let _ = RegDeleteKeyW(HKEY_CURRENT_USER, &HSTRING::from(key));
         }
     }
-
-    #[test]
-    fn a_profile_has_one_key_however_its_path_is_written() {
-        let key = profile_key(std::path::Path::new("C:\\Users\\Ann\\AppData\\Roaming\\reframe"));
-        assert_eq!(
-            key,
-            profile_key(std::path::Path::new("c:\\users\\ann\\appdata\\roaming\\REFRAME"))
-        );
-        assert_ne!(key, profile_key(std::path::Path::new("D:\\portable\\data")));
-        assert!(key.starts_with("reframe-") && !key.contains('\\'));
-    }
 }
 
 // ---------- other programs' windows ----------
-
-/// What other programs' windows do, as far as terminal windows dragged onto reframe go.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum WindowEvent {
-    /// A window's move (or resize) by its title bar began or ended.
-    MoveStarted(isize),
-    MoveEnded(isize),
-    /// A top-level window was made, or shown.
-    Created(isize),
-    Shown(isize),
-}
 
 thread_local! {
     static WINDOW_EVENTS: RefCell<Option<UnboundedSender<WindowEvent>>> = const { RefCell::new(None) };

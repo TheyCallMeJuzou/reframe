@@ -7,6 +7,7 @@
 
 mod list;
 mod open;
+#[cfg(windows)]
 mod terminal;
 mod update;
 
@@ -62,8 +63,8 @@ const STOP_MS: Duration = Duration::from_millis(5000);
 /// How long after the system said it is going down sessions that end still count as ended by
 /// it.
 const SYSTEM_ENDING_MS: Duration = Duration::from_millis(60_000);
-/// The profile's folder under `%APPDATA%`: the Electron version's (0.x), whose state file this
-/// version reads and writes in the same format.
+/// The profile's folder under `%APPDATA%` (on Linux under `~/.config`): the Electron version's
+/// (0.x), whose state file this version reads and writes in the same format.
 const PROFILE_FOLDER: &str = "reframe";
 /// What Windows knows reframe by: its notifications, its taskbar buttons, its entry among the
 /// programs started when the user logs in. The Electron version's, so that all of it carries
@@ -110,10 +111,18 @@ pub enum CopyKind {
 }
 
 impl CopyKind {
-    /// What a copy at `exe` is.
+    /// What a copy at `exe` is. On Linux the AppImage is the copy that updates itself (a package
+    /// is updated by the package manager), and there is no portable copy (as in 0.x).
     pub fn of(exe: &Path) -> CopyKind {
         if cfg!(debug_assertions) {
             return CopyKind::Development;
+        }
+        if cfg!(not(windows)) {
+            return if std::env::var_os("APPIMAGE").is_some_and(|image| !image.is_empty()) {
+                CopyKind::Installed
+            } else {
+                CopyKind::Release
+            };
         }
         let folder = exe.parent().unwrap_or(Path::new(""));
         if folder.join("data").is_dir() {
@@ -125,20 +134,10 @@ impl CopyKind {
         }
     }
 
-    /// As a second start tells it to the running reframe (see [`crate::win::TrayEvent::Reveal`]).
+    /// As a second start tells it to the running reframe (see [`crate::platform::TrayEvent::Reveal`]).
     pub fn build(self) -> usize {
         if self == CopyKind::Development { 1 } else { 2 }
     }
-}
-
-/// The name of the user's language in Windows, as "de-AT".
-fn windows_locale() -> String {
-    use windows_sys::Win32::Globalization::GetUserDefaultLocaleName;
-    let mut name = [0u16; 85];
-    // SAFETY: the buffer is as long as the length says.
-    let length = unsafe { GetUserDefaultLocaleName(name.as_mut_ptr(), name.len() as i32) };
-    // The length counts the terminating zero.
-    String::from_utf16_lossy(&name[..usize::try_from(length - 1).unwrap_or(0)])
 }
 
 impl Config {
@@ -147,7 +146,7 @@ impl Config {
     pub fn from_environment() -> Config {
         let env: HashMap<String, String> = std::env::vars().collect();
         let set = |name: &str| env.get(name).filter(|value| !value.is_empty()).cloned();
-        let home = PathBuf::from(set("USERPROFILE").unwrap_or_default());
+        let home = PathBuf::from(set(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).unwrap_or_default());
         let exe = std::env::current_exe().unwrap_or_default();
         let copy = CopyKind::of(&exe);
         let portable_data = exe.parent().unwrap_or(Path::new("")).join("data");
@@ -156,19 +155,23 @@ impl Config {
         let user_data = match set("REFRAME_USER_DATA") {
             Some(dir) => PathBuf::from(dir),
             None if copy == CopyKind::Portable => portable_data.clone(),
-            None => set("APPDATA")
+            None if cfg!(windows) => set("APPDATA")
                 .map_or_else(|| home.join("AppData").join("Roaming"), PathBuf::from)
+                .join(PROFILE_FOLDER),
+            // Where Electron kept 0.x's profile on Linux.
+            None => set("XDG_CONFIG_HOME")
+                .map_or_else(|| home.join(".config"), PathBuf::from)
                 .join(PROFILE_FOLDER),
         };
         // Windows would put a portable copy's windows and notifications with the installed one's.
         let app_id = if copy == CopyKind::Portable {
-            let key = crate::win::profile_key(&portable_data);
+            let key = crate::platform::profile_key(&portable_data);
             format!("{APP_ID}.portable.{}", key.trim_start_matches("reframe-"))
         } else {
             APP_ID.to_owned()
         };
         let e2e = set("REFRAME_E2E").is_some();
-        let system_locale = set("REFRAME_LOCALE").unwrap_or_else(windows_locale);
+        let system_locale = set("REFRAME_LOCALE").unwrap_or_else(crate::platform::system_locale);
         Config {
             user_data,
             env,
@@ -284,6 +287,7 @@ pub struct Controller {
     /// WSL distributions, and running claude in them.
     wsl: Arc<WslDistros>,
     /// Terminal windows whose drop is being handled (a second report of it is ignored).
+    #[cfg(windows)]
     taking_over: HashSet<isize>,
     updates: update::Updates,
     _session_events: Subscription,
@@ -303,7 +307,11 @@ fn find_claude(config: &Config, chosen: Option<&str>) -> Option<ClaudeBinary> {
     let home = config.home.to_string_lossy();
     resolve_claude(&ResolveOptions {
         env: &config.env,
-        platform: Platform::Windows,
+        platform: if cfg!(windows) {
+            Platform::Windows
+        } else {
+            Platform::Unix
+        },
         override_path: chosen
             .filter(|chosen| !chosen.is_empty())
             .or(set("REFRAME_CLAUDE_BIN").map(String::as_str)),
@@ -318,10 +326,15 @@ fn find_claude(config: &Config, chosen: Option<&str>) -> Option<ClaudeBinary> {
     })
 }
 
-/// Whether two paths name the same folder, as Windows compares them.
+/// Whether two paths name the same folder, as the system compares them (Windows: without case,
+/// either slash).
 fn same_path(a: &str, b: &str) -> bool {
-    let norm = |path: &str| path.replace('/', "\\").trim_end_matches('\\').to_lowercase();
-    norm(a) == norm(b)
+    if cfg!(windows) {
+        let norm = |path: &str| path.replace('/', "\\").trim_end_matches('\\').to_lowercase();
+        norm(a) == norm(b)
+    } else {
+        a.trim_end_matches('/') == b.trim_end_matches('/')
+    }
 }
 
 impl Controller {
@@ -367,7 +380,8 @@ impl Controller {
         let found = find_claude(&config, claude_bin.borrow().as_deref());
         let mut starting = json!({
             "version": env!("CARGO_PKG_VERSION"),
-            "platform": "win32",
+            // As 0.x said it (Node's names).
+            "platform": if cfg!(windows) { "win32" } else { std::env::consts::OS },
             "build": "native",
             "state": match loaded.source {
                 LoadSource::File => "file",
@@ -417,8 +431,7 @@ impl Controller {
         });
 
         // The end-to-end tests leave the system alone.
-        let starts_with_system =
-            !config.e2e && crate::win::registry_text(crate::win::RUN_KEY, &config.app_id).is_some();
+        let starts_with_system = !config.e2e && crate::platform::starts_with_system(&config.app_id);
         let mut controller = Self {
             claude_home,
             transcripts,
@@ -435,6 +448,7 @@ impl Controller {
             adopting: HashMap::new(),
             starts_pending: HashSet::new(),
             wsl,
+            #[cfg(windows)]
             taking_over: HashSet::new(),
             updates: update::Updates::new(&config),
             starts_with_system,
@@ -506,16 +520,10 @@ impl Controller {
     /// Has Windows start reframe when the user logs in (in the tray, see [`AUTOSTART_ARG`]), or
     /// no longer.
     pub fn set_start_with_system(&mut self, enabled: bool, cx: &mut Context<Self>) {
-        let command = std::env::current_exe()
-            .map(|exe| format!("\"{}\" {AUTOSTART_ARG}", exe.display()))
-            .map_err(|error| error.to_string());
         let changed = if self.config.e2e {
             Ok(())
         } else {
-            command.and_then(|command| {
-                let command = enabled.then_some(command.as_str());
-                crate::win::set_registry_text(crate::win::RUN_KEY, &self.config.app_id, command)
-            })
+            crate::platform::set_start_with_system(&self.config.app_id, enabled)
         };
         match changed {
             Ok(()) => {
@@ -1410,7 +1418,7 @@ impl Controller {
                 this.install_update_on_quit();
                 this.log.info("reframe stopped", None);
             });
-            crate::win::remove_tray_icon();
+            crate::platform::remove_tray_icon();
             cx.update(|cx| cx.quit());
         })
         .detach();

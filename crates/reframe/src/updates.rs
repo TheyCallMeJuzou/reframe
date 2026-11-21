@@ -9,7 +9,6 @@
 //! the same feed (see [`reframe_core::updates`]), so 0.x copies and this one update alike.
 
 use std::io::Write;
-use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -171,9 +170,6 @@ pub fn clear_cache(cache: &Path) {
 /// (on quit). `fake`: the end-to-end tests' stand-in (`REFRAME_FAKE_INSTALLER`, a script run by
 /// node), which gets the installer and its arguments.
 pub fn run_installer(installer: &Path, restart: bool, fake: Option<(&str, &str)>) -> std::io::Result<()> {
-    const DETACHED_PROCESS: u32 = 0x0000_0008;
-    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-    const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
     let args = installer_args(!restart, restart);
     let command = || {
         let mut command = match fake {
@@ -192,13 +188,26 @@ pub fn run_installer(installer: &Path, restart: bool, fake: Option<(&str, &str)>
         command
     };
     // It has to outlive reframe, also when something started reframe in a job that ends with it.
-    command()
-        .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB)
-        .spawn()
-        .or_else(|_| {
-            command()
-                .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
-                .spawn()
-        })
-        .map(|_| ())
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+        command()
+            .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB)
+            .spawn()
+            .or_else(|_| {
+                command()
+                    .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
+                    .spawn()
+            })
+            .map(|_| ())
+    }
+    // In a session of its own, so that nothing that ends reframe's ends it too.
+    #[cfg(not(windows))]
+    {
+        use std::os::unix::process::CommandExt;
+        command().process_group(0).spawn().map(|_| ())
+    }
 }

@@ -6,6 +6,7 @@ pub mod state;
 
 pub mod actions;
 pub mod attention;
+pub mod autostart;
 pub mod geometry;
 pub mod groups;
 pub mod last_used;

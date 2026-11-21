@@ -26,7 +26,7 @@ use serde_json::json;
 
 use crate::app::Controller;
 use crate::console::{console_owners, image_name};
-use crate::win::{self, WindowEvent};
+use crate::platform::{self, WindowEvent};
 use crate::window;
 
 /// A claude running outside reframe (from Claude Code's session registry).
@@ -113,7 +113,7 @@ pub fn watcher(cx: &App) -> Option<Entity<ForeignWatcher>> {
 /// Starts following other programs' windows.
 pub fn start(controller: &Entity<Controller>, cx: &mut App) {
     let (sender, mut events) = unbounded();
-    if !win::watch_windows(sender) {
+    if !platform::watch_windows(sender) {
         controller.read(cx).log().warn("cannot follow window drags", None);
     }
     // Drags of something other than files over reframe's windows (see the module's notes).
@@ -177,7 +177,7 @@ impl ForeignWatcher {
     }
 
     fn host_of(&mut self, hwnd: isize) -> Option<String> {
-        let pid = win::window_process(hwnd);
+        let pid = platform::window_process(hwnd);
         if self.hosts.len() > 500 {
             self.hosts.clear();
         }
@@ -217,7 +217,7 @@ impl ForeignWatcher {
                     return Vec::new();
                 }
             };
-            let found = pids_for_drop(hwnd, &owners, &win::is_window);
+            let found = pids_for_drop(hwnd, &owners, &platform::is_window);
             if !found.is_empty() && pids_in_window(hwnd, &owners).is_empty() {
                 log.info(
                     "matched a torn-out terminal tab by its vanished window",
@@ -304,7 +304,7 @@ impl ForeignWatcher {
     }
 
     fn track(&mut self, cx: &mut Context<Self>) {
-        let (x, y) = win::cursor();
+        let (x, y) = platform::cursor();
         let over = window::window_at_physical(x, y, cx);
         let Some(drag) = self.drag.as_mut() else { return };
         if drag.sessions.as_ref().is_none_or(Vec::is_empty) {
@@ -338,7 +338,7 @@ impl ForeignWatcher {
         };
         let tracked = drag.tracking.is_some();
         self.clear_hover(drag.hovered.as_deref(), cx);
-        let (x, y) = win::cursor();
+        let (x, y) = platform::cursor();
         let over = window::window_at_physical(x, y, cx);
         let known = drag.sessions.clone();
         let found = match known {
@@ -369,7 +369,7 @@ impl ForeignWatcher {
                 };
                 let drop = ForeignDrop {
                     hwnd,
-                    title: win::window_title(hwnd),
+                    title: platform::window_title(hwnd),
                     window_id,
                     at,
                     sessions,
@@ -418,7 +418,7 @@ impl ForeignWatcher {
         if self.tab_drag.is_none() {
             self.tab_drags += 1;
             let number = self.tab_drags;
-            let source = self.tab_drag_source.unwrap_or_else(win::foreground);
+            let source = self.tab_drag_source.unwrap_or_else(platform::foreground);
             let host = (source != 0).then(|| self.host_of(source)).flatten();
             let terminal = source != 0 && is_terminal_host(host.as_deref());
             self.log(cx).info(
@@ -493,7 +493,7 @@ impl ForeignWatcher {
             return;
         }
         // Helper windows of shells, never seen.
-        if win::window_rect(hwnd).is_none_or(|(.., width, height)| width == 0 || height == 0) {
+        if platform::window_rect(hwnd).is_none_or(|(.., width, height)| width == 0 || height == 0) {
             return;
         }
         let shown_at = std::time::SystemTime::now()
@@ -504,7 +504,7 @@ impl ForeignWatcher {
             .pointer
             .filter(|(_, at)| at.elapsed() <= POINTER)
             .map(|(point, _)| point);
-        let (x, y) = point.or(recent).unwrap_or_else(win::cursor);
+        let (x, y) = point.or(recent).unwrap_or_else(platform::cursor);
         let point_from = if point.is_some() {
             "test"
         } else if recent.is_some() {
@@ -546,7 +546,7 @@ impl ForeignWatcher {
                     .timer(Duration::from_millis(delay - waited))
                     .await;
                 waited = delay;
-                if !win::is_window(hwnd) {
+                if !platform::is_window(hwnd) {
                     return;
                 }
                 let Ok(found) = this.update(cx, |this, cx| this.sessions_in(hwnd, Some(external.clone()), cx)) else {
@@ -567,7 +567,7 @@ impl ForeignWatcher {
                 }
                 let drop = ForeignDrop {
                     hwnd,
-                    title: win::window_title(hwnd),
+                    title: platform::window_title(hwnd),
                     window_id,
                     at,
                     sessions,

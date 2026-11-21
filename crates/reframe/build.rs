@@ -4,11 +4,15 @@
 //! once.
 //!
 //! Also gives the executable its icon (which the installer's shortcuts and uninstall entry show)
-//! and its version information.
+//! and its version information. Both are Windows things: on Linux the icon comes from the
+//! desktop file.
 
 use std::path::{Path, PathBuf};
 
 fn main() {
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
+        return;
+    }
     println!("cargo:rerun-if-changed=vendor/conpty");
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let source = manifest.join("vendor/conpty");

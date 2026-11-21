@@ -50,6 +50,7 @@ pub struct Launch {
     pub program: String,
     pub args: Vec<String>,
     /// The arguments are one ready-made command line (for cmd.exe) and must not be quoted again.
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub raw_args: bool,
     pub cwd: PathBuf,
     /// Variables on top of this process's environment.
@@ -150,7 +151,9 @@ impl Pty {
         };
         let term = Arc::new(FairMutex::new(Term::new(config, &size, listener.clone())));
 
-        let program = if launch.program.contains(' ') && !launch.program.starts_with('"') {
+        // Windows starts a command line: a program with a space in it is quoted. Elsewhere the
+        // program is started as it is named.
+        let program = if cfg!(windows) && launch.program.contains(' ') && !launch.program.starts_with('"') {
             format!("\"{}\"", launch.program)
         } else {
             launch.program.clone()
@@ -160,10 +163,14 @@ impl Pty {
             working_directory: Some(launch.cwd.clone()),
             drain_on_exit: false,
             env: launch.env.clone(),
+            #[cfg(windows)]
             escape_args: !launch.raw_args,
         };
         let pty = tty::new(&options, initial, 0)?;
+        #[cfg(windows)]
         let pid = pty.child_watcher().pid().map(|pid| pid.get());
+        #[cfg(not(windows))]
+        let pid = Some(pty.child().id());
 
         let event_loop = EventLoop::new(term.clone(), listener.clone(), pty, false, false)?;
         let sender = event_loop.channel();

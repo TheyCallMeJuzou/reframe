@@ -15,7 +15,7 @@ use reframe_core::session_logic::NotifyKind;
 use serde_json::json;
 
 use crate::app::{AppEvent, Controller};
-use crate::win::{self, TrayEntry, TrayEvent};
+use crate::platform::{self, TrayEntry, TrayEvent};
 use crate::window::{self, Shell};
 
 /// What the entries of the tray menu are known by; a window's entry is this plus its place.
@@ -55,15 +55,15 @@ pub fn control_window(cx: &App) -> Option<isize> {
 pub fn start(controller: &Entity<Controller>, cx: &mut App) {
     let (e2e, key) = {
         let config = controller.read(cx).config();
-        (config.e2e, win::profile_key(&config.user_data))
+        (config.e2e, platform::profile_key(&config.user_data))
     };
     let (sender, mut events) = unbounded();
-    let control = win::create_control(&key, sender);
+    let control = platform::create_control(&key, sender);
     cx.set_global(ControlWindow(control));
-    win::shut_down_first();
+    platform::shut_down_first();
     // A test has no icon in the user's tray; the menu is there all the same.
     if !e2e {
-        let added = win::add_tray_icon(
+        let added = platform::add_tray_icon(
             include_bytes!("../assets/tray.png"),
             include_bytes!("../assets/tray@2x.png"),
         );
@@ -232,7 +232,7 @@ fn refresh_with(controller: &Entity<Controller>, badges: &mut Option<HashMap<Str
         1 => text("title.waitingOne"),
         n => t(locale, "title.waiting", &[("n", &n.to_string())]).unwrap_or_default(),
     };
-    win::set_tray(&tooltip, menu);
+    platform::set_tray(&tooltip, menu);
 
     // A badge on the taskbar button of every window with sessions that need the user.
     let waiting_text = |count: usize| match count {
@@ -257,7 +257,7 @@ fn refresh_with(controller: &Entity<Controller>, badges: &mut Option<HashMap<Str
         if let Some(hwnd) = window::shell(id, cx).and_then(|shell| shell.read(cx).hwnd()) {
             let description = (*count > 0).then(|| waiting_text(*count));
             cx.foreground_executor()
-                .spawn(async move { win::set_badge(hwnd, description.as_deref()) })
+                .spawn(async move { platform::set_badge(hwnd, description.as_deref()) })
                 .detach();
         }
     }
@@ -313,6 +313,7 @@ pub fn reveal_windows(controller: &Entity<Controller>, cx: &mut App) {
 /// What the tray icon, its menu, a second start or the system ask for.
 pub fn handle(controller: &Entity<Controller>, event: TrayEvent, cx: &mut App) {
     match event {
+        #[cfg(windows)]
         TrayEvent::ContextMenu { window, picked } => window::menu_answered(window, picked, cx),
         TrayEvent::Clicked => in_first_window(controller, cx, |_, _, _| {}),
         TrayEvent::Command(NEW_SESSION) => {

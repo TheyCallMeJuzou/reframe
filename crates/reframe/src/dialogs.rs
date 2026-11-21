@@ -27,6 +27,7 @@ use reframe_core::state::{
 use crate::app::{AppEvent, Controller, NewSessionRequest};
 use crate::keys;
 use crate::theme;
+#[cfg(windows)]
 use crate::window::Shell;
 
 type Choice = SelectState<Vec<SharedString>>;
@@ -127,7 +128,7 @@ fn fitted(items: &[SharedString], window: &Window) -> Pixels {
         .map(|item| {
             let run = TextRun {
                 len: item.len(),
-                font: font(theme::UI_FONT),
+                font: font(theme::ui_font()),
                 color: Hsla::default(),
                 background_color: None,
                 underline: None,
@@ -772,12 +773,16 @@ impl SettingsForm {
             self.set(cx, move |preferences| preferences.claude_bin = Some(file));
             return;
         }
-        let locale = self.controller.read(cx).locale();
-        let text = |key: &str| t(locale, key, &[]).unwrap_or_default();
-        gpui_windows::set_next_open_file_types(vec![
-            (text("settings.programs"), "*.exe;*.cmd;*.bat".to_owned()),
-            (text("settings.allFiles"), "*.*".to_owned()),
-        ]);
+        // Linux has no file types for programs: any file can be one.
+        #[cfg(windows)]
+        {
+            let locale = self.controller.read(cx).locale();
+            let text = |key: &str| t(locale, key, &[]).unwrap_or_default();
+            gpui_windows::set_next_open_file_types(vec![
+                (text("settings.programs"), "*.exe;*.cmd;*.bat".to_owned()),
+                (text("settings.allFiles"), "*.*".to_owned()),
+            ]);
+        }
         let picked = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
@@ -1010,6 +1015,7 @@ pub fn open_settings(controller: &Entity<Controller>, window: &mut Window, cx: &
 /// titled `title`, with the answers other than OK and Cancel as command links, `default` chosen
 /// with Enter and `cancel` given by Escape. Electron told OK and Cancel apart by their English
 /// label, so in German every answer is a command link, as it was. The answer comes as its index.
+#[cfg(windows)]
 #[allow(clippy::too_many_arguments)]
 fn message_box(
     level: PromptLevel,
@@ -1039,6 +1045,112 @@ fn message_box(
         as_electron: true,
     });
     window.prompt(level, message, detail, &buttons, cx)
+}
+
+/// Asks in the window, as a dialog of reframe's own (GPUI has none of the system's on Linux):
+/// titled `title`, the answers as buttons in their order, `default` taken by Enter and `cancel`
+/// by Escape. The answer comes as its index; none when the dialog went another way.
+#[cfg(not(windows))]
+#[allow(clippy::too_many_arguments)]
+fn message_box(
+    _level: PromptLevel,
+    title: &str,
+    message: &str,
+    detail: Option<&str>,
+    answers: &[String],
+    (default, cancel): (usize, usize),
+    checkbox: Option<(String, Arc<AtomicBool>)>,
+    window: &mut Window,
+    cx: &mut App,
+) -> futures::channel::oneshot::Receiver<usize> {
+    let (sender, receiver) = futures::channel::oneshot::channel();
+    let answer = Answer(std::rc::Rc::new(std::cell::RefCell::new(Some(sender))));
+    let form = cx.new(|_| MessageForm {
+        message: message.to_owned(),
+        detail: detail.map(str::to_owned),
+        answers: answers.to_vec(),
+        default,
+        checkbox,
+        checked: false,
+        answer: answer.clone(),
+    });
+    let title = title.to_owned();
+    window.open_dialog(cx, move |dialog, _, _| {
+        let (on_enter, on_escape) = (answer.clone(), answer.clone());
+        framed(dialog)
+            .title(heading(title.clone()))
+            .w(px(460.0))
+            .overlay_closable(false)
+            .child(form.clone())
+            .on_ok(move |_, _, _| on_enter.give(default))
+            .on_cancel(move |_, _, _| on_escape.give(cancel))
+    });
+    receiver
+}
+
+/// Where a question's answer goes, once.
+#[cfg(not(windows))]
+#[derive(Clone)]
+struct Answer(std::rc::Rc<std::cell::RefCell<Option<futures::channel::oneshot::Sender<usize>>>>);
+
+#[cfg(not(windows))]
+impl Answer {
+    /// Sends the answer (the first one counts). True: the dialog may close.
+    fn give(&self, index: usize) -> bool {
+        if let Some(sender) = self.0.borrow_mut().take() {
+            let _ = sender.send(index);
+        }
+        true
+    }
+}
+
+/// The inside of a question: the message, its detail, a checkbox, the answers.
+#[cfg(not(windows))]
+struct MessageForm {
+    message: String,
+    detail: Option<String>,
+    answers: Vec<String>,
+    default: usize,
+    checkbox: Option<(String, Arc<AtomicBool>)>,
+    checked: bool,
+    answer: Answer,
+}
+
+#[cfg(not(windows))]
+impl Render for MessageForm {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let buttons = self.answers.iter().enumerate().map(|(index, label)| {
+            let button = if index == self.default {
+                primary(("answer", index), label.clone(), false)
+            } else {
+                button(("answer", index), label.clone())
+            };
+            button.on_click(cx.listener(move |this, _, window, cx| {
+                this.answer.give(index);
+                window.close_dialog(cx);
+            }))
+        });
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(10.0))
+            .child(div().child(self.message.clone()))
+            .when_some(self.detail.clone(), |form, detail| {
+                form.child(div().text_color(rgb(theme::MUTED)).child(detail))
+            })
+            .when_some(self.checkbox.as_ref().map(|(label, _)| label.clone()), |form, label| {
+                form.child(
+                    check("remember", label, self.checked).on_click(cx.listener(|this, on: &bool, _, cx| {
+                        this.checked = *on;
+                        if let Some((_, remember)) = &this.checkbox {
+                            remember.store(*on, std::sync::atomic::Ordering::Release);
+                        }
+                        cx.notify();
+                    })),
+                )
+            })
+            .child(div().mt(px(8.0)).flex().justify_end().gap(px(8.0)).children(buttons))
+    }
 }
 
 /// "End the sessions in this window?" (0.x's `askToClose`): end them, keep them running in the
@@ -1108,6 +1220,7 @@ pub fn ask(
 
 /// Confirms taking over the session(s) of a terminal window that was dropped onto this window;
 /// with several, which ones.
+#[cfg(windows)]
 pub struct TerminalTakeoverForm {
     shell: WeakEntity<Shell>,
     controller: Entity<Controller>,
@@ -1115,6 +1228,7 @@ pub struct TerminalTakeoverForm {
     picked: Vec<String>,
 }
 
+#[cfg(windows)]
 impl TerminalTakeoverForm {
     fn answer(&mut self, confirmed: bool, window: &mut Window, cx: &mut Context<Self>) {
         let chosen = confirmed.then(|| self.picked.clone());
@@ -1124,6 +1238,7 @@ impl TerminalTakeoverForm {
     }
 }
 
+#[cfg(windows)]
 impl Render for TerminalTakeoverForm {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let text = words(self.controller.read(cx).locale());
@@ -1199,6 +1314,7 @@ impl Render for TerminalTakeoverForm {
     }
 }
 
+#[cfg(windows)]
 pub fn open_terminal_takeover(
     shell: WeakEntity<Shell>,
     controller: &Entity<Controller>,
@@ -1482,7 +1598,7 @@ pub fn apply_theme(cx: &mut App) {
     Theme::change(ThemeMode::Dark, None, cx);
     Theme::update(cx, |look| {
         let color = |value: u32| -> Hsla { rgb(value).into() };
-        look.font_family = theme::UI_FONT.into();
+        look.font_family = theme::ui_font().into();
         look.font_size = px(13.0);
         look.radius = px(theme::RADIUS);
         let colors = &mut look.colors;
