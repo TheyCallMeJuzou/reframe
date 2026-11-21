@@ -41,9 +41,14 @@ impl Updates {
         // The tests keep their downloads in their profile, never in the user's folder.
         let cache = if config.e2e {
             config.user_data.join(CACHE_FOLDER)
-        } else {
+        } else if cfg!(windows) {
             set("LOCALAPPDATA")
                 .map_or_else(|| config.home.join("AppData").join("Local"), PathBuf::from)
+                .join(CACHE_FOLDER)
+        } else {
+            // Where electron-updater kept 0.x's downloads on Linux.
+            set("XDG_CACHE_HOME")
+                .map_or_else(|| config.home.join(".cache"), PathBuf::from)
                 .join(CACHE_FOLDER)
         };
         Updates {
@@ -199,16 +204,45 @@ impl Controller {
             "installing the update",
             Some(json!({ "version": ready.version, "restart": restart })),
         );
-        let env = &self.config.env;
-        let fake = env
-            .get("REFRAME_FAKE_INSTALLER")
-            .zip(env.get("REFRAME_NODE"))
-            .map(|(script, node)| (node.as_str(), script.as_str()));
-        if let Err(error) = updates::run_installer(&ready.installer, restart, fake) {
-            self.log.warn(
-                "the installer could not be started",
-                Some(json!({ "error": error.to_string() })),
-            );
+        #[cfg(not(windows))]
+        {
+            // The AppImage takes the place of the running one (an installed copy on Linux is an
+            // AppImage: see `CopyKind::of`).
+            let Some(running) = self.config.env.get("APPIMAGE").filter(|image| !image.is_empty()) else {
+                return;
+            };
+            match updates::install_app_image(&ready.installer, std::path::Path::new(running), restart) {
+                Ok(placed) => {
+                    self.log.info("update installed", Some(json!({ "appImage": placed })));
+                    // Starting with the system starts the new file.
+                    if self.starts_with_system
+                        && let Err(error) = crate::platform::start_with_system_file(&placed)
+                    {
+                        self.log.warn(
+                            "could not renew starting with the system",
+                            Some(json!({ "error": error })),
+                        );
+                    }
+                }
+                Err(error) => self.log.warn(
+                    "the update could not be installed",
+                    Some(json!({ "error": error.to_string() })),
+                ),
+            }
+        }
+        #[cfg(windows)]
+        {
+            let env = &self.config.env;
+            let fake = env
+                .get("REFRAME_FAKE_INSTALLER")
+                .zip(env.get("REFRAME_NODE"))
+                .map(|(script, node)| (node.as_str(), script.as_str()));
+            if let Err(error) = updates::run_installer(&ready.installer, restart, fake) {
+                self.log.warn(
+                    "the installer could not be started",
+                    Some(json!({ "error": error.to_string() })),
+                );
+            }
         }
     }
 

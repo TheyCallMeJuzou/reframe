@@ -2,6 +2,7 @@
 //! `node` on the PATH (the fake claude is a script).
 #![allow(dead_code)] // each test file uses its share
 
+pub mod feed;
 #[cfg(windows)]
 pub mod ui;
 

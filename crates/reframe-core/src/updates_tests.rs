@@ -144,3 +144,26 @@ fn takes_addresses_apart() {
     assert!(parse_url("https://user@h/x").is_none());
     assert!(parse_url("https://h:port/x").is_none());
 }
+
+#[test]
+fn an_app_image_update_keeps_a_chosen_name_and_else_takes_its_own() {
+    use std::path::{Path, PathBuf};
+    let new = "reframe-1.1.0-x86_64.AppImage";
+    assert_eq!(
+        app_image_destination(Path::new("/home/ann/Apps/reframe-1.0.0-x86_64.AppImage"), new),
+        PathBuf::from("/home/ann/Apps/reframe-1.1.0-x86_64.AppImage")
+    );
+    assert_eq!(
+        app_image_destination(Path::new("/home/ann/Apps/reframe.AppImage"), new),
+        PathBuf::from("/home/ann/Apps/reframe.AppImage")
+    );
+    assert_eq!(
+        app_image_destination(Path::new("/opt/reframe-1.1.0-x86_64.AppImage"), new),
+        PathBuf::from("/opt/reframe-1.1.0-x86_64.AppImage")
+    );
+    // Two numbers are no version.
+    assert_eq!(
+        app_image_destination(Path::new("/x/reframe-2.5.AppImage"), new),
+        PathBuf::from("/x/reframe-2.5.AppImage")
+    );
+}

@@ -14,7 +14,9 @@ use std::process::{Command, Stdio};
 
 use base64::Engine;
 use reframe_core::log::Logger;
-use reframe_core::updates::{download_url, file_name_of, installer_args, is_newer, latest_tag, parse_latest_yml};
+#[cfg(windows)]
+use reframe_core::updates::installer_args;
+use reframe_core::updates::{download_url, file_name_of, is_newer, latest_tag, parse_latest_yml};
 use serde_json::json;
 use sha2::{Digest, Sha512};
 
@@ -60,6 +62,14 @@ pub struct Feed {
 /// The largest installer taken.
 const MAX_INSTALLER: u64 = 1024 * 1024 * 1024;
 
+/// What a release says about its update, as electron-builder named it: the Windows installer's,
+/// or the Linux AppImage's (0.x copies read the same files).
+pub const LATEST_YML: &str = if cfg!(windows) {
+    "latest.yml"
+} else {
+    "latest-linux.yml"
+};
+
 /// One check: the newest release, whether it is newer than this copy, and for an installed copy
 /// its installer, downloaded and checked. Blocking; `have` is the version already downloaded.
 pub fn check(feed: &Feed, mode: UpdateMode, have: Option<&str>, log: &Logger) -> Result<Found, String> {
@@ -69,12 +79,12 @@ pub fn check(feed: &Feed, mode: UpdateMode, have: Option<&str>, log: &Logger) ->
         return Err(format!("{latest} answered {}", response.status));
     }
     let tag = latest_tag(&body, &response.final_url).ok_or("no release tag in the answer")?;
-    let yml_url = download_url(&feed.url, &tag, "latest.yml");
+    let yml_url = download_url(&feed.url, &tag, LATEST_YML);
     let (text, response) = crate::http::get_text(&yml_url, None)?;
     if response.status != 200 {
         return Err(format!("{yml_url} answered {}", response.status));
     }
-    let info = parse_latest_yml(&text).ok_or("latest.yml could not be read")?;
+    let info = parse_latest_yml(&text).ok_or_else(|| format!("{LATEST_YML} could not be read"))?;
     if !is_newer(&info.version, &feed.current) {
         log.info(
             "update check: no newer version",
@@ -89,7 +99,9 @@ pub fn check(feed: &Feed, mode: UpdateMode, have: Option<&str>, log: &Logger) ->
             if have == Some(info.version.as_str()) {
                 return Ok(Found::Nothing);
             }
-            let file = info.installer().ok_or("latest.yml names no installer")?;
+            let file = info
+                .installer()
+                .ok_or_else(|| format!("{LATEST_YML} names no installer"))?;
             let url = download_url(&feed.url, &tag, &file.url);
             log.info(
                 "update found, downloading",
@@ -147,7 +159,7 @@ fn download(url: &str, cache: &Path, sha512: &str, size: Option<u64>) -> Result<
             return Err(format!("the installer has {} bytes, not {size:?}", response.length));
         }
         if digest != sha512 {
-            return Err("the installer's SHA-512 does not match latest.yml".to_owned());
+            return Err(format!("the installer's SHA-512 does not match {LATEST_YML}"));
         }
         Ok(())
     });
@@ -169,6 +181,7 @@ pub fn clear_cache(cache: &Path) {
 /// afterwards and shows its progress ("Restart to update"); else it installs without a window
 /// (on quit). `fake`: the end-to-end tests' stand-in (`REFRAME_FAKE_INSTALLER`, a script run by
 /// node), which gets the installer and its arguments.
+#[cfg(windows)]
 pub fn run_installer(installer: &Path, restart: bool, fake: Option<(&str, &str)>) -> std::io::Result<()> {
     let args = installer_args(!restart, restart);
     let command = || {
@@ -210,4 +223,36 @@ pub fn run_installer(installer: &Path, restart: bool, fake: Option<(&str, &str)>
         use std::os::unix::process::CommandExt;
         command().process_group(0).spawn().map(|_| ())
     }
+}
+
+/// Puts a downloaded AppImage in the place of the running one (`APPIMAGE`), as electron-updater
+/// did for 0.x (see [`reframe_core::updates::app_image_destination`]), and says where it went.
+/// `restart`: starts it ("Restart to update"); it waits for this reframe to be gone. Linux.
+#[cfg(not(windows))]
+pub fn install_app_image(downloaded: &Path, running: &Path, restart: bool) -> std::io::Result<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::process::CommandExt;
+    let name = downloaded
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let destination = reframe_core::updates::app_image_destination(running, &name);
+    // The running one stays readable to this process (it is mounted) until it ends.
+    std::fs::remove_file(running)?;
+    if std::fs::rename(downloaded, &destination).is_err() {
+        // The cache is on another file system.
+        std::fs::copy(downloaded, &destination)?;
+        let _ = std::fs::remove_file(downloaded);
+    }
+    std::fs::set_permissions(&destination, std::fs::Permissions::from_mode(0o755))?;
+    if restart {
+        Command::new(&destination)
+            .env("APPIMAGE_SILENT_INSTALL", "true")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0)
+            .spawn()?;
+    }
+    Ok(destination)
 }

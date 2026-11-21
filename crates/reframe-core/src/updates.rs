@@ -214,6 +214,25 @@ pub fn latest_yml(version: &str, file_name: &str, sha512: &str, size: u64, relea
     )
 }
 
+/// Where an AppImage's update goes, as electron-updater put it (0.x copies did so): over the old
+/// file when that is named like the new one or carries no version (the user chose its name);
+/// else under its own name next to it (`reframe-1.0.0-x86_64.AppImage` becomes
+/// `reframe-1.1.0-x86_64.AppImage`).
+pub fn app_image_destination(old: &std::path::Path, new_name: &str) -> std::path::PathBuf {
+    let old_name = old
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let has_version = old_name
+        .split(|c: char| !c.is_ascii_digit() && c != '.')
+        .any(|part| part.split('.').filter(|number| !number.is_empty()).count() >= 3);
+    if old_name == new_name || !has_version {
+        old.to_path_buf()
+    } else {
+        old.with_file_name(new_name)
+    }
+}
+
 /// The newest release's tag, from what `{FEED}/latest` answered: GitHub's JSON for it, or else
 /// the address it led to (`…/releases/tag/v1.0.0`).
 pub fn latest_tag(body: &str, final_url: &str) -> Option<String> {

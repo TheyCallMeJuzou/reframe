@@ -559,6 +559,11 @@ pub fn set_start_with_system(_app_id: &str, enabled: bool) -> Result<(), String>
     write_entry(&entry, &file)
 }
 
+/// Has the desktop start `file` (an AppImage that an update moved) when the user logs in.
+pub fn start_with_system_file(file: &Path) -> Result<(), String> {
+    write_entry(&autostart_entry(), file)
+}
+
 fn write_entry(entry: &Path, file: &Path) -> Result<(), String> {
     if let Some(folder) = entry.parent() {
         std::fs::create_dir_all(folder).map_err(|error| error.to_string())?;

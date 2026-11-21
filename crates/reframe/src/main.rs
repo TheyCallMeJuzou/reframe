@@ -59,6 +59,10 @@ fn parse_args() -> Args {
         match arg.as_str() {
             "--new" => args.new.extend(input.next()),
             app::AUTOSTART_ARG => args.autostart = true,
+            // 0.x's launchers on Linux (its AppImage's desktop entry, AppImageLauncher's copy of it)
+            // start it with Chromium's `--no-sandbox`, and with the files of `%U`: neither means
+            // anything to this reframe.
+            other if cfg!(not(windows)) => eprintln!("argument ignored: {other}"),
             other => {
                 eprintln!("unknown argument: {other}");
                 std::process::exit(2);
@@ -106,16 +110,26 @@ fn main() {
     }
 
     let start_failed = StartFailed::of(&config);
-    // reframe 0.x on Linux keeps its lock elsewhere: it must not run on the same state file.
+    // reframe 0.x on Linux keeps its lock elsewhere: it must not run on the same state file. It
+    // may be on its way out: its updater starts this one while it quits ("Restart to update").
     #[cfg(not(windows))]
-    if let Some(pid) = platform::older_reframe_running(&config.user_data) {
-        start_failed.log.warn(
-            "reframe 0.x runs on this profile",
-            Some(serde_json::json!({ "pid": pid })),
-        );
-        let text = |key: &str| t(start_failed.locale, key, &[]).unwrap_or_default();
-        start_failed.show(&text("olderRunning.title"), &text("olderRunning.message"));
-        std::process::exit(1);
+    {
+        let older = || platform::older_reframe_running(&config.user_data);
+        for _ in 0..50 {
+            if older().is_none() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        if let Some(pid) = older() {
+            start_failed.log.warn(
+                "reframe 0.x runs on this profile",
+                Some(serde_json::json!({ "pid": pid })),
+            );
+            let text = |key: &str| t(start_failed.locale, key, &[]).unwrap_or_default();
+            start_failed.show(&text("olderRunning.title"), &text("olderRunning.message"));
+            std::process::exit(1);
+        }
     }
     // The component library's own icons: the arrow of a choice box, the check mark, clearing a field.
     gpui_kit::application()

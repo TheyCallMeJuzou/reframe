@@ -1,7 +1,8 @@
-# Builds a version tag (v1.2.3, matching Cargo.toml) into a draft GitHub release: the installer, latest.yml (which
-# the updaters read, also installed 0.x copies) and the portable ZIP. Publishing the release makes the update
-# available. The release notes come from docs/releases/<tag>.md (GitHub's generated notes if there is none).
-# macOS and Linux get no files: they stay on the last 0.x release for now.
+# Builds a version tag (v1.2.3, matching Cargo.toml) into a draft GitHub release. Windows: the installer, latest.yml
+# (which the updaters read, also installed 0.x copies) and the portable ZIP. Linux: the AppImage, the .deb and
+# latest-linux.yml (read by the AppImages' updaters, 0.x's too). Publishing the release makes the update available.
+# The release notes come from docs/releases/<tag>.md (GitHub's generated notes if there is none). macOS gets no
+# files: it stays on the last 0.x release for now.
 name: Release
 
 on:
@@ -39,7 +40,8 @@ jobs:
           notes="docs/releases/$GITHUB_REF_NAME.md"
           if [ -f "$notes" ]; then set -- --notes-file "$notes"; else set -- --generate-notes; fi
           gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1 ||
-            gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "reframe ${GITHUB_REF_NAME#v}" "$@"
+            gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "reframe ${GITHUB_REF_NAME#v}" "$@" ||
+            gh release view "$GITHUB_REF_NAME" > /dev/null
       - name: Upload (unsigned)
         if: env.SIGN_WINDOWS != 'true'
         shell: bash
@@ -89,3 +91,36 @@ jobs:
           v="${GITHUB_REF_NAME#v}"
           gh release upload "$GITHUB_REF_NAME" "dist/reframe-Setup-$v.exe" dist/latest.yml \
             "dist/reframe-$v-win-portable.zip" --clobber
+
+  linux:
+    # The oldest Ubuntu reframe is built on: the AppImage and the package run where its glibc (2.35) or a newer one is.
+    runs-on: ubuntu-22.04
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Tag and Cargo.toml agree
+        run: test "v$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)" = "$GITHUB_REF_NAME"
+      - name: Packages (what GPUI builds with)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libwayland-dev libxkbcommon-dev \
+            libxkbcommon-x11-dev libx11-xcb-dev libxcb1-dev libfontconfig-dev
+      - name: Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - name: Build (AppImage, .deb, latest-linux.yml)
+        run: scripts/package-linux.sh
+      - name: Draft release
+        run: |
+          notes="docs/releases/$GITHUB_REF_NAME.md"
+          if [ -f "$notes" ]; then set -- --notes-file "$notes"; else set -- --generate-notes; fi
+          gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "reframe ${GITHUB_REF_NAME#v}" "$@" ||
+            gh release view "$GITHUB_REF_NAME" > /dev/null
+      - name: Upload
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          gh release upload "$GITHUB_REF_NAME" "dist/reframe-$v-x86_64.AppImage" "dist/reframe_${v}_amd64.deb" \
+            dist/latest-linux.yml --clobber

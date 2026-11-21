@@ -8,90 +8,23 @@
 
 mod common;
 
-use std::io::{BufRead, BufReader, Write};
-use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 
-use base64::Engine;
+use common::feed::{Feed, sha512_of};
 use common::{App, Setup, wait_for};
 use serde_json::{Value, json};
-use sha2::{Digest, Sha512};
 
 const INSTALLER: &[u8] = b"not really an installer, but bytes to download and check";
 
-/// A release feed as GitHub serves it, on a port of its own: `/latest` (the newest tag),
-/// `/download/<tag>/latest.yml` and the installer. Remembers what was asked for.
-struct Feed {
-    url: String,
-    asked: Arc<Mutex<Vec<String>>>,
-}
-
-impl Feed {
-    fn start(version: &str, sha512: &str) -> Feed {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let url = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
-        let asked = Arc::new(Mutex::new(Vec::new()));
-        let tag = format!("v{version}");
-        let file = format!("reframe-Setup-{version}.exe");
-        let yml = format!(
-            "version: {version}\nfiles:\n  - url: {file}\n    sha512: {sha512}\n    size: {}\npath: {file}\nsha512: {sha512}\nreleaseDate: '2026-11-20T10:00:00.000Z'\n",
-            INSTALLER.len()
-        );
-        let routes: Vec<(String, Vec<u8>)> = vec![
-            (
-                "/latest".to_owned(),
-                json!({ "tag_name": tag }).to_string().into_bytes(),
-            ),
-            (format!("/download/{tag}/latest.yml"), yml.into_bytes()),
-            (format!("/download/{tag}/{file}"), INSTALLER.to_vec()),
-        ];
-        let log = asked.clone();
-        std::thread::spawn(move || {
-            for stream in listener.incoming().flatten() {
-                let mut reader = BufReader::new(stream.try_clone().unwrap());
-                let mut line = String::new();
-                if reader.read_line(&mut line).is_err() {
-                    continue;
-                }
-                // The rest of the request.
-                loop {
-                    let mut header = String::new();
-                    if reader.read_line(&mut header).unwrap_or(0) == 0 || header == "\r\n" {
-                        break;
-                    }
-                }
-                let path = line.split_whitespace().nth(1).unwrap_or_default().to_owned();
-                log.lock().unwrap().push(path.clone());
-                let mut stream = stream;
-                match routes.iter().find(|(route, _)| *route == path) {
-                    Some((_, body)) => {
-                        let _ = write!(
-                            stream,
-                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                            body.len()
-                        );
-                        let _ = stream.write_all(body);
-                    }
-                    None => {
-                        let _ = write!(
-                            stream,
-                            "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-                        );
-                    }
-                }
-            }
-        });
-        Feed { url, asked }
-    }
-
-    fn asked(&self) -> Vec<String> {
-        self.asked.lock().unwrap().clone()
-    }
-}
-
-fn sha512_of(bytes: &[u8]) -> String {
-    base64::engine::general_purpose::STANDARD.encode(Sha512::digest(bytes))
+/// The newest release, with the installer `latest.yml` names (its SHA-512 may be wrong on purpose).
+fn start_feed(version: &str, sha512: &str) -> Feed {
+    Feed::start(
+        version,
+        "latest.yml",
+        &format!("reframe-Setup-{version}.exe"),
+        INSTALLER,
+        sha512,
+    )
 }
 
 fn fake_installer() -> PathBuf {
@@ -145,7 +78,7 @@ fn quit_and_wait(mut app: App) {
 #[test]
 fn an_installed_copy_downloads_a_newer_version_and_installs_it_on_quit() {
     let setup = Setup::new();
-    let feed = Feed::start("9.0.0", &sha512_of(INSTALLER));
+    let feed = start_feed("9.0.0", &sha512_of(INSTALLER));
     let mut app = launch(&setup, &feed);
     // A development build does not check; Settings has no checkbox for it.
     assert_eq!(app.cmd(json!({ "cmd": "updates" }))["checks"], false);
@@ -194,7 +127,7 @@ fn an_installed_copy_downloads_a_newer_version_and_installs_it_on_quit() {
 #[test]
 fn restart_to_update_ends_the_sessions_and_the_installer_starts_reframe_again() {
     let setup = Setup::new();
-    let feed = Feed::start("9.0.0", &sha512_of(INSTALLER));
+    let feed = start_feed("9.0.0", &sha512_of(INSTALLER));
     let mut app = launch(&setup, &feed);
     let created = app.cmd(json!({ "cmd": "new", "cwd": setup.project(), "name": "alpha" }));
     let alpha = created["session"].as_str().unwrap().to_owned();
@@ -221,7 +154,7 @@ fn restart_to_update_ends_the_sessions_and_the_installer_starts_reframe_again() 
 #[test]
 fn a_download_that_does_not_match_its_checksum_is_thrown_away() {
     let setup = Setup::new();
-    let feed = Feed::start("9.0.0", &sha512_of(b"something else"));
+    let feed = start_feed("9.0.0", &sha512_of(b"something else"));
     let mut app = launch(&setup, &feed);
     app.cmd(json!({ "cmd": "updates", "mode": "install", "check": true }));
     wait_for("the check to fail", || {
@@ -247,7 +180,7 @@ fn a_download_that_does_not_match_its_checksum_is_thrown_away() {
 #[test]
 fn a_portable_copy_only_tells_about_a_newer_version() {
     let setup = Setup::new();
-    let feed = Feed::start("9.0.0", &sha512_of(INSTALLER));
+    let feed = start_feed("9.0.0", &sha512_of(INSTALLER));
     let mut app = launch(&setup, &feed);
     app.cmd(json!({ "cmd": "updates", "mode": "notify", "check": true }));
     wait_for("the newer version", || {
@@ -268,7 +201,7 @@ fn a_portable_copy_only_tells_about_a_newer_version() {
 #[test]
 fn an_older_or_equal_release_is_no_update() {
     let setup = Setup::new();
-    let feed = Feed::start("0.0.1", &sha512_of(INSTALLER));
+    let feed = start_feed("0.0.1", &sha512_of(INSTALLER));
     let mut app = launch(&setup, &feed);
     app.cmd(json!({ "cmd": "updates", "mode": "install", "check": true }));
     wait_for("the check", || {
@@ -282,7 +215,7 @@ fn an_older_or_equal_release_is_no_update() {
 #[test]
 fn another_build_started_for_the_same_profile_is_told_which_one_runs() {
     let setup = Setup::new();
-    let feed = Feed::start("0.0.1", &sha512_of(INSTALLER));
+    let feed = start_feed("0.0.1", &sha512_of(INSTALLER));
     let mut app = launch(&setup, &feed);
     // The same build again: the windows come up, no question.
     app.cmd(json!({ "cmd": "second_start", "build": 1 }));
