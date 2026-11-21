@@ -8,12 +8,12 @@ Development happens on Gitea (`main` is always releasable; bigger work goes thro
 1. Make sure CI on GitHub is green for the commit you want to release.
 2. Set the version in `Cargo.toml` (`[workspace.package]`, e.g. `version = "1.1.0"`; `cargo build` brings `Cargo.lock` along), write the release notes into `docs/releases/v1.1.0.md` (ending with the link to the [code signing policy](https://theycallmejuzou.github.io/reframe/code-signing.html), which SignPath asks for on every release page), and commit them on `main` (`chore: release 1.1.0`).
 3. Tag it and push both: `git tag v1.1.0 && git push && git push --tags` (to Gitea; the mirror takes it to GitHub).
-4. The [Release workflow](../.github/workflows/release.yml) builds the installer, `latest.yml` and the portable ZIP on Windows (`scripts/package.ps1`) and puts them into a **draft** release for that tag with those notes. It fails if the tag and `Cargo.toml` disagree.
-5. Look at the draft on GitHub, try the installer, and publish it.
+4. The [Release workflow](../.github/workflows/release.yml) builds the installer, `latest.yml` and the portable ZIP on Windows (`scripts/package.ps1`), and the AppImage, the .deb and `latest-linux.yml` on Ubuntu 22.04 (`scripts/package-linux.sh`), and puts them into a **draft** release for that tag with those notes. It fails if the tag and `Cargo.toml` disagree.
+5. Look at the draft on GitHub, try the installer (and the AppImage), and publish it.
 
 Publishing is what makes the update visible to installed copies: they check GitHub Releases half a minute after starting and then every six hours (unless turned off in Settings), download the installer in the background, check it against the SHA-512 in `latest.yml`, and install it on the next quit (or right away with "Restart to update" in the tray menu). Drafts and pre-releases are ignored. Installed 0.x copies (Electron) read the same `latest.yml` with electron-updater and install 1.x over themselves the same way. Publishing also brings the website's download buttons to the new version (see below).
 
-The portable ZIP does not update itself: it tells about a new version and links to the release. macOS and Linux get no files from 1.x releases: their 0.10.x copies look for `latest-mac.yml` / `latest-linux.yml`, find none, and stay where they are.
+The portable ZIP does not update itself: it tells about a new version and links to the release. On Linux the AppImage updates itself the same way from `latest-linux.yml` (putting the new AppImage in place of the running one on quit, as electron-updater did, under its own name when the old name had a version), and so do 0.x AppImages; the .deb is updated by installing the next one. macOS gets no files from 1.x releases: its 0.10.x copies do not check for updates, and stay where they are.
 
 ## Building locally
 
@@ -26,7 +26,7 @@ powershell -File scripts/test-installer.ps1      # builds it under names of its 
 
 ## Website
 
-The website ([theycallmejuzou.github.io/reframe](https://theycallmejuzou.github.io/reframe/)) is the plain HTML and CSS in `site/`: the home page, the downloads, and the code signing policy with the privacy policy. `scripts/site.mjs` builds it into `_site/` with the pictures from `docs/` and points the download buttons at the files of the latest release; a file that release does not have (the macOS and Linux downloads of 0.10) is taken from the newest release that has it (`node scripts/site.mjs`, then serve `_site/` to look at it). The [Pages workflow](../.github/workflows/pages.yml) publishes it when `site/`, the pictures or the script change on `main`, and when a release is published (GitHub Settings → Pages → Source: GitHub Actions).
+The website ([theycallmejuzou.github.io/reframe](https://theycallmejuzou.github.io/reframe/)) is the plain HTML and CSS in `site/`: the home page, the downloads, and the code signing policy with the privacy policy. `scripts/site.mjs` builds it into `_site/` with the pictures from `docs/` and points the download buttons at the files of the latest release; a file that release does not have (the macOS downloads of 0.10) is taken from the newest release that has it (`node scripts/site.mjs`, then serve `_site/` to look at it). The [Pages workflow](../.github/workflows/pages.yml) publishes it when `site/`, the pictures or the script change on `main`, and when a release is published (GitHub Settings → Pages → Source: GitHub Actions).
 
 The code signing policy and the privacy policy are in two places, the README and `site/code-signing.html` (the downloads page sums them up): change them together.
 

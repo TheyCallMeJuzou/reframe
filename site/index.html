@@ -42,7 +42,7 @@
           <a class="button primary" href="download.html">Download</a>
           <a class="button" href="https://github.com/TheyCallMeJuzou/reframe">Source code on GitHub</a>
         </div>
-        <p class="note">Free and open source (MIT) · Windows (macOS and Linux: version 0.10)</p>
+        <p class="note">Free and open source (MIT) · Windows and Linux (macOS: version 0.10)</p>
         <figure class="shot">
           <img
             src="img/hero.png"
@@ -146,14 +146,16 @@
         <div class="feature">
           <h3>Light</h3>
           <p>
-            A native Windows app: with three sessions it needs 23 MB of memory (0.x, built with Electron: 161 MB) and
-            32 MB on disk, and starts in a fraction of a second.
+            A native app: on Windows, with three sessions, it needs 23 MB of memory (0.x, built with Electron:
+            161 MB) and 32 MB on disk; on Linux it is an AppImage of 19 MB (0.x: 128 MB). It starts in a fraction of a
+            second.
           </p>
         </div>
         <div class="feature">
           <h3>Starts with the system, updates itself</h3>
           <p>
-            If you like, reframe starts quietly in the tray. Installed copies update themselves from GitHub Releases.
+            If you like, reframe starts quietly in the tray. Installed copies (on Linux the AppImage) update
+            themselves from GitHub Releases.
           </p>
         </div>
       </div>
@@ -161,7 +163,8 @@
       <h2>What you need</h2>
       <p>
         <a href="https://claude.com/claude-code">Claude Code</a>, installed and logged in (<code>claude</code> on your
-        <code>PATH</code>). On Windows, sessions in a WSL folder use the Claude Code installed in that distribution.
+        <code>PATH</code>), and Windows 10 or 11, or Linux on x86-64 with glibc 2.35 or newer. On Windows, sessions in
+        a WSL folder use the Claude Code installed in that distribution.
       </p>
       <div class="table">
         <table>
@@ -189,8 +192,8 @@
             <tr>
               <td>Linux</td>
               <td>
-                Version 0.10 (built with Electron, not tested yet; no pulling terminal windows in: use the session list
-                to take sessions over).
+                Everything above but WSL and pulling terminal windows in (use the session list to take sessions over),
+                as a native app from version 1.1 on. Tried in CI and under WSL, not yet on a GNOME or KDE desktop.
               </td>
             </tr>
           </tbody>

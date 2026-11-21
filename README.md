@@ -22,10 +22,10 @@
 
 ---
 
-reframe 1.0 is a native Windows app (Rust, no web view): it starts in a fraction of a second and needs a fraction
-of what the 0.x versions, built with Electron, needed: 23 MB of memory instead of 161 MB with three sessions, 32 MB on
-disk instead of 340 MB. macOS and Linux stay on [0.10](https://github.com/TheyCallMeJuzou/reframe/releases?q=v0.10)
-for now.
+reframe is a native app for Windows and Linux (Rust, no web view): it starts in a fraction of a second and needs a
+fraction of what the 0.x versions, built with Electron, needed: on Windows 23 MB of memory instead of 161 MB with three
+sessions and 32 MB on disk instead of 340 MB, on Linux an AppImage of 19 MB instead of 128 MB. macOS stays on
+[0.10](https://github.com/TheyCallMeJuzou/reframe/releases?q=v0.10) for now.
 
 ## What it does
 
@@ -41,16 +41,16 @@ for now.
   <img src="docs/screenshots/windows.png" alt="Two reframe windows, each saved as a workspace with its own group of sessions">
 
 - **Session list.** The side bar on the left lists the sessions in reframe, the ones running in other terminals and your recent Claude Code sessions, with search, each with when it was last used (the most recent first). Click or drag one to open it: ended sessions resume, and sessions running elsewhere are taken over (ended there, continued here, history and name included). Select several with Shift or Ctrl+click and open them together from the right-click menu, also as a new group, here or in a new window. Sessions that turn up while reframe runs light up, and the Sessions button gets a dot while the list is hidden.
-- **Pull terminal windows in.** Drag a Windows Terminal or console window (or just a tab of it) with a running `claude`, on Windows or in WSL, onto reframe: it shows where the session would go, and after a short confirmation the session continues in reframe, at the spot you dropped it; the terminal tab closes if nothing else runs in it.
-- **WSL.** Start a session in a folder inside WSL (_Browse…_ → Linux, or type `\\wsl.localhost\Ubuntu\home\…`) and it runs the Claude Code installed in that distribution, shown as `Ubuntu ~/project`, with its status, notifications and resume after a restart like any other. Dropped files and pasted screenshots come in as Linux paths. The session list shows the sessions of running distributions too, past ones and ones running in a WSL terminal (taken over like any other); a distribution with Claude Code that is not running says so there, with a button to start it.
-- **Files and screenshots.** Drop files onto a session to type in their paths (Claude Code attaches images among them), also a picture dragged out of a browser; Ctrl+V (or a right-click) pastes text, files you copied in Explorer, or a screenshot from the clipboard.
+- **Pull terminal windows in** (Windows). Drag a Windows Terminal or console window (or just a tab of it) with a running `claude`, on Windows or in WSL, onto reframe: it shows where the session would go, and after a short confirmation the session continues in reframe, at the spot you dropped it; the terminal tab closes if nothing else runs in it.
+- **WSL** (Windows). Start a session in a folder inside WSL (_Browse…_ → Linux, or type `\\wsl.localhost\Ubuntu\home\…`) and it runs the Claude Code installed in that distribution, shown as `Ubuntu ~/project`, with its status, notifications and resume after a restart like any other. Dropped files and pasted screenshots come in as Linux paths. The session list shows the sessions of running distributions too, past ones and ones running in a WSL terminal (taken over like any other); a distribution with Claude Code that is not running says so there, with a button to start it.
+- **Files and screenshots.** Drop files onto a session to type in their paths (Claude Code attaches images among them), also a picture dragged out of a browser; Ctrl+V (or a right-click) pastes text, files you copied in Explorer (on Linux in a file manager, with `wl-paste` or `xclip` installed), or a screenshot from the clipboard.
 
   <img src="docs/screenshots/files.gif" alt="A screenshot dropped onto a session turns into an image for Claude Code">
 
   <img src="docs/screenshots/paste.gif" alt="Ctrl+V pastes a screenshot from the clipboard into a session">
 
 - **Nothing gets lost.** Every change is saved right away. Quitting from the tray ends the sessions cleanly, and the next start resumes each one (`claude --resume`) in its folder, in its place.
-- **Runs in the background.** Closing a window with sessions asks whether to end them or keep them working in the tray (or does what you chose in Settings). In the tray they keep working, and you get a notification when Claude is done or needs you, unless you are looking at it anyway. A window's title says how many of its sessions need you (its taskbar button gets a badge, and flashes when one starts waiting unseen), the tray says how many in all, and Ctrl+Shift+Space takes you to the next one.
+- **Runs in the background.** Closing a window with sessions asks whether to end them or keep them working in the tray (or does what you chose in Settings). In the tray they keep working, and you get a notification when Claude is done or needs you, unless you are looking at it anyway. (On a Linux desktop without a tray, such as GNOME without its AppIndicator extension, a window you keep is minimized instead.) A window's title says how many of its sessions need you (its taskbar button gets a badge, and flashes when one starts waiting unseen), the tray says how many in all, and Ctrl+Shift+Space takes you to the next one.
 - **Starts with the system** if you like (Settings), quietly in the tray, and **updates itself** from GitHub Releases.
 - **Settings** (the ⚙ in the toolbar, or Ctrl+,): the language (English or German, or the system's), the text size, snapping to the grid, what closing a window with sessions does, starting with the system, which Claude Code runs (the one on the PATH, or one you choose: handy with more than one installed), the model and permission mode new sessions start with, and checking for updates.
 
@@ -77,13 +77,15 @@ Everything else goes to Claude Code as usual.
 
 ## Install
 
-Download reframe from the [website](https://theycallmejuzou.github.io/reframe/download.html) or [Releases](https://github.com/TheyCallMeJuzou/reframe/releases). You need Windows 10 or 11 and [Claude Code](https://claude.com/claude-code) installed and logged in (`claude` on your `PATH`); sessions in a WSL folder use the Claude Code installed in that distribution instead.
+Download reframe from the [website](https://theycallmejuzou.github.io/reframe/download.html) or [Releases](https://github.com/TheyCallMeJuzou/reframe/releases). You need [Claude Code](https://claude.com/claude-code) installed and logged in (`claude` on your `PATH`), and Windows 10 or 11, or Linux on x86-64 with glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36 or later; Wayland or X11). On Windows, sessions in a WSL folder use the Claude Code installed in that distribution instead.
 
 The builds are not code-signed yet, so the first start needs a confirmation:
 
 - **Windows** (`reframe-Setup-<version>.exe`): installs for your user without admin rights. If SmartScreen warns, choose _More info_ → _Run anyway_. An installed 0.x updates to 1.0 by itself, keeping your sessions, windows, settings and shortcuts. To bring the windows of a portable 0.x along, copy its `data\state.json` into `%APPDATA%\reframe` (in place of the one there) before the first start.
 - **Windows, portable** (`reframe-<version>-win-portable.zip`): unpack it anywhere (a USB stick, say) and start `reframe.exe`. It keeps its sessions, windows and settings in the folder `data` next to it and runs apart from an installed reframe. Both use the same Claude Code, though: sessions one of them runs show in the other as running elsewhere, and opening one there takes it over (after asking). It does not update itself: it tells you when there is a new version to download; to move to it, put the old copy's `data` folder next to the new `reframe.exe`. If you let it start with the system and move the folder later, turn that on again. Before unpacking, right-click the ZIP → _Properties_ → tick _Unblock_: otherwise Windows marks every unpacked file as downloaded, and SmartScreen asks on the first start.
-- **macOS and Linux**: reframe 0.10 (the Electron version), from its [release](https://github.com/TheyCallMeJuzou/reframe/releases?q=v0.10). It does not update to 1.0.
+- **Linux** (`reframe-<version>-x86_64.AppImage`): make it executable (`chmod +x`) and start it. It updates itself; an AppImage of 0.x updates to 1.1 by itself, keeping your sessions, windows and settings (`~/.config/reframe`). The tray needs a desktop that has one (KDE, Xfce, Ubuntu's GNOME; plain GNOME with its AppIndicator extension).
+- **Linux, Debian package** (`reframe_<version>_amd64.deb`): `sudo apt install ./reframe_<version>_amd64.deb`, also over 0.x's. It is updated by installing the next one.
+- **macOS**: reframe 0.10 (the Electron version), from its [release](https://github.com/TheyCallMeJuzou/reframe/releases?q=v0.10). It does not update to 1.x.
 
 ### Uninstall
 
@@ -91,7 +93,8 @@ If you let reframe start with the system, the uninstaller takes it out again. re
 
 - **Windows**: _Settings_ → _Apps_ → _Installed apps_ → reframe → _Uninstall_. Your sessions, windows and settings stay in `%APPDATA%\reframe`; delete that folder to remove them too.
 - **Windows, portable**: quit reframe and delete its folder (its data is inside).
-- **macOS and Linux** (0.10): see the [0.10 README](https://github.com/TheyCallMeJuzou/reframe/tree/v0.10.0#uninstall).
+- **Linux**: turn off _Start with the system_ in Settings first, then delete the AppImage, or remove the package (`sudo apt remove reframe`). Your sessions, windows and settings stay in `~/.config/reframe`; delete that folder to remove them too.
+- **macOS** (0.10): see the [0.10 README](https://github.com/TheyCallMeJuzou/reframe/tree/v0.10.0#uninstall).
 
 ## Code signing policy
 
@@ -109,19 +112,20 @@ The policy and the privacy policy below are also on the [website](https://theyca
 
 reframe collects nothing about you and sends nothing about you or your sessions anywhere. Its own use of the network:
 
-- **Updates**: half a minute after starting and then every six hours, reframe asks [this repository's releases](https://github.com/TheyCallMeJuzou/reframe/releases) on GitHub whether there is a newer version. That is a plain web request, as when you open the page in a browser (GitHub sees your IP address, see [GitHub's privacy statement](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement)). The installed app then downloads the new version from there. You can turn this off in Settings (_Check for updates_).
+- **Updates**: half a minute after starting and then every six hours, reframe asks [this repository's releases](https://github.com/TheyCallMeJuzou/reframe/releases) on GitHub whether there is a newer version. That is a plain web request, as when you open the page in a browser (GitHub sees your IP address, see [GitHub's privacy statement](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement)). The installed app (on Linux the AppImage) then downloads the new version from there. You can turn this off in Settings (_Check for updates_).
 - **Links** you click (for example in About) open in your browser.
 
 Claude Code, which reframe starts for you, talks to Anthropic the way you have set it up; for that, [Anthropic's privacy policy](https://www.anthropic.com/legal/privacy) applies.
 
 ## Development
 
-reframe is written in Rust with [GPUI](https://www.gpui.rs/) (Zed's UI framework, through [gpui-kit](https://crates.io/crates/gpui-kit)) and [alacritty_terminal](https://crates.io/crates/alacritty_terminal). You need the stable MSVC Rust toolchain and the Visual Studio C++ build tools; the tests need Node.js (the fake `claude` is a script), building the installer needs [NSIS](https://nsis.sourceforge.io/) 3.
+reframe is written in Rust with [GPUI](https://www.gpui.rs/) (Zed's UI framework, through [gpui-kit](https://crates.io/crates/gpui-kit)) and [alacritty_terminal](https://crates.io/crates/alacritty_terminal). On Windows you need the stable MSVC Rust toolchain and the Visual Studio C++ build tools, and building the installer needs [NSIS](https://nsis.sourceforge.io/) 3. On Linux you need stable Rust and GPUI's build packages (on Debian and Ubuntu: `pkg-config libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libx11-xcb-dev libxcb1-dev libfontconfig-dev`). The tests need Node.js (the fake `claude` is a script); on Linux they run in a display and a session bus of their own (`xvfb-run dbus-run-session -- cargo test --workspace`, as CI does).
 
 ```sh
 cargo run                                # starts reframe (with your normal profile, see below)
 powershell -File scripts/check.ps1       # what has to pass before a push: format, clippy, all tests
 powershell -File scripts/package.ps1     # the installer, latest.yml and the portable ZIP, into dist/
+scripts/package-linux.sh                 # Linux: the AppImage, the .deb and latest-linux.yml, into dist/
 ```
 
 A development build uses the same profile as the installed reframe, and only one of them runs at a time. To keep experiments apart, give it another one: `REFRAME_USER_DATA=C:\temp\reframe-dev cargo run`, or `scripts\try-fake.ps1`, which starts it with fake sessions.
@@ -147,10 +151,11 @@ The app log is in the profile directory, under `logs/main.log`.
 ## How it works
 
 - **One process** owns the state (`state.json` in the profile, written atomically with a backup, the same format as 0.x), the windows and the sessions.
-- Each `claude` runs in a **pseudo console** (ConPTY, the one Windows Terminal ships, bundled with reframe) and is read by [alacritty_terminal](https://crates.io/crates/alacritty_terminal); any window draws any session's screen, so tiles move between windows without restarting anything.
+- Each `claude` runs in a **pseudo console** (on Windows ConPTY, the one Windows Terminal ships, bundled with reframe; on Linux a pseudo terminal) and is read by [alacritty_terminal](https://crates.io/crates/alacritty_terminal); any window draws any session's screen, so tiles move between windows without restarting anything.
 - **Status** comes from Claude Code's HTTP hooks (passed per session with `--settings`, merged with your own hooks; your settings files are never changed) and from Claude Code's session registry.
-- **Questions and menus** are Windows' own: questions are task dialogs, as the message boxes of 0.x were, and right-click menus follow the system's light or dark mode.
-- **Taking over** a session that runs elsewhere ends it there the way you would (Ctrl+C), then resumes it in reframe under the same session id. reframe follows window drags and new terminal windows (window events), maps consoles to their terminal windows, and finds a claude in WSL by the console of its terminal's `wsl.exe`, which reframe asks through the interop socket of claude's WSL session.
+- **Questions and menus** are Windows' own: questions are task dialogs, as the message boxes of 0.x were, and right-click menus follow the system's light or dark mode. On Linux, where GPUI has neither, reframe draws them in the window.
+- **Around the window on Linux**: the tray icon is a StatusNotifierItem (as Electron's was), one reframe per profile is a lock and a socket in the user's runtime folder, starting with the system is an XDG autostart entry, and logind says when the system goes down.
+- **Taking over** a session that runs elsewhere ends it there the way you would (Ctrl+C; on Linux the SIGINT a terminal sends for it), then resumes it in reframe under the same session id. On Windows reframe follows window drags and new terminal windows (window events), maps consoles to their terminal windows, and finds a claude in WSL by the console of its terminal's `wsl.exe`, which reframe asks through the interop socket of claude's WSL session.
 - GPUI's Windows backend is a copy with a few changes of reframe's (`vendor/gpui-pre-windows`, see its `REFRAME.md`): windows only draw when something changed, notifications play their sound, pictures dragged out of a browser are taken, terminal tabs dragged over reframe are noticed, and questions get their own title, command links and "Don't ask again".
 
 Design notes from the move to the native app, with measurements: [docs/FINDINGS.md](docs/FINDINGS.md).

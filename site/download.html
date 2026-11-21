@@ -6,7 +6,7 @@
     <title>Download reframe</title>
     <meta
       name="description"
-      content="Download reframe for Windows, macOS or Linux: a free, open source desktop app that keeps your Claude Code sessions side by side in one window."
+      content="Download reframe for Windows, Linux or macOS: a free, open source desktop app that keeps your Claude Code sessions side by side in one window."
     />
     <link rel="icon" href="img/reframe-icon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="style.css" />
@@ -38,7 +38,7 @@
           data-release
           >release notes</a
         >). You need Claude Code installed and logged in (<code>claude</code> on your <code>PATH</code>). From version
-        1.0 on, reframe is a native Windows app; macOS and Linux keep version 0.10 for now.
+        1.0 on, reframe is a native app, for Windows and (from 1.1 on) Linux; macOS keeps version 0.10 for now.
       </p>
 
       <div class="downloads">
@@ -78,11 +78,11 @@
               data-asset="reframe-{version}-arm64.dmg"
               >Disk image (.dmg)</a
             >
-            <p>For Apple silicon. Built with Electron in CI, not tested yet. Does not update to 1.0.</p>
+            <p>For Apple silicon. Built with Electron in CI, not tested yet. Does not update to 1.x.</p>
           </div>
         </section>
         <section class="platform">
-          <h3>Linux <small>(version 0.10)</small></h3>
+          <h3>Linux</h3>
           <div class="file">
             <a
               class="button primary"
@@ -90,7 +90,10 @@
               data-asset="reframe-{version}-x86_64.AppImage"
               >AppImage</a
             >
-            <p>Make it executable, then run it. Built with Electron in CI, not tested yet.</p>
+            <p>
+              For x86-64 with glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36 or later). Make it executable
+              (<code>chmod +x</code>), then run it. Updates itself.
+            </p>
           </div>
           <div class="file">
             <a
@@ -99,7 +102,9 @@
               data-asset="reframe_{version}_amd64.deb"
               >Debian package (.deb)</a
             >
-            <p>Built with Electron in CI, not tested yet.</p>
+            <p>
+              <code>sudo apt install ./reframe_…_amd64.deb</code>, also over 0.x's. Updated by installing the next one.
+            </p>
           </div>
         </section>
       </div>
@@ -112,17 +117,22 @@
       <h2 id="update">Updating from 0.x</h2>
       <ul>
         <li>
-          <strong>Installed</strong>: reframe updates itself to 1.0 when you quit it (or right away with
+          <strong>Windows, installed</strong>: reframe updates itself to 1.x when you quit it (or right away with
           <em>Restart to update</em> in the tray menu), keeping your sessions, windows, settings and shortcuts. Or
-          run the 1.0 installer over it.
+          run the installer over it.
         </li>
         <li>
-          <strong>Portable</strong>: quit it (tray menu → <em>Quit</em>), unpack the 1.0 ZIP, and put the old
+          <strong>Windows, portable</strong>: quit it (tray menu → <em>Quit</em>), unpack the new ZIP, and put the old
           copy's <code>data</code> folder next to the new <code>reframe.exe</code>. To move to the installed reframe
           instead, copy <code>data\state.json</code> into <code>%APPDATA%\reframe</code> (in place of the one there)
           before its first start.
         </li>
-        <li><strong>macOS and Linux</strong> stay on 0.10, which does not update to 1.0.</li>
+        <li>
+          <strong>Linux</strong>: an AppImage of 0.10 updates itself to 1.1 the same way, keeping your sessions, windows
+          and settings (<code>~/.config/reframe</code>); a Debian package is updated by installing the new one over it.
+          Quit 0.10 before you start 1.1 by hand.
+        </li>
+        <li><strong>macOS</strong> stays on 0.10, which does not update to 1.x.</li>
       </ul>
 
       <h2 id="install">The first start</h2>
@@ -139,6 +149,10 @@
           again.
         </li>
         <li>
+          <strong>Linux</strong>: the tray needs a desktop that has one (KDE, Xfce, Ubuntu's GNOME; plain GNOME with its
+          AppIndicator extension); without one, a window you close but keep is minimized instead.
+        </li>
+        <li>
           <strong>macOS</strong> (0.10): drag reframe into Applications, then right-click it → <em>Open</em> the first time (or
           <code>xattr -dr com.apple.quarantine /Applications/reframe.app</code>). Updates on macOS need a signed build,
           so for now update by downloading the new version.
@@ -148,7 +162,7 @@
       <h2 id="uninstall">Uninstall</h2>
       <p>
         If you let reframe start with the system, the Windows uninstaller takes that out again (before version 0.6.0,
-        turn it off first, in the tray menu). reframe never changes Claude Code's own settings files, so there is
+        turn it off first, in the tray menu); on Linux, turn it off in Settings before you remove reframe. reframe never changes Claude Code's own settings files, so there is
         nothing to undo there.
       </p>
       <ul>

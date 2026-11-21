@@ -5251,7 +5251,7 @@ dependencies = [
 
 [[package]]
 name = "reframe"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "alacritty_terminal",
  "base64 0.22.1",
@@ -5282,7 +5282,7 @@ dependencies = [
 
 [[package]]
 name = "reframe-core"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "indexmap",
  "serde",
